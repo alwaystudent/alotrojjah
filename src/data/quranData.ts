@@ -81,19 +81,19 @@ export interface QuranPlanItem {
 }
 
 export const WEEK_DAYS: WeekDayInfo[] = [
-  { id: 'saturday', jsDay: 6, nameAr: 'السبت', nameEn: 'Saturday', shortAr: 'سبت', shortEn: 'Sat' },
   { id: 'sunday', jsDay: 0, nameAr: 'الأحد', nameEn: 'Sunday', shortAr: 'أحد', shortEn: 'Sun' },
   { id: 'monday', jsDay: 1, nameAr: 'الإثنين', nameEn: 'Monday', shortAr: 'إثنين', shortEn: 'Mon' },
   { id: 'tuesday', jsDay: 2, nameAr: 'الثلاثاء', nameEn: 'Tuesday', shortAr: 'ثلاثاء', shortEn: 'Tue' },
   { id: 'wednesday', jsDay: 3, nameAr: 'الأربعاء', nameEn: 'Wednesday', shortAr: 'أربعاء', shortEn: 'Wed' },
   { id: 'thursday', jsDay: 4, nameAr: 'الخميس', nameEn: 'Thursday', shortAr: 'خميس', shortEn: 'Thu' },
   { id: 'friday', jsDay: 5, nameAr: 'الجمعة', nameEn: 'Friday', shortAr: 'جمعة', shortEn: 'Fri' },
+  { id: 'saturday', jsDay: 6, nameAr: 'السبت', nameEn: 'Saturday', shortAr: 'سبت', shortEn: 'Sat' },
 ];
 
 export function getTodayDayId(): DayId {
   const jsDay = new Date().getDay();
   const found = WEEK_DAYS.find((d) => d.jsDay === jsDay);
-  return found ? found.id : 'saturday';
+  return found ? found.id : 'sunday';
 }
 
 // Official King Fahd Glorious Quran Printing Complex (Madinah Mushaf) Juz pages (1 - 604)

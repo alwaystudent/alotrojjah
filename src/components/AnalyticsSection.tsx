@@ -6,8 +6,8 @@ import {
   getTodayDayId,
   getPlanTypeLabel,
   getScopeLabel,
-} from '../data/quranData';
-import { t } from '../data/translations';
+} from '@/src/data/quranData';
+import { t } from '@/src/data/translations';
 
 interface AnalyticsSectionProps {
   plans: QuranPlanItem[];
@@ -69,17 +69,17 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({ plans, lang 
   const typeCategories = [
     {
       type: 'sard' as const,
-      color: '#C88A14', // Mustard Gold
+      color: '#C88A14',
       bgClass: 'bg-[#C88A14]',
     },
     {
       type: 'new_memorization' as const,
-      color: '#4A6144', // Olive Green
+      color: '#4A6144',
       bgClass: 'bg-[#4A6144]',
     },
     {
       type: 'review' as const,
-      color: '#9C4A32', // Warm Terracotta
+      color: '#9C4A32',
       bgClass: 'bg-[#9C4A32]',
     },
   ].map((cat) => {
@@ -112,32 +112,25 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({ plans, lang 
   });
 
   // Donut SVG math
-  const radius = 56;
+  const radius = 48;
   const circumference = 2 * Math.PI * radius;
   let cumulativePercent = 0;
 
   return (
-    <section className="space-y-6">
-      <div className="border-b border-[#DDD2BE] pb-4">
-        <h2 className="text-2xl font-bold font-display-islamic text-[#261C14]">
-          {dict.analyticsHeading}
-        </h2>
-        <p className="text-sm text-[#5C4B3B] mt-1">{dict.analyticsSub}</p>
-      </div>
-
-      {/* 4-Column KPI Strip */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="p-5 rounded-2xl bg-[#FFFDF9] border border-[#DDD2BE]">
-          <div className="text-xs font-medium text-[#84715E]">{dict.kpiCompletionRate}</div>
-          <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-3xl font-bold font-mono-tabular text-[#261C14]">
+    <section className="space-y-3.5">
+      {/* 4-Column Compact KPI Strip */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+        <div className="p-3.5 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE]">
+          <div className="text-xs font-semibold text-[#84715E]">{dict.kpiCompletionRate}</div>
+          <div className="mt-1 flex items-baseline justify-between">
+            <span className="text-2xl font-bold font-mono-tabular text-[#261C14]">
               {completionRate}%
             </span>
-            <span className="text-xs font-mono-tabular text-[#5C4B3B]">
-              {completedPlans} / {totalPlans} { dict.completedLabel }
+            <span className="text-[11px] font-mono-tabular text-[#5C4B3B]">
+              {completedPlans}/{totalPlans}
             </span>
           </div>
-          <div className="mt-3 h-2 w-full rounded-full bg-[#EFE9DC] overflow-hidden">
+          <div className="mt-2 h-1.5 w-full rounded-full bg-[#EFE9DC] overflow-hidden">
             <div
               className="h-full bg-[#C88A14] transition-all duration-300"
               style={{ width: `${completionRate}%` }}
@@ -145,33 +138,33 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({ plans, lang 
           </div>
         </div>
 
-        <div className="p-5 rounded-2xl bg-[#FFFDF9] border border-[#DDD2BE]">
-          <div className="text-xs font-medium text-[#84715E]">{dict.kpiTotalAyahs}</div>
-          <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-3xl font-bold font-mono-tabular text-[#261C14]">
+        <div className="p-3.5 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE]">
+          <div className="text-xs font-semibold text-[#84715E]">{dict.kpiTotalAyahs}</div>
+          <div className="mt-1 flex items-baseline justify-between">
+            <span className="text-2xl font-bold font-mono-tabular text-[#261C14]">
               {completedAyahs}
             </span>
-            <span className="text-xs font-mono-tabular text-[#5C4B3B]">
+            <span className="text-[11px] font-mono-tabular text-[#5C4B3B]">
               / {totalPlannedAyahs} {dict.ayahsUnit}
             </span>
           </div>
-          <div className="mt-3 text-xs text-[#84715E] flex items-center gap-1.5">
+          <div className="mt-2 text-[11px] text-[#84715E] flex items-center gap-1">
             <span>{dict.accuracyRateLabel}:</span>
             <span className="font-mono-tabular font-semibold text-[#4A6144]">{accuracyRate}%</span>
           </div>
         </div>
 
-        <div className="p-5 rounded-2xl bg-[#FFFDF9] border border-[#DDD2BE]">
-          <div className="text-xs font-medium text-[#84715E]">{dict.kpiTotalPages}</div>
-          <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-3xl font-bold font-mono-tabular text-[#261C14]">
+        <div className="p-3.5 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE]">
+          <div className="text-xs font-semibold text-[#84715E]">{dict.kpiTotalPages}</div>
+          <div className="mt-1 flex items-baseline justify-between">
+            <span className="text-2xl font-bold font-mono-tabular text-[#261C14]">
               {completedPages}
             </span>
-            <span className="text-xs font-mono-tabular text-[#5C4B3B]">
+            <span className="text-[11px] font-mono-tabular text-[#5C4B3B]">
               / {totalPlannedPages} {dict.pagesUnit}
             </span>
           </div>
-          <div className="mt-3 h-2 w-full rounded-full bg-[#EFE9DC] overflow-hidden">
+          <div className="mt-2 h-1.5 w-full rounded-full bg-[#EFE9DC] overflow-hidden">
             <div
               className="h-full bg-[#4A6144] transition-all duration-300"
               style={{
@@ -185,17 +178,17 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({ plans, lang 
           </div>
         </div>
 
-        <div className="p-5 rounded-2xl bg-[#FFFDF9] border border-[#DDD2BE]">
-          <div className="text-xs font-medium text-[#84715E]">{dict.kpiActiveDays}</div>
-          <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-3xl font-bold font-mono-tabular text-[#261C14]">
-              {activeDaysCount} / 7
+        <div className="p-3.5 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE]">
+          <div className="text-xs font-semibold text-[#84715E]">{dict.kpiActiveDays}</div>
+          <div className="mt-1 flex items-baseline justify-between">
+            <span className="text-2xl font-bold font-mono-tabular text-[#261C14]">
+              {activeDaysCount}/7
             </span>
-            <span className="text-xs text-[#C88A14] font-semibold">
+            <span className="text-[11px] text-[#C88A14] font-semibold">
               {Math.round((activeDaysCount / 7) * 100)}%
             </span>
           </div>
-          <div className="mt-3 flex items-center gap-1">
+          <div className="mt-2 flex items-center gap-1">
             {WEEK_DAYS.map((d) => {
               const hasPlan = plans.some((p) => p.day === d.id);
               const allDone =
@@ -205,7 +198,7 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({ plans, lang 
                 <div
                   key={d.id}
                   title={lang === 'ar' ? d.nameAr : d.nameEn}
-                  className={`h-2 flex-1 rounded-xs ${
+                  className={`h-1.5 flex-1 rounded-xs ${
                     allDone
                       ? 'bg-[#4A6144]'
                       : hasPlan
@@ -220,29 +213,26 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({ plans, lang 
       </div>
 
       {/* Main Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5">
         {/* Daily Bar Chart (7 Columns) */}
-        <div className="lg:col-span-7 p-6 rounded-2xl bg-[#FFFDF9] border border-[#DDD2BE] flex flex-col justify-between">
+        <div className="lg:col-span-7 p-4 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] flex flex-col justify-between">
           <div>
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h3 className="text-base font-bold text-[#261C14]">{dict.chartDailyTitle}</h3>
-                <p className="text-xs text-[#84715E] mt-0.5">{dict.chartDailySub}</p>
-              </div>
-              <div className="flex items-center gap-4 text-xs text-[#5C4B3B]">
-                <span className="flex items-center gap-1.5">
-                  <span className="w-3 h-3 rounded-xs bg-[#E5DEC9] inline-block" />
+              <h3 className="text-sm font-bold text-[#261C14]">{dict.chartDailyTitle}</h3>
+              <div className="flex items-center gap-3 text-xs text-[#5C4B3B]">
+                <span className="flex items-center gap-1">
+                  <span className="w-2.5 h-2.5 rounded-xs bg-[#E5DEC9] inline-block" />
                   <span>{dict.plannedLabel}</span>
                 </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="w-3 h-3 rounded-xs bg-[#C88A14] inline-block" />
+                <span className="flex items-center gap-1">
+                  <span className="w-2.5 h-2.5 rounded-xs bg-[#C88A14] inline-block" />
                   <span>{dict.completedLabel}</span>
                 </span>
               </div>
             </div>
 
             {/* Bar Chart Area */}
-            <div className="mt-8 grid grid-cols-7 gap-3 items-end h-52 pt-6 border-b border-[#DDD2BE] pb-3">
+            <div className="mt-4 grid grid-cols-7 gap-2 items-end h-36 pt-3 border-b border-[#DDD2BE] pb-2">
               {dailyData.map((d) => {
                 const plannedHeightPct = Math.max(
                   6,
@@ -254,17 +244,15 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({ plans, lang 
                     : 0;
 
                 return (
-                  <div key={d.day.id} className="flex flex-col items-center h-full justify-end group">
-                    <div className="text-[11px] font-mono-tabular text-[#5C4B3B] mb-1.5">
+                  <div key={d.day.id} className="flex flex-col items-center h-full justify-end">
+                    <div className="text-[10px] font-mono-tabular text-[#5C4B3B] mb-1">
                       {d.doneAyahs}/{d.plannedAyahs}
                     </div>
-                    <div className="relative w-full max-w-[42px] h-36 bg-[#F7F3EB] rounded-t-lg overflow-hidden flex items-end border border-[#E5DEC9]">
-                      {/* Planned bar */}
+                    <div className="relative w-full max-w-[34px] h-24 bg-[#F7F3EB] rounded-t-md overflow-hidden flex items-end border border-[#E5DEC9]">
                       <div
                         className="w-full bg-[#E5DEC9] transition-all duration-300 relative"
                         style={{ height: `${plannedHeightPct}%` }}
                       >
-                        {/* Completed fill inside planned */}
                         <div
                           className="w-full bg-[#C88A14] absolute bottom-0 left-0 right-0 transition-all duration-300"
                           style={{
@@ -283,17 +271,17 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({ plans, lang 
             </div>
 
             {/* X-Axis Labels */}
-            <div className="grid grid-cols-7 gap-3 pt-2.5 text-center">
+            <div className="grid grid-cols-7 gap-2 pt-2 text-center">
               {dailyData.map((d) => (
                 <div key={d.day.id}>
                   <div
-                    className={`text-xs font-semibold ${
+                    className={`text-[11px] font-bold ${
                       d.isToday ? 'text-[#C88A14]' : 'text-[#261C14]'
                     }`}
                   >
                     {lang === 'ar' ? d.day.nameAr : d.day.shortEn}
                   </div>
-                  <div className="text-[11px] font-mono-tabular text-[#84715E] mt-0.5">
+                  <div className="text-[10px] font-mono-tabular text-[#84715E]">
                     {d.doneCount}/{d.totalCount}
                   </div>
                 </div>
@@ -303,23 +291,20 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({ plans, lang 
         </div>
 
         {/* Distribution Donut & Scope Mastery (5 Columns) */}
-        <div className="lg:col-span-5 p-6 rounded-2xl bg-[#FFFDF9] border border-[#DDD2BE] space-y-6">
-          <div>
-            <h3 className="text-base font-bold text-[#261C14]">{dict.chartDistributionTitle}</h3>
-            <p className="text-xs text-[#84715E] mt-0.5">{dict.chartDistributionSub}</p>
-          </div>
+        <div className="lg:col-span-5 p-4 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] space-y-3.5">
+          <h3 className="text-sm font-bold text-[#261C14]">{dict.chartDistributionTitle}</h3>
 
-          <div className="flex flex-col sm:flex-row items-center gap-6">
+          <div className="flex items-center gap-4">
             {/* SVG Donut Chart */}
-            <div className="relative w-36 h-36 shrink-0 flex items-center justify-center">
-              <svg className="w-full h-full -rotate-90" viewBox="0 0 140 140">
+            <div className="relative w-28 h-28 shrink-0 flex items-center justify-center">
+              <svg className="w-full h-full -rotate-90" viewBox="0 0 120 120">
                 <circle
-                  cx="70"
-                  cy="70"
+                  cx="60"
+                  cy="60"
                   r={radius}
                   fill="transparent"
                   stroke="#EFE9DC"
-                  strokeWidth="16"
+                  strokeWidth="14"
                 />
                 {typeCategories.map((cat) => {
                   const strokeDasharray = `${(cat.pct / 100) * circumference} ${circumference}`;
@@ -328,12 +313,12 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({ plans, lang 
                   return (
                     <circle
                       key={cat.type}
-                      cx="70"
-                      cy="70"
+                      cx="60"
+                      cy="60"
                       r={radius}
                       fill="transparent"
                       stroke={cat.color}
-                      strokeWidth="16"
+                      strokeWidth="14"
                       strokeDasharray={strokeDasharray}
                       strokeDashoffset={strokeDashoffset}
                       strokeLinecap="butt"
@@ -342,26 +327,29 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({ plans, lang 
                 })}
               </svg>
               <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-                <span className="text-xl font-bold font-mono-tabular text-[#261C14]">
+                <span className="text-base font-bold font-mono-tabular text-[#261C14]">
                   {totalPlans}
                 </span>
-                <span className="text-[11px] text-[#84715E]">
-                  {lang === 'ar' ? 'إجمالي الخطط' : 'Total Plans'}
+                <span className="text-[10px] text-[#84715E]">
+                  {lang === 'ar' ? 'خطة' : 'Plans'}
                 </span>
               </div>
             </div>
 
             {/* Legend & Counts */}
-            <div className="flex-1 w-full space-y-3">
+            <div className="flex-1 w-full space-y-2">
               {typeCategories.map((cat) => (
-                <div key={cat.type} className="flex items-center justify-between text-xs border-b border-[#EFE9DC] pb-2 last:border-none">
-                  <div className="flex items-center gap-2">
-                    <span className={`w-3 h-3 rounded-xs shrink-0 ${cat.bgClass}`} />
+                <div
+                  key={cat.type}
+                  className="flex items-center justify-between text-xs border-b border-[#EFE9DC] pb-1.5 last:border-none"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span className={`w-2.5 h-2.5 rounded-xs shrink-0 ${cat.bgClass}`} />
                     <span className="font-semibold text-[#261C14]">{cat.label}</span>
                   </div>
                   <div className="font-mono-tabular text-[#5C4B3B]">
                     <span>{cat.doneCount}/{cat.count}</span>
-                    <span className="mx-1.5 text-[#84715E]">·</span>
+                    <span className="mx-1 text-[#84715E]">·</span>
                     <span>{cat.ayahs} {dict.ayahsUnit}</span>
                   </div>
                 </div>
@@ -370,11 +358,11 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({ plans, lang 
           </div>
 
           {/* Scope Completion Bars */}
-          <div className="pt-3 border-t border-[#DDD2BE] space-y-3">
-            <h4 className="text-xs font-semibold text-[#5C4B3B]">{dict.chartScopeTitle}</h4>
+          <div className="pt-2 border-t border-[#DDD2BE] space-y-2">
+            <h4 className="text-xs font-bold text-[#5C4B3B]">{dict.chartScopeTitle}</h4>
             {scopeStats.map((sc) => (
               <div key={sc.scope} className="space-y-1">
-                <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center justify-between text-[11px]">
                   <span className="font-medium text-[#261C14]">{sc.label}</span>
                   <span className="font-mono-tabular text-[#5C4B3B]">
                     {sc.done}/{sc.total} ({sc.pct}%)
