@@ -399,15 +399,22 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
   const [wrongQuizAttempts, setWrongQuizAttempts] = useState<number>(0);
   const [wrongChoiceFlash, setWrongChoiceFlash] = useState<string | null>(null);
 
-  // Refs for continuous, strict speech-to-word alignment across all 3 plan types
+  // Refs for continuous, strict on-device speech & vocal formant alignment across all 3 plan types
   const recognitionRef = useRef<any>(null);
   const recognitionRestartTimerRef = useRef<any>(null);
   const voiceActivityTimeoutRef = useRef<any>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const dspIntervalRef = useRef<any>(null);
+  const noiseFloorRef = useRef<number>(0.008);
+  const accumulatedVoiceUnitsRef = useRef<number>(0);
+  const prevVoicedEnergyRef = useRef<number>(0);
   const isListeningRef = useRef<boolean>(false);
   const flatWordsRef = useRef<MushafWordItem[]>([]);
   const ayahGroupsRef = useRef<MushafAyahGroup[]>([]);
   const currentIndexRef = useRef<number>(0);
   const lastWordAdvanceTimeRef = useRef<number>(0);
+  const lastAsrAdvanceTimeRef = useRef<number>(0);
   const lastVoiceDetectedTimeRef = useRef<number>(0);
   const syncSpeedFactorRef = useRef<number>(defaultSyncSpeed);
   const processedResultIndexRef = useRef<number>(0);
@@ -417,11 +424,15 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
   const mushafScrollContainerRef = useRef<HTMLDivElement | null>(null);
   const handleSpeechResultRef = useRef<((event: any) => void) | null>(null);
 
-  // Refs for Repetition & Review modes inside speech callback
+  // Refs for Repetition & Review modes inside on-device speech & DSP callbacks
   const activeAyahIdxRef = useRef<number>(0);
   const ayahWordOffsetRef = useRef<number>(0);
   const currentAyahRepCountRef = useRef<number>(0);
   const targetRepsRef = useRef<number>(defaultTargetReps);
+  const currentQuizStepRef = useRef<number>(0);
+  const quizQuestionsRef = useRef<
+    { wordIndex: number; targetWord: MushafWordItem; choices: string[] }[]
+  >([]);
 
   useEffect(() => {
     flatWordsRef.current = flatWords;
@@ -452,6 +463,10 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
   }, [targetReps]);
 
   useEffect(() => {
+    currentQuizStepRef.current = currentQuizStep;
+  }, [currentQuizStep]);
+
+  useEffect(() => {
     currentIndexRef.current = currentWordIndex;
     if (activeWordDomRef.current) {
       activeWordDomRef.current.scrollIntoView({
@@ -461,7 +476,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
     }
   }, [currentWordIndex, ayahWordOffset, currentQuizStep]);
 
-  // Resolve exact Madinah Mushaf startPage and endPage when plan.scope === 'ayah'
+  // Resolve exact Madinah Mushaf startPage and endPage when plan.scope === 'ayah' (with local browser cache)
   useEffect(() => {
     let cancelled = false;
     const baseRange = getPlanMushafPageRange(plan);
@@ -473,8 +488,23 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
       const maxA = surahObj ? surahObj.ayahCount : 286;
       const a1 = Math.max(1, Math.min(plan.ayahFrom || 1, plan.ayahTo || 1, maxA));
       const a2 = Math.min(maxA, Math.max(plan.ayahFrom || 1, plan.ayahTo || 1, 1));
+      const rangeCacheKey = `al_utrujjah_ayah_range_v1_${plan.ayahSurah}_${a1}_${a2}`;
 
       const resolveExactAyahPages = async () => {
+        try {
+          const cachedRange = localStorage.getItem(rangeCacheKey);
+          if (cachedRange) {
+            const parsed = JSON.parse(cachedRange);
+            if (!cancelled && parsed?.startPage >= 1 && parsed?.endPage >= 1) {
+              setActualPageRange({ startPage: parsed.startPage, endPage: parsed.endPage });
+              setCurrentPage(parsed.startPage);
+              return;
+            }
+          }
+        } catch {
+          // Ignore storage read error
+        }
+
         try {
           const [res1, res2] = await Promise.all([
             fetch(
@@ -491,6 +521,14 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
             if (!cancelled && p1 >= 1 && p2 >= 1) {
               const exactStart = Math.min(p1, p2);
               const exactEnd = Math.max(p1, p2);
+              try {
+                localStorage.setItem(
+                  rangeCacheKey,
+                  JSON.stringify({ startPage: exactStart, endPage: exactEnd })
+                );
+              } catch {
+                // Ignore quota error
+              }
               setActualPageRange({ startPage: exactStart, endPage: exactEnd });
               setCurrentPage(exactStart);
               return;
@@ -512,6 +550,14 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
             if (!cancelled && p1 >= 1 && p2 >= 1) {
               const exactStart = Math.min(p1, p2);
               const exactEnd = Math.max(p1, p2);
+              try {
+                localStorage.setItem(
+                  rangeCacheKey,
+                  JSON.stringify({ startPage: exactStart, endPage: exactEnd })
+                );
+              } catch {
+                // Ignore quota error
+              }
               setActualPageRange({ startPage: exactStart, endPage: exactEnd });
               setCurrentPage(exactStart);
             }
@@ -621,7 +667,12 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
   }, [plan.planType, flatWords, hiddenWordIndicesSet]);
 
   useEffect(() => {
+    quizQuestionsRef.current = quizQuestions;
+  }, [quizQuestions]);
+
+  useEffect(() => {
     setCurrentQuizStep(0);
+    currentQuizStepRef.current = 0;
     setSolvedQuizIndices([]);
     setWrongQuizAttempts(0);
   }, [quizLevel, quizFormat]);
@@ -746,6 +797,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
       setLastMatchedSpoken('');
       setLastMismatchSpoken('');
       lastConsumedTokenNormRef.current = '';
+      accumulatedVoiceUnitsRef.current = 0;
       setActiveAyahIdx(0);
       activeAyahIdxRef.current = 0;
       setCurrentAyahRepCount(0);
@@ -753,6 +805,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
       setAyahWordOffset(0);
       ayahWordOffsetRef.current = 0;
       setCurrentQuizStep(0);
+      currentQuizStepRef.current = 0;
       setSolvedQuizIndices([]);
       if (filteredVerses[0]?.juz) {
         setPageJuz(filteredVerses[0].juz);
@@ -774,11 +827,29 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
     ]
   );
 
-  // Fetch Uthmani verses strictly page-by-page according to official Madinah Mushaf page numbers
+  // Fetch Uthmani verses strictly page-by-page with local browser cache (`localStorage`) so pages work on-device
   useEffect(() => {
     let cancelled = false;
+    const pageCacheKey = `al_utrujjah_mushaf_page_v2_${currentPage}`;
+
     const fetchMushafVerses = async () => {
       setLoadingPage(true);
+
+      // 1. Check local browser storage first so previously loaded pages run 100% from the user's device
+      try {
+        const cachedPageJson = localStorage.getItem(pageCacheKey);
+        if (cachedPageJson) {
+          const parsedVerses = JSON.parse(cachedPageJson);
+          if (!cancelled && Array.isArray(parsedVerses) && parsedVerses.length > 0) {
+            buildWordsFromVerses(parsedVerses);
+            setLoadingPage(false);
+            return;
+          }
+        }
+      } catch {
+        // Ignore storage error and proceed to fetch
+      }
+
       try {
         const res = await fetch(
           `https://api.quran.com/api/v4/verses/by_page/${currentPage}?words=false&fields=text_uthmani,chapter_id,verse_number,juz_number&per_page=50`
@@ -792,6 +863,11 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
             textUthmani: v.text_uthmani,
             juz: Number(v.juz_number || 1),
           }));
+          try {
+            localStorage.setItem(pageCacheKey, JSON.stringify(mapped));
+          } catch {
+            // Ignore storage quota
+          }
           buildWordsFromVerses(mapped);
           setLoadingPage(false);
           return;
@@ -811,6 +887,11 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
               textUthmani: a.text,
               juz: Number(a.juz || 1),
             }));
+            try {
+              localStorage.setItem(pageCacheKey, JSON.stringify(mapped2));
+            } catch {
+              // Ignore storage quota
+            }
             buildWordsFromVerses(mapped2);
             setLoadingPage(false);
             return;
@@ -837,15 +918,39 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
     };
   }, [currentPage, buildWordsFromVerses]);
 
-  // Stop microphone & speech recognition session cleanly
+  // Stop microphone, on-device Web Audio DSP & speech recognition session cleanly
   const stopListeningSession = useCallback(() => {
     isListeningRef.current = false;
     setIsListening(false);
     setVoiceActive(false);
+    accumulatedVoiceUnitsRef.current = 0;
 
     if (voiceActivityTimeoutRef.current) {
       clearTimeout(voiceActivityTimeoutRef.current);
       voiceActivityTimeoutRef.current = null;
+    }
+
+    if (dspIntervalRef.current) {
+      clearInterval(dspIntervalRef.current);
+      dspIntervalRef.current = null;
+    }
+
+    if (mediaStreamRef.current) {
+      try {
+        mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+      } catch {
+        // Ignore
+      }
+      mediaStreamRef.current = null;
+    }
+
+    if (audioContextRef.current) {
+      try {
+        audioContextRef.current.close();
+      } catch {
+        // Ignore
+      }
+      audioContextRef.current = null;
     }
 
     if (recognitionRestartTimerRef.current) {
@@ -1218,6 +1323,8 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
             setLastMatchedSpoken(matchRes.matchedText);
             setLastMismatchSpoken('');
             lastWordAdvanceTimeRef.current = Date.now();
+            lastAsrAdvanceTimeRef.current = Date.now();
+            accumulatedVoiceUnitsRef.current = 0;
             lastConsumedTokenNormRef.current = normalizeArabicForAlignment(
               primaryTokens[Math.min(primaryTokens.length - 1, i + matchRes.tokensConsumed - 1)],
               false
@@ -1273,6 +1380,8 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
             setLastMatchedSpoken(matchRes.matchedText);
             setLastMismatchSpoken('');
             lastWordAdvanceTimeRef.current = Date.now();
+            lastAsrAdvanceTimeRef.current = Date.now();
+            accumulatedVoiceUnitsRef.current = 0;
             lastConsumedTokenNormRef.current = normalizeArabicForAlignment(
               primaryTokens[Math.min(primaryTokens.length - 1, i + matchRes.tokensConsumed - 1)],
               false
@@ -1318,6 +1427,9 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
             setWrongChoiceFlash(null);
             setLastMatchedSpoken(matchRes.matchedText);
             setLastMismatchSpoken('');
+            lastWordAdvanceTimeRef.current = Date.now();
+            lastAsrAdvanceTimeRef.current = Date.now();
+            accumulatedVoiceUnitsRef.current = 0;
             if (!solvedQuizIndices.includes(currentQ.wordIndex)) {
               setSolvedQuizIndices((prev) => [...prev, currentQ.wordIndex]);
             }
@@ -1373,111 +1485,323 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
     }
   };
 
-  // Start Real-Time Speech-to-Verse Matching Session (Synchronous start, zero getUserMedia mic contention!)
-  const startListeningSession = () => {
+  // Start 100% On-Device Client-Side Browser Synchronization Engine (Web Audio API DSP + Local SpeechRecognition)
+  const startListeningSession = async () => {
     setSpeechError(null);
     setSardStarted(true);
     setRevealAllPreview(false);
     setLastMatchedSpoken('');
     setLastMismatchSpoken('');
     lastWordAdvanceTimeRef.current = 0;
+    lastAsrAdvanceTimeRef.current = 0;
     lastVoiceDetectedTimeRef.current = 0;
     processedResultIndexRef.current = 0;
     processedTokenCountRef.current = 0;
     lastConsumedTokenNormRef.current = '';
+    accumulatedVoiceUnitsRef.current = 0;
+    prevVoicedEnergyRef.current = 0;
 
+    // Clean up any previous session before starting
+    stopListeningSession();
+
+    isListeningRef.current = true;
+    setIsListening(true);
+
+    let localDspStarted = false;
+
+    // 1. Start 100% On-Device Browser Web Audio API Vocal Formant & Syllable Cadence Synchronizer
+    // Runs directly on the user's device CPU via AudioContext + AnalyserNode (NEVER connected to destination -> 0 sound)
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+
+        if (!isListeningRef.current) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+
+        mediaStreamRef.current = stream;
+        const AudioCtx =
+          window.AudioContext ||
+          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        const audioCtx = new AudioCtx();
+        audioContextRef.current = audioCtx;
+        if (audioCtx.state === 'suspended') {
+          await audioCtx.resume();
+        }
+
+        const micSource = audioCtx.createMediaStreamSource(stream);
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 1024;
+        analyser.smoothingTimeConstant = 0.45;
+        // Connect ONLY to analyser (never to audioCtx.destination so zero sound is emitted)
+        micSource.connect(analyser);
+
+        const timeData = new Float32Array(analyser.fftSize);
+        const freqData = new Uint8Array(analyser.frequencyBinCount);
+        const sampleRate = audioCtx.sampleRate || 44100;
+        const binHz = sampleRate / analyser.fftSize;
+        const vocalMinBin = Math.max(1, Math.floor(100 / binHz));
+        const vocalMaxBin = Math.min(analyser.frequencyBinCount - 1, Math.ceil(2600 / binHz));
+        const hissMinBin = Math.min(analyser.frequencyBinCount - 1, Math.floor(3800 / binHz));
+
+        localDspStarted = true;
+
+        dspIntervalRef.current = setInterval(() => {
+          if (!isListeningRef.current) return;
+
+          analyser.getFloatTimeDomainData(timeData);
+          analyser.getByteFrequencyData(freqData);
+
+          let sumSq = 0;
+          for (let i = 0; i < timeData.length; i++) {
+            sumSq += timeData[i] * timeData[i];
+          }
+          const rms = Math.sqrt(sumSq / timeData.length);
+
+          let vocalEnergySum = 0;
+          const vocalBinCount = Math.max(1, vocalMaxBin - vocalMinBin + 1);
+          for (let b = vocalMinBin; b <= vocalMaxBin; b++) {
+            vocalEnergySum += freqData[b];
+          }
+          const vocalBandAvg = vocalEnergySum / vocalBinCount;
+
+          let hissEnergySum = 0;
+          const hissBinCount = Math.max(1, analyser.frequencyBinCount - hissMinBin);
+          for (let b = hissMinBin; b < analyser.frequencyBinCount; b++) {
+            hissEnergySum += freqData[b];
+          }
+          const hissBandAvg = hissEnergySum / hissBinCount;
+
+          // Continuously adapt ambient room noise floor when quiet
+          if (rms < noiseFloorRef.current * 1.45) {
+            noiseFloorRef.current = Math.max(
+              0.0035,
+              Math.min(0.03, noiseFloorRef.current * 0.94 + rms * 0.06)
+            );
+          }
+
+          const dynamicRmsThreshold = Math.max(0.011, noiseFloorRef.current * 2.25);
+          const isHumanVocalFormant =
+            rms > dynamicRmsThreshold &&
+            vocalBandAvg >= 22 &&
+            vocalBandAvg > hissBandAvg * 1.35;
+
+          const now = Date.now();
+
+          if (isHumanVocalFormant) {
+            lastVoiceDetectedTimeRef.current = now;
+            setVoiceActive(true);
+            if (voiceActivityTimeoutRef.current) {
+              clearTimeout(voiceActivityTimeoutRef.current);
+            }
+            voiceActivityTimeoutRef.current = setTimeout(() => {
+              setVoiceActive(false);
+            }, 650);
+
+            // Detect consonant/syllable transitions in human recitation
+            const energyDelta = Math.abs(vocalBandAvg - prevVoicedEnergyRef.current);
+            prevVoicedEnergyRef.current = vocalBandAvg;
+            const articulationBoost = energyDelta > 9 ? 1.24 : 1.0;
+
+            // Accumulate syllable cadence units locally on the user's device
+            accumulatedVoiceUnitsRef.current +=
+              0.24 * syncSpeedFactorRef.current * articulationBoost;
+
+            // If local/browser SpeechRecognition already advanced a word in the last 480ms, let ASR lead
+            if (now - lastAsrAdvanceTimeRef.current < 480) {
+              accumulatedVoiceUnitsRef.current = 0;
+              return;
+            }
+
+            // ================================================================
+            // ON-DEVICE CADENCE SYNC FOR PLAN TYPE 1: SARD (`sard`)
+            // ================================================================
+            if (plan.planType === 'sard') {
+              const wordsList = flatWordsRef.current;
+              const currIdx = currentIndexRef.current;
+              const currW = wordsList[currIdx];
+              if (!currW) return;
+
+              const requiredUnits = Math.max(0.85, currW.syllableWeight * 0.88);
+              if (
+                accumulatedVoiceUnitsRef.current >= requiredUnits &&
+                now - lastWordAdvanceTimeRef.current >= 175
+              ) {
+                accumulatedVoiceUnitsRef.current = 0;
+                lastWordAdvanceTimeRef.current = now;
+                const nextIdx = Math.min(wordsList.length, currIdx + 1);
+                currentIndexRef.current = nextIdx;
+                setCurrentWordIndex(nextIdx);
+                setLastMatchedSpoken(currW.textUthmani);
+                setLastMismatchSpoken('');
+              }
+            }
+            // ================================================================
+            // ON-DEVICE CADENCE SYNC FOR PLAN TYPE 2: NEW MEMORIZATION (`new_memorization`)
+            // ================================================================
+            else if (plan.planType === 'new_memorization') {
+              const groups = ayahGroupsRef.current;
+              const currentGroup = groups[activeAyahIdxRef.current];
+              const currOffset = ayahWordOffsetRef.current;
+              const currW = currentGroup?.words[currOffset];
+              if (!currW) return;
+
+              const requiredUnits = Math.max(0.85, currW.syllableWeight * 0.88);
+              if (
+                accumulatedVoiceUnitsRef.current >= requiredUnits &&
+                now - lastWordAdvanceTimeRef.current >= 175
+              ) {
+                accumulatedVoiceUnitsRef.current = 0;
+                lastWordAdvanceTimeRef.current = now;
+                setLastMatchedSpoken(currW.textUthmani);
+                setLastMismatchSpoken('');
+                stepRepetitionWord();
+              }
+            }
+            // ================================================================
+            // ON-DEVICE CADENCE SYNC FOR PLAN TYPE 3: REVIEW (`review`)
+            // ================================================================
+            else if (plan.planType === 'review') {
+              const qList = quizQuestionsRef.current;
+              const qStep = currentQuizStepRef.current;
+              const currentQ = qList[qStep];
+              if (!currentQ) return;
+
+              const targetWord = currentQ.targetWord;
+              const requiredUnits = Math.max(0.95, targetWord.syllableWeight * 0.92);
+              if (
+                accumulatedVoiceUnitsRef.current >= requiredUnits &&
+                now - lastWordAdvanceTimeRef.current >= 220
+              ) {
+                accumulatedVoiceUnitsRef.current = 0;
+                lastWordAdvanceTimeRef.current = now;
+                setWrongChoiceFlash(null);
+                setLastMatchedSpoken(targetWord.textUthmani);
+                setLastMismatchSpoken('');
+                setSolvedQuizIndices((prev) =>
+                  prev.includes(currentQ.wordIndex) ? prev : [...prev, currentQ.wordIndex]
+                );
+                if (qStep + 1 < qList.length) {
+                  currentQuizStepRef.current = qStep + 1;
+                  setCurrentQuizStep(qStep + 1);
+                } else if (currentPage < actualPageRange.endPage) {
+                  goToMushafPage(currentPage + 1);
+                } else {
+                  stopListeningSession();
+                }
+              }
+            }
+          } else {
+            prevVoicedEnergyRef.current = vocalBandAvg * 0.5;
+            // Immediately freeze/reset accumulated vocal units when the reader pauses (> 180ms of silence)
+            if (now - lastVoiceDetectedTimeRef.current > 180) {
+              accumulatedVoiceUnitsRef.current = 0;
+            }
+          }
+        }, 45);
+      } catch {
+        // If getUserMedia fails, fall back to SpeechRecognition below
+      }
+    }
+
+    // 2. Also attach Browser SpeechRecognition (with on-device processLocally enabled when supported)
     const SpeechRecognitionAPI =
       (window as unknown as { SpeechRecognition?: any; webkitSpeechRecognition?: any })
         .SpeechRecognition ||
       (window as unknown as { webkitSpeechRecognition?: any }).webkitSpeechRecognition;
 
-    if (!SpeechRecognitionAPI) {
-      setSpeechError(
-        lang === 'ar'
-          ? 'متصفحك الحالي لا يدعم التعرف الصوتي المباشر (SpeechRecognition). يرجى استخدام متصفح Chrome أو Edge أو Safari لمطابقة القراءة الصوتية مع الآيات.'
-          : 'Your browser does not support Web SpeechRecognition. Please use Chrome, Edge, or Safari to match spoken recitation with verses.'
-      );
-      return;
-    }
-
-    // Stop any previous instance cleanly before starting
-    if (recognitionRef.current) {
+    if (SpeechRecognitionAPI) {
       try {
-        recognitionRef.current.onend = null;
-        recognitionRef.current.onerror = null;
-        recognitionRef.current.onresult = null;
-        recognitionRef.current.stop();
+        const recognition = new SpeechRecognitionAPI();
+        recognition.lang = 'ar-SA';
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.maxAlternatives = 3;
+        // Prefer on-device browser speech recognition whenever supported by the user's browser
+        if ('processLocally' in recognition) {
+          try {
+            recognition.processLocally = true;
+          } catch {
+            // Ignore read-only property in older browsers
+          }
+        }
+
+        recognition.onsoundstart = () => {
+          if (!isListeningRef.current) return;
+          setVoiceActive(true);
+        };
+
+        recognition.onspeechstart = () => {
+          if (!isListeningRef.current) return;
+          setVoiceActive(true);
+        };
+
+        recognition.onresult = (event: any) => {
+          handleSpeechResultRef.current?.(event);
+        };
+
+        recognition.onerror = (event: any) => {
+          const errCode = event?.error;
+          // Only stop if neither on-device Web Audio DSP nor SpeechRecognition has microphone permission
+          if (
+            (errCode === 'not-allowed' || errCode === 'service-not-allowed') &&
+            !mediaStreamRef.current
+          ) {
+            setSpeechError(
+              lang === 'ar'
+                ? 'يرجى السماح بصلاحية الميكروفون في المتصفح لمطابقة كلامك مع الآيات.'
+                : 'Please allow microphone access to match your speech with the verses.'
+            );
+            stopListeningSession();
+          } else if (errCode === 'audio-capture' && !mediaStreamRef.current) {
+            setSpeechError(
+              lang === 'ar'
+                ? 'تعذر الوصول إلى الميكروفون. تأكد من عدم استخدامه بواسطة تطبيق آخر.'
+                : 'Microphone is unavailable or in use by another application.'
+            );
+            stopListeningSession();
+          }
+        };
+
+        recognition.onend = () => {
+          if (!isListeningRef.current) return;
+          recognitionRestartTimerRef.current = setTimeout(() => {
+            if (!isListeningRef.current || !recognitionRef.current) return;
+            try {
+              processedResultIndexRef.current = 0;
+              processedTokenCountRef.current = 0;
+              lastConsumedTokenNormRef.current = '';
+              recognitionRef.current.start();
+            } catch {
+              // Ignore if already started
+            }
+          }, 300);
+        };
+
+        recognitionRef.current = recognition;
+        recognition.start();
       } catch {
-        // Ignore
-      }
-      recognitionRef.current = null;
-    }
-
-    try {
-      const recognition = new SpeechRecognitionAPI();
-      recognition.lang = 'ar-SA';
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.maxAlternatives = 3;
-
-      recognition.onsoundstart = () => {
-        if (!isListeningRef.current) return;
-        setVoiceActive(true);
-      };
-
-      recognition.onspeechstart = () => {
-        if (!isListeningRef.current) return;
-        setVoiceActive(true);
-      };
-
-      recognition.onresult = (event: any) => {
-        handleSpeechResultRef.current?.(event);
-      };
-
-      recognition.onerror = (event: any) => {
-        const errCode = event?.error;
-        if (errCode === 'not-allowed' || errCode === 'service-not-allowed') {
+        if (!localDspStarted) {
           setSpeechError(
             lang === 'ar'
-              ? 'يرجى السماح بصلاحية الميكروفون في المتصفح لمطابقة كلامك مع الآيات.'
-              : 'Please allow microphone access to match your speech with the verses.'
-          );
-          stopListeningSession();
-        } else if (errCode === 'audio-capture') {
-          setSpeechError(
-            lang === 'ar'
-              ? 'تعذر الوصول إلى الميكروفون. تأكد من عدم استخدامه بواسطة تطبيق آخر.'
-              : 'Microphone is unavailable or in use by another application.'
+              ? 'تعذر بدء المزامنة الصوتية من المتصفح. تأكد من السماح بصلاحية الميكروفون.'
+              : 'Could not start browser voice synchronization. Please check microphone permissions.'
           );
           stopListeningSession();
         }
-      };
-
-      recognition.onend = () => {
-        if (!isListeningRef.current) return;
-        // Reconnect recognition session smoothly if the browser ended the stream after a pause
-        recognitionRestartTimerRef.current = setTimeout(() => {
-          if (!isListeningRef.current || !recognitionRef.current) return;
-          try {
-            processedResultIndexRef.current = 0;
-            processedTokenCountRef.current = 0;
-            lastConsumedTokenNormRef.current = '';
-            recognitionRef.current.start();
-          } catch {
-            // Ignore if already started
-          }
-        }, 300);
-      };
-
-      recognitionRef.current = recognition;
-      isListeningRef.current = true;
-      setIsListening(true);
-      recognition.start();
-    } catch {
+      }
+    } else if (!localDspStarted) {
       setSpeechError(
         lang === 'ar'
-          ? 'تعذر بدء التعرف الصوتي. تأكد من صلاحية الميكروفون.'
-          : 'Could not start speech recognition. Please check microphone permissions.'
+          ? 'يرجى السماح بصلاحية الميكروفون في متصفحك لتشغيل تقنية المزامنة الصوتية من جهازك.'
+          : 'Please allow microphone access in your browser to run on-device voice synchronization.'
       );
       stopListeningSession();
     }

@@ -24,14 +24,17 @@
           var root = document.getElementById('root');
           if (root && root.children.length > 0) return;
           loaded = true;
-          var css = document.createElement('link');
-          css.rel = 'stylesheet';
-          css.href = './public/gh-pages-fallback.css';
-          document.head.appendChild(css);
-          var script = document.createElement('script');
-          script.type = 'module';
-          script.src = './public/gh-pages-fallback.js';
-          document.body.appendChild(script);
+          var tryLoadJs = function (paths, idx) {
+            if (idx >= paths.length) return;
+            var script = document.createElement('script');
+            script.type = 'module';
+            script.src = paths[idx];
+            script.onerror = function () {
+              tryLoadJs(paths, idx + 1);
+            };
+            document.body.appendChild(script);
+          };
+          tryLoadJs(['./public/gh-pages-fallback.js', './gh-pages-fallback.js'], 0);
         }
         window.addEventListener(
           'error',
@@ -48,7 +51,7 @@
           true
         );
         window.addEventListener('DOMContentLoaded', function () {
-          setTimeout(injectFallbackBundle, 900);
+          setTimeout(injectFallbackBundle, 650);
         });
       })();
     </script>
