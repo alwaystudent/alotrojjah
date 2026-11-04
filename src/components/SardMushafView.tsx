@@ -399,26 +399,25 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
   const [wrongQuizAttempts, setWrongQuizAttempts] = useState<number>(0);
   const [wrongChoiceFlash, setWrongChoiceFlash] = useState<string | null>(null);
 
-  // Refs for continuous, strict speech-to-word alignment
+  // Refs for continuous, strict speech-to-word alignment across all 3 plan types
   const recognitionRef = useRef<any>(null);
   const recognitionRestartTimerRef = useRef<any>(null);
+  const voiceActivityTimeoutRef = useRef<any>(null);
   const isListeningRef = useRef<boolean>(false);
   const flatWordsRef = useRef<MushafWordItem[]>([]);
   const ayahGroupsRef = useRef<MushafAyahGroup[]>([]);
   const currentIndexRef = useRef<number>(0);
   const lastWordAdvanceTimeRef = useRef<number>(0);
   const lastVoiceDetectedTimeRef = useRef<number>(0);
-  const noiseFloorRef = useRef<number>(4.5);
   const syncSpeedFactorRef = useRef<number>(defaultSyncSpeed);
   const processedResultIndexRef = useRef<number>(0);
   const processedTokenCountRef = useRef<number>(0);
+  const lastConsumedTokenNormRef = useRef<string>('');
   const activeWordDomRef = useRef<HTMLSpanElement | null>(null);
   const mushafScrollContainerRef = useRef<HTMLDivElement | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-  const analyserIntervalRef = useRef<any>(null);
+  const handleSpeechResultRef = useRef<((event: any) => void) | null>(null);
 
-  // Refs for Repetition mode inside speech callback
+  // Refs for Repetition & Review modes inside speech callback
   const activeAyahIdxRef = useRef<number>(0);
   const ayahWordOffsetRef = useRef<number>(0);
   const currentAyahRepCountRef = useRef<number>(0);
@@ -545,8 +544,11 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
       setAyahWordOffset(0);
       currentAyahRepCountRef.current = 0;
       setCurrentAyahRepCount(0);
+      setCurrentQuizStep(0);
+      setSolvedQuizIndices([]);
       setLastMatchedSpoken('');
       setLastMismatchSpoken('');
+      lastConsumedTokenNormRef.current = '';
       setLoadingPage(true);
       setCurrentPage(clamped);
       if (mushafScrollContainerRef.current) {
@@ -702,8 +704,10 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
           );
 
         const ayahWords: MushafWordItem[] = rawTokens.map((token, idx) => {
+          // Strip Uthmani Silah signs (ۥ / ۦ) after Ha' Al-Kinayah (هۥ / هۦ) so لهۥ/بهۦ/إنهۥ match Imla'i له/به/إنه
+          const cleanedTokenForDagger = token.replace(/\u0647[\u06E5\u06E6]/g, 'ه');
           const normNoDagger = normalizeArabicForAlignment(token, false);
-          const normWithDagger = normalizeArabicForAlignment(token, true);
+          const normWithDagger = normalizeArabicForAlignment(cleanedTokenForDagger, true);
           const item: MushafWordItem = {
             globalIndex: globalIdx++,
             surahNumber: v.surahNumber,
@@ -741,6 +745,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
       setMistakeIndices([]);
       setLastMatchedSpoken('');
       setLastMismatchSpoken('');
+      lastConsumedTokenNormRef.current = '';
       setActiveAyahIdx(0);
       activeAyahIdxRef.current = 0;
       setCurrentAyahRepCount(0);
@@ -838,6 +843,11 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
     setIsListening(false);
     setVoiceActive(false);
 
+    if (voiceActivityTimeoutRef.current) {
+      clearTimeout(voiceActivityTimeoutRef.current);
+      voiceActivityTimeoutRef.current = null;
+    }
+
     if (recognitionRestartTimerRef.current) {
       clearTimeout(recognitionRestartTimerRef.current);
       recognitionRestartTimerRef.current = null;
@@ -848,30 +858,13 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
         recognitionRef.current.onend = null;
         recognitionRef.current.onerror = null;
         recognitionRef.current.onresult = null;
+        recognitionRef.current.onspeechstart = null;
+        recognitionRef.current.onsoundstart = null;
         recognitionRef.current.stop();
       } catch {
         // Ignore
       }
       recognitionRef.current = null;
-    }
-
-    if (analyserIntervalRef.current) {
-      clearInterval(analyserIntervalRef.current);
-      analyserIntervalRef.current = null;
-    }
-
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
-      mediaStreamRef.current = null;
-    }
-
-    if (audioContextRef.current) {
-      try {
-        audioContextRef.current.close();
-      } catch {
-        // Ignore
-      }
-      audioContextRef.current = null;
     }
   }, []);
 
@@ -945,7 +938,8 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
       spokenTokensAtPos: string[],
       nextSpokenToken: string | undefined,
       targetWord: MushafWordItem,
-      nextTargetWord: MushafWordItem | undefined
+      nextTargetWord: MushafWordItem | undefined,
+      prevTargetWord?: MushafWordItem
     ): {
       matched: boolean;
       wordsAdvanced: 1 | 2;
@@ -958,7 +952,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
 
         // 1. Direct single-word match against Uthmani or Imla'i form
         const directScore = scoreSpokenAgainstMushafWord(spokenNorm, targetWord);
-        if (directScore >= 0.78) {
+        if (directScore >= 0.76) {
           return {
             matched: true,
             wordsAdvanced: 1,
@@ -967,13 +961,13 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
           };
         }
 
-        // 2. Prefix-attached/detached match (e.g. "والعصر" vs "العصر" or "فسبح" vs "سبح")
+        // 2. Prefix-attached/detached match (e.g. "والعصر" vs "العصر", "ولا" vs "لا", "فسبح" vs "سبح")
         if (
-          spokenNorm.length >= 4 &&
+          spokenNorm.length >= 3 &&
           (spokenNorm.startsWith('و') || spokenNorm.startsWith('ف'))
         ) {
           const strippedScore = scoreSpokenAgainstMushafWord(spokenNorm.slice(1), targetWord);
-          if (strippedScore >= 0.85) {
+          if (strippedScore >= 0.84) {
             return {
               matched: true,
               wordsAdvanced: 1,
@@ -983,7 +977,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
           }
         }
         if (
-          targetWord.normalizedWithDagger.length >= 4 &&
+          targetWord.normalizedWithDagger.length >= 3 &&
           (targetWord.normalizedWithDagger.startsWith('و') ||
             targetWord.normalizedWithDagger.startsWith('ف'))
         ) {
@@ -992,7 +986,27 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
             normalizedText: targetWord.normalizedText.slice(1),
             normalizedWithDagger: targetWord.normalizedWithDagger.slice(1),
           };
-          if (scoreSpokenAgainstMushafWord(spokenNorm, targetWithoutConjunction) >= 0.86) {
+          if (scoreSpokenAgainstMushafWord(spokenNorm, targetWithoutConjunction) >= 0.84) {
+            return {
+              matched: true,
+              wordsAdvanced: 1,
+              tokensConsumed: 1,
+              matchedText: rawSpoken,
+            };
+          }
+        }
+
+        // 2b. Merged Previous + Current Word in ASR (e.g. ASR merges "الحمد" + "لله" into "الحمدلله" after "الحمد" was already matched)
+        if (prevTargetWord) {
+          const prevPlusCurr: MushafWordItem = {
+            ...targetWord,
+            normalizedText: prevTargetWord.normalizedText + targetWord.normalizedText,
+            normalizedWithDagger:
+              prevTargetWord.normalizedWithDagger + targetWord.normalizedWithDagger,
+            skeletonText: prevTargetWord.skeletonText + targetWord.skeletonText,
+            phoneticSkeleton: prevTargetWord.phoneticSkeleton + targetWord.phoneticSkeleton,
+          };
+          if (scoreSpokenAgainstMushafWord(spokenNorm, prevPlusCurr) >= 0.84) {
             return {
               matched: true,
               wordsAdvanced: 1,
@@ -1005,7 +1019,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
         // 3. Compound 2-spoken-words -> 1-Uthmani-word (e.g. "يا أيها" -> "يَـٰٓأَيُّهَا", "يا قوم" -> "يَـٰقَوْمِ")
         if (nextSpokenToken) {
           const joinedSpoken = normalizeArabicForAlignment(rawSpoken + nextSpokenToken, false);
-          if (scoreSpokenAgainstMushafWord(joinedSpoken, targetWord) >= 0.82) {
+          if (scoreSpokenAgainstMushafWord(joinedSpoken, targetWord) >= 0.8) {
             return {
               matched: true,
               wordsAdvanced: 1,
@@ -1015,7 +1029,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
           }
         }
 
-        // 4. Compound 1-spoken-word -> 2-Uthmani-words (e.g. "ألا" -> "أَن لَّا", "مما" -> "مِن مَّا")
+        // 4. Compound 1-spoken-word -> 2-Uthmani-words (e.g. "ألا" -> "أَن لَّا", "مما" -> "مِن مَّا", "الحمدلله" -> "ٱلْحَمْدُ لِلَّهِ")
         if (nextTargetWord) {
           const combinedTarget: MushafWordItem = {
             ...targetWord,
@@ -1025,7 +1039,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
             skeletonText: targetWord.skeletonText + nextTargetWord.skeletonText,
             phoneticSkeleton: targetWord.phoneticSkeleton + nextTargetWord.phoneticSkeleton,
           };
-          if (scoreSpokenAgainstMushafWord(spokenNorm, combinedTarget) >= 0.84) {
+          if (scoreSpokenAgainstMushafWord(spokenNorm, combinedTarget) >= 0.82) {
             return {
               matched: true,
               wordsAdvanced: 2,
@@ -1035,15 +1049,32 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
           }
         }
 
-        // 5. Short-particle 1-word bridge: ONLY if current target word is a short particle (<= 3 letters)
-        // that ASR fused/dropped and the reader clearly pronounced the immediately following word
+        // 5A. Contextual 2-token lock: if token[i+1] matches nextTargetWord strongly, then token[i] + token[i+1] are targetWord + nextTargetWord
+        if (nextSpokenToken && nextTargetWord) {
+          const nextSpokenNorm = normalizeArabicForAlignment(nextSpokenToken, false);
+          if (scoreSpokenAgainstMushafWord(nextSpokenNorm, nextTargetWord) >= 0.84) {
+            return {
+              matched: true,
+              wordsAdvanced: 2,
+              tokensConsumed: 2,
+              matchedText: `${rawSpoken} ${nextSpokenToken}`,
+            };
+          }
+        }
+
+        // 5B. 1-word lookahead bridge when ASR drops/fuses a word and clearly recognizes the immediately following word
         if (
           nextTargetWord &&
-          targetWord.normalizedText.length <= 3 &&
-          nextTargetWord.normalizedText !== targetWord.normalizedText
+          nextTargetWord.normalizedText !== targetWord.normalizedText &&
+          (targetWord.normalizedText.length <= 3 || !targetWord.isFirstWordInAyah)
         ) {
-          const nextScore = scoreSpokenAgainstMushafWord(spokenNorm, nextTargetWord);
-          if (nextScore >= 0.88) {
+          const nextScore = Math.max(
+            scoreSpokenAgainstMushafWord(spokenNorm, nextTargetWord),
+            spokenNorm.length >= 4 && (spokenNorm.startsWith('و') || spokenNorm.startsWith('ف'))
+              ? scoreSpokenAgainstMushafWord(spokenNorm.slice(1), nextTargetWord)
+              : 0
+          );
+          if (nextScore >= 0.86) {
             return {
               matched: true,
               wordsAdvanced: 2,
@@ -1064,8 +1095,286 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
     []
   );
 
-  // Start Real-Time Speech-to-Verse Matching Session (Words & Verses ONLY appear when spoken speech matches!)
-  const startListeningSession = async () => {
+  // Keep fresh speech result handler in a ref so continuous SpeechRecognition NEVER suffers from stale closures
+  handleSpeechResultRef.current = (event: any) => {
+    if (!isListeningRef.current) return;
+
+    setVoiceActive(true);
+    lastVoiceDetectedTimeRef.current = Date.now();
+    if (voiceActivityTimeoutRef.current) {
+      clearTimeout(voiceActivityTimeoutRef.current);
+    }
+    voiceActivityTimeoutRef.current = setTimeout(() => {
+      setVoiceActive(false);
+    }, 1100);
+
+    const startRIdx = Math.min(
+      processedResultIndexRef.current,
+      typeof event.resultIndex === 'number' ? event.resultIndex : 0
+    );
+
+    for (let rIdx = startRIdx; rIdx < event.results.length; rIdx++) {
+      if (rIdx < processedResultIndexRef.current) continue;
+
+      const resultObj = event.results[rIdx];
+      if (!resultObj || !resultObj[0]) continue;
+
+      if (rIdx > processedResultIndexRef.current) {
+        processedResultIndexRef.current = rIdx;
+        processedTokenCountRef.current = 0;
+        lastConsumedTokenNormRef.current = '';
+      }
+
+      const primaryTranscript = String(resultObj[0].transcript || '').trim();
+      if (!primaryTranscript) continue;
+
+      const primaryTokens = primaryTranscript
+        .split(/\s+/)
+        .map((t) => t.trim())
+        .filter((t) => normalizeArabicForAlignment(t, false).length > 0);
+
+      if (primaryTokens.length === 0) continue;
+
+      const alt1Tokens = resultObj[1]?.transcript
+        ? String(resultObj[1].transcript)
+            .trim()
+            .split(/\s+/)
+            .filter((t) => normalizeArabicForAlignment(t, false).length > 0)
+        : [];
+      const alt2Tokens = resultObj[2]?.transcript
+        ? String(resultObj[2].transcript)
+            .trim()
+            .split(/\s+/)
+            .filter((t) => normalizeArabicForAlignment(t, false).length > 0)
+        : [];
+
+      // If ASR compressed two earlier tokens into one (e.g. "الحمد لله" -> "الحمدلله") and added a new word at the end,
+      // adjust processedTokenCountRef so the new word at the end is never skipped!
+      const lastTokenNorm = normalizeArabicForAlignment(
+        primaryTokens[primaryTokens.length - 1],
+        false
+      );
+      if (
+        processedTokenCountRef.current >= primaryTokens.length &&
+        lastTokenNorm !== lastConsumedTokenNormRef.current
+      ) {
+        processedTokenCountRef.current = Math.max(0, primaryTokens.length - 1);
+      }
+
+      const startScanIdx = Math.max(0, processedTokenCountRef.current);
+      let i = startScanIdx;
+
+      while (i < primaryTokens.length) {
+        const candidatesAtPos: string[] = [primaryTokens[i]];
+        if (alt1Tokens[i] && !candidatesAtPos.includes(alt1Tokens[i])) {
+          candidatesAtPos.push(alt1Tokens[i]);
+        }
+        if (alt2Tokens[i] && !candidatesAtPos.includes(alt2Tokens[i])) {
+          candidatesAtPos.push(alt2Tokens[i]);
+        }
+
+        const nextSpoken = primaryTokens[i + 1];
+        const currentSpokenNorm = normalizeArabicForAlignment(primaryTokens[i], false);
+
+        // Introductory Isti'adhah / Basmalah words when the reader starts reciting
+        const isIntroductoryFormulaWord = [
+          'اعوذ',
+          'بالله',
+          'الشيطان',
+          'الرجيم',
+          'بسم',
+          'الله',
+          'الرحمن',
+          'الرحيم',
+        ].includes(currentSpokenNorm);
+
+        // ====================================================================
+        // PLAN TYPE 1: SARD (`plan.planType === 'sard'`)
+        // ====================================================================
+        if (plan.planType === 'sard') {
+          const wordsList = flatWordsRef.current;
+          const currIdx = currentIndexRef.current;
+          const targetWord = wordsList[currIdx];
+          if (!targetWord) break;
+
+          const nextTargetWord = wordsList[currIdx + 1];
+          const prevTargetWord = currIdx > 0 ? wordsList[currIdx - 1] : undefined;
+
+          const matchRes = checkTokenMatchesWord(
+            candidatesAtPos,
+            nextSpoken,
+            targetWord,
+            nextTargetWord,
+            prevTargetWord
+          );
+
+          if (matchRes.matched) {
+            const nextWordIdx = Math.min(
+              wordsList.length,
+              currIdx + matchRes.wordsAdvanced
+            );
+            currentIndexRef.current = nextWordIdx;
+            setCurrentWordIndex(nextWordIdx);
+            setLastMatchedSpoken(matchRes.matchedText);
+            setLastMismatchSpoken('');
+            lastWordAdvanceTimeRef.current = Date.now();
+            lastConsumedTokenNormRef.current = normalizeArabicForAlignment(
+              primaryTokens[Math.min(primaryTokens.length - 1, i + matchRes.tokensConsumed - 1)],
+              false
+            );
+            i += matchRes.tokensConsumed;
+            processedTokenCountRef.current = i;
+          } else if (
+            isIntroductoryFormulaWord &&
+            (currIdx === 0 || targetWord.isFirstWordInAyah)
+          ) {
+            // Gracefully accept Isti'adhah / Basmalah at the start of a verse without flagging a mismatch
+            setLastMatchedSpoken(primaryTokens[i]);
+            setLastMismatchSpoken('');
+            lastConsumedTokenNormRef.current = currentSpokenNorm;
+            i += 1;
+            processedTokenCountRef.current = i;
+          } else {
+            if (i < primaryTokens.length - 1 || resultObj.isFinal) {
+              setLastMismatchSpoken(primaryTokens[i]);
+              lastConsumedTokenNormRef.current = currentSpokenNorm;
+              processedTokenCountRef.current = i + 1;
+            }
+            i += 1;
+          }
+        }
+        // ====================================================================
+        // PLAN TYPE 2: NEW MEMORIZATION (`plan.planType === 'new_memorization'`)
+        // ====================================================================
+        else if (plan.planType === 'new_memorization') {
+          const groups = ayahGroupsRef.current;
+          const currentGroup = groups[activeAyahIdxRef.current];
+          const currOffset = ayahWordOffsetRef.current;
+          const targetWord = currentGroup?.words[currOffset];
+          if (!targetWord) break;
+
+          const nextTargetWord = currentGroup?.words[currOffset + 1];
+          const prevTargetWord =
+            currOffset > 0 ? currentGroup?.words[currOffset - 1] : undefined;
+
+          const matchRes = checkTokenMatchesWord(
+            candidatesAtPos,
+            nextSpoken,
+            targetWord,
+            nextTargetWord,
+            prevTargetWord
+          );
+
+          if (matchRes.matched) {
+            stepRepetitionWord();
+            if (matchRes.wordsAdvanced === 2) {
+              stepRepetitionWord();
+            }
+            setLastMatchedSpoken(matchRes.matchedText);
+            setLastMismatchSpoken('');
+            lastWordAdvanceTimeRef.current = Date.now();
+            lastConsumedTokenNormRef.current = normalizeArabicForAlignment(
+              primaryTokens[Math.min(primaryTokens.length - 1, i + matchRes.tokensConsumed - 1)],
+              false
+            );
+            i += matchRes.tokensConsumed;
+            processedTokenCountRef.current = i;
+          } else if (isIntroductoryFormulaWord && currOffset === 0) {
+            setLastMatchedSpoken(primaryTokens[i]);
+            setLastMismatchSpoken('');
+            lastConsumedTokenNormRef.current = currentSpokenNorm;
+            i += 1;
+            processedTokenCountRef.current = i;
+          } else {
+            if (i < primaryTokens.length - 1 || resultObj.isFinal) {
+              setLastMismatchSpoken(primaryTokens[i]);
+              lastConsumedTokenNormRef.current = currentSpokenNorm;
+              processedTokenCountRef.current = i + 1;
+            }
+            i += 1;
+          }
+        }
+        // ====================================================================
+        // PLAN TYPE 3: REVIEW (`plan.planType === 'review'`)
+        // ====================================================================
+        else if (plan.planType === 'review') {
+          const currentQ = quizQuestions[currentQuizStep];
+          if (!currentQ) break;
+
+          const targetWord = currentQ.targetWord;
+          const wordsList = flatWordsRef.current;
+          const prevTargetWord =
+            targetWord.globalIndex > 0 ? wordsList[targetWord.globalIndex - 1] : undefined;
+
+          const matchRes = checkTokenMatchesWord(
+            candidatesAtPos,
+            nextSpoken,
+            targetWord,
+            undefined,
+            prevTargetWord
+          );
+
+          if (matchRes.matched) {
+            setWrongChoiceFlash(null);
+            setLastMatchedSpoken(matchRes.matchedText);
+            setLastMismatchSpoken('');
+            if (!solvedQuizIndices.includes(currentQ.wordIndex)) {
+              setSolvedQuizIndices((prev) => [...prev, currentQ.wordIndex]);
+            }
+            if (currentQuizStep + 1 < quizQuestions.length) {
+              setCurrentQuizStep((s) => s + 1);
+            } else if (currentPage < actualPageRange.endPage) {
+              goToMushafPage(currentPage + 1);
+            } else {
+              stopListeningSession();
+            }
+            lastConsumedTokenNormRef.current = normalizeArabicForAlignment(
+              primaryTokens[Math.min(primaryTokens.length - 1, i + matchRes.tokensConsumed - 1)],
+              false
+            );
+            i += matchRes.tokensConsumed;
+            processedTokenCountRef.current = i;
+          } else {
+            // Check if the reader is reciting the visible context words leading up to the blank
+            const contextStart = Math.max(0, targetWord.globalIndex - 5);
+            let isContextWord = isIntroductoryFormulaWord;
+            for (let cIdx = contextStart; cIdx < targetWord.globalIndex; cIdx++) {
+              if (
+                scoreSpokenAgainstMushafWord(currentSpokenNorm, wordsList[cIdx]) >= 0.78
+              ) {
+                isContextWord = true;
+                break;
+              }
+            }
+
+            if (isContextWord) {
+              setLastMatchedSpoken(primaryTokens[i]);
+              setLastMismatchSpoken('');
+              lastConsumedTokenNormRef.current = currentSpokenNorm;
+              i += 1;
+              processedTokenCountRef.current = i;
+            } else {
+              if (i < primaryTokens.length - 1 || resultObj.isFinal) {
+                setLastMismatchSpoken(primaryTokens[i]);
+                lastConsumedTokenNormRef.current = currentSpokenNorm;
+                processedTokenCountRef.current = i + 1;
+              }
+              i += 1;
+            }
+          }
+        }
+      }
+
+      if (resultObj.isFinal) {
+        processedResultIndexRef.current = rIdx + 1;
+        processedTokenCountRef.current = 0;
+        lastConsumedTokenNormRef.current = '';
+      }
+    }
+  };
+
+  // Start Real-Time Speech-to-Verse Matching Session (Synchronous start, zero getUserMedia mic contention!)
+  const startListeningSession = () => {
     setSpeechError(null);
     setSardStarted(true);
     setRevealAllPreview(false);
@@ -1075,6 +1384,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
     lastVoiceDetectedTimeRef.current = 0;
     processedResultIndexRef.current = 0;
     processedTokenCountRef.current = 0;
+    lastConsumedTokenNormRef.current = '';
 
     const SpeechRecognitionAPI =
       (window as unknown as { SpeechRecognition?: any; webkitSpeechRecognition?: any })
@@ -1090,53 +1400,17 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
       return;
     }
 
-    try {
-      // Optional Web Audio API stream ONLY for visual voice indicator (never advances words without speech match)
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-      mediaStreamRef.current = stream;
-
-      const AudioCtx =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      const audioCtx = new AudioCtx();
-      audioContextRef.current = audioCtx;
-      if (audioCtx.state === 'suspended') {
-        await audioCtx.resume();
+    // Stop any previous instance cleanly before starting
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.onend = null;
+        recognitionRef.current.onerror = null;
+        recognitionRef.current.onresult = null;
+        recognitionRef.current.stop();
+      } catch {
+        // Ignore
       }
-
-      const source = audioCtx.createMediaStreamSource(stream);
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.4;
-      source.connect(analyser);
-
-      const timeData = new Uint8Array(analyser.fftSize);
-      analyserIntervalRef.current = setInterval(() => {
-        if (!isListeningRef.current) return;
-        analyser.getByteTimeDomainData(timeData);
-        let sumSq = 0;
-        for (let i = 0; i < timeData.length; i++) {
-          const centered = timeData[i] - 128;
-          sumSq += centered * centered;
-        }
-        const rms = Math.sqrt(sumSq / timeData.length);
-        if (rms < noiseFloorRef.current + 1.5) {
-          noiseFloorRef.current = Math.min(7, Math.max(2, noiseFloorRef.current * 0.95 + rms * 0.05));
-        }
-        const isVoice = rms >= noiseFloorRef.current + 2.2;
-        if (isVoice) {
-          lastVoiceDetectedTimeRef.current = Date.now();
-        }
-        setVoiceActive(isVoice || Date.now() - lastVoiceDetectedTimeRef.current <= 250);
-      }, 60);
-    } catch {
-      // Even if getUserMedia visualizer is blocked, still start SpeechRecognition
+      recognitionRef.current = null;
     }
 
     try {
@@ -1146,127 +1420,18 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
       recognition.interimResults = true;
       recognition.maxAlternatives = 3;
 
-      recognition.onresult = (event: any) => {
+      recognition.onsoundstart = () => {
         if (!isListeningRef.current) return;
         setVoiceActive(true);
-        lastVoiceDetectedTimeRef.current = Date.now();
+      };
 
-        for (let rIdx = processedResultIndexRef.current; rIdx < event.results.length; rIdx++) {
-          const resultObj = event.results[rIdx];
-          if (!resultObj || !resultObj[0]) continue;
+      recognition.onspeechstart = () => {
+        if (!isListeningRef.current) return;
+        setVoiceActive(true);
+      };
 
-          if (rIdx > processedResultIndexRef.current) {
-            processedResultIndexRef.current = rIdx;
-            processedTokenCountRef.current = 0;
-          }
-
-          // Collect tokens from primary hypothesis and alternatives
-          const primaryTranscript = String(resultObj[0].transcript || '').trim();
-          if (!primaryTranscript) continue;
-
-          const primaryTokens = primaryTranscript
-            .split(/\s+/)
-            .map((t) => t.trim())
-            .filter((t) => normalizeArabicForAlignment(t, false).length > 0);
-
-          const alt1Tokens = resultObj[1]?.transcript
-            ? String(resultObj[1].transcript)
-                .trim()
-                .split(/\s+/)
-                .filter((t) => normalizeArabicForAlignment(t, false).length > 0)
-            : [];
-          const alt2Tokens = resultObj[2]?.transcript
-            ? String(resultObj[2].transcript)
-                .trim()
-                .split(/\s+/)
-                .filter((t) => normalizeArabicForAlignment(t, false).length > 0)
-            : [];
-
-          const startScanIdx = Math.max(
-            processedTokenCountRef.current,
-            primaryTokens.length - 6
-          );
-
-          let i = startScanIdx;
-          while (i < primaryTokens.length) {
-            const candidatesAtPos: string[] = [primaryTokens[i]];
-            if (alt1Tokens[i] && !candidatesAtPos.includes(alt1Tokens[i])) {
-              candidatesAtPos.push(alt1Tokens[i]);
-            }
-            if (alt2Tokens[i] && !candidatesAtPos.includes(alt2Tokens[i])) {
-              candidatesAtPos.push(alt2Tokens[i]);
-            }
-
-            const nextSpoken = primaryTokens[i + 1];
-
-            if (plan.planType === 'sard') {
-              const wordsList = flatWordsRef.current;
-              const currIdx = currentIndexRef.current;
-              const targetWord = wordsList[currIdx];
-              if (!targetWord) break;
-
-              const nextTargetWord = wordsList[currIdx + 1];
-              const matchRes = checkTokenMatchesWord(
-                candidatesAtPos,
-                nextSpoken,
-                targetWord,
-                nextTargetWord
-              );
-
-              if (matchRes.matched) {
-                const nextWordIdx = Math.min(
-                  wordsList.length,
-                  currIdx + matchRes.wordsAdvanced
-                );
-                currentIndexRef.current = nextWordIdx;
-                setCurrentWordIndex(nextWordIdx);
-                setLastMatchedSpoken(matchRes.matchedText);
-                setLastMismatchSpoken('');
-                lastWordAdvanceTimeRef.current = Date.now();
-                i += matchRes.tokensConsumed;
-                processedTokenCountRef.current = i;
-              } else {
-                // Only report a mismatch if the user has finished speaking this word (not mid-syllable)
-                if (i < primaryTokens.length - 1 || resultObj.isFinal) {
-                  setLastMismatchSpoken(primaryTokens[i]);
-                }
-                i += 1;
-              }
-            } else if (plan.planType === 'new_memorization') {
-              const groups = ayahGroupsRef.current;
-              const currentGroup = groups[activeAyahIdxRef.current];
-              const targetWord = currentGroup?.words[ayahWordOffsetRef.current];
-              if (!targetWord) break;
-
-              const nextTargetWord = currentGroup?.words[ayahWordOffsetRef.current + 1];
-              const matchRes = checkTokenMatchesWord(
-                candidatesAtPos,
-                nextSpoken,
-                targetWord,
-                nextTargetWord
-              );
-
-              if (matchRes.matched) {
-                stepRepetitionWord();
-                if (matchRes.wordsAdvanced === 2) {
-                  stepRepetitionWord();
-                }
-                setLastMatchedSpoken(matchRes.matchedText);
-                setLastMismatchSpoken('');
-                lastWordAdvanceTimeRef.current = Date.now();
-                i += matchRes.tokensConsumed;
-                processedTokenCountRef.current = i;
-              } else {
-                if (i < primaryTokens.length - 1 || resultObj.isFinal) {
-                  setLastMismatchSpoken(primaryTokens[i]);
-                }
-                i += 1;
-              }
-            } else {
-              i += 1;
-            }
-          }
-        }
+      recognition.onresult = (event: any) => {
+        handleSpeechResultRef.current?.(event);
       };
 
       recognition.onerror = (event: any) => {
@@ -1278,22 +1443,30 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
               : 'Please allow microphone access to match your speech with the verses.'
           );
           stopListeningSession();
+        } else if (errCode === 'audio-capture') {
+          setSpeechError(
+            lang === 'ar'
+              ? 'تعذر الوصول إلى الميكروفون. تأكد من عدم استخدامه بواسطة تطبيق آخر.'
+              : 'Microphone is unavailable or in use by another application.'
+          );
+          stopListeningSession();
         }
       };
 
       recognition.onend = () => {
         if (!isListeningRef.current) return;
-        // Reconnect recognition session smoothly if the browser ended the stream after a long pause
+        // Reconnect recognition session smoothly if the browser ended the stream after a pause
         recognitionRestartTimerRef.current = setTimeout(() => {
           if (!isListeningRef.current || !recognitionRef.current) return;
           try {
             processedResultIndexRef.current = 0;
             processedTokenCountRef.current = 0;
+            lastConsumedTokenNormRef.current = '';
             recognitionRef.current.start();
           } catch {
             // Ignore if already started
           }
-        }, 450);
+        }, 300);
       };
 
       recognitionRef.current = recognition;
@@ -1326,6 +1499,9 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
       currentIndexRef.current = idxToReveal + 1;
       setCurrentWordIndex(idxToReveal + 1);
       setLastMismatchSpoken('');
+    } else if (plan.planType === 'new_memorization') {
+      stepRepetitionWord();
+      setLastMismatchSpoken('');
     }
   };
 
@@ -1342,6 +1518,8 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
 
     if (choiceText === currentQ.targetWord.textUthmani) {
       setWrongChoiceFlash(null);
+      setLastMatchedSpoken(choiceText);
+      setLastMismatchSpoken('');
       const nextSolved = [...solvedQuizIndices, currentQ.wordIndex];
       setSolvedQuizIndices(nextSolved);
 
@@ -1608,31 +1786,51 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                             isCurrentRepAyah && wIdxInAyah < ayahWordOffset;
                           const isCurrentRepWord =
                             isCurrentRepAyah && wIdxInAyah === ayahWordOffset;
-                          const hideInBlindRep = isBlindRepPhase && !isWordSpokenInRep;
+                          const hideInBlindRep =
+                            (isBlindRepPhase || isListening) &&
+                            !isWordSpokenInRep &&
+                            !revealAllPreview;
+
+                          // Hide future verses during active listening unless preview is on
+                          if (
+                            isListening &&
+                            !revealAllPreview &&
+                            group.groupIndex > activeAyahIdx
+                          ) {
+                            return null;
+                          }
 
                           return (
                             <React.Fragment key={word.globalIndex}>
                               <span
                                 ref={isCurrentRepWord ? activeWordDomRef : null}
                                 onClick={() => {
-                                  setActiveAyahIdx(group.groupIndex);
-                                  setAyahWordOffset(wIdxInAyah);
+                                  if (isCurrentRepWord && hideInBlindRep) {
+                                    handleRevealCurrentWordHint();
+                                  } else {
+                                    activeAyahIdxRef.current = group.groupIndex;
+                                    setActiveAyahIdx(group.groupIndex);
+                                    ayahWordOffsetRef.current = wIdxInAyah;
+                                    setAyahWordOffset(wIdxInAyah);
+                                  }
                                 }}
                                 className={`font-uthmani text-xl sm:text-[26px] inline-block px-1.5 py-0.5 mx-0.5 my-0.5 rounded-lg transition-all duration-150 cursor-pointer ${
                                   isCurrentRepWord
                                     ? hideInBlindRep
-                                      ? 'bg-[#C88A14]/25 border-2 border-dashed border-[#C88A14] text-transparent select-none min-w-[64px]'
+                                      ? lastMismatchSpoken
+                                        ? 'bg-[#A84A32]/20 border-2 border-dashed border-[#A84A32] text-transparent select-none min-w-[64px] animate-pulse'
+                                        : 'bg-[#C88A14]/25 border-2 border-dashed border-[#C88A14] text-transparent select-none min-w-[64px]'
                                       : 'bg-[#C88A14] text-[#FFFDF9] shadow-2xs'
                                     : isWordSpokenInRep || isPastRepAyah
                                     ? 'text-[#3B5934] bg-[#4A6144]/12'
                                     : isCurrentRepAyah
                                     ? hideInBlindRep
-                                      ? 'bg-[#EFE9DC] text-transparent select-none'
+                                      ? 'bg-[#EFE9DC]/60 text-transparent select-none'
                                       : 'bg-[#FBF5E6] text-[#261C14] border-b border-[#C88A14]/40'
                                     : 'text-[#84715E]/60'
                                 }`}
                               >
-                                {hideInBlindRep ? '••••' : word.textUthmani}
+                                {isCurrentRepAyah && hideInBlindRep ? '••••' : word.textUthmani}
                               </span>
                               {word.isLastWordInAyah && (
                                 <span className="font-uthmani text-base sm:text-xl text-[#C88A14] mx-1 select-none">
@@ -1664,14 +1862,16 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                               className={`font-uthmani text-xl sm:text-[26px] inline-block px-2 py-0.5 mx-0.5 my-0.5 rounded-lg transition-all duration-150 cursor-pointer ${
                                 isQuizBlank && quizStarted && !isSolved
                                   ? isCurrentQuestion
-                                    ? 'bg-[#C88A14] text-transparent border-2 border-[#2D2218] min-w-[60px] text-center select-none'
+                                    ? lastMismatchSpoken
+                                      ? 'bg-[#A84A32]/30 text-transparent border-2 border-dashed border-[#A84A32] min-w-[64px] text-center select-none animate-pulse'
+                                      : 'bg-[#C88A14] text-transparent border-2 border-[#2D2218] min-w-[64px] text-center select-none'
                                     : 'bg-[#EFE9DC] text-transparent border border-dashed border-[#84715E]/60 min-w-[50px] select-none'
                                   : isSolved
                                   ? 'bg-[#4A6144]/20 text-[#3B5934] font-bold'
                                   : 'text-[#261C14]'
                               }`}
                             >
-                              {word.textUthmani}
+                              {isQuizBlank && quizStarted && !isSolved ? '••••' : word.textUthmani}
                             </span>
                             {word.isLastWordInAyah && (
                               <span className="font-uthmani text-base sm:text-xl text-[#C88A14] mx-1 select-none">
@@ -1800,7 +2000,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                             : 'Start & recite to reveal matching words'
                           : voiceActive
                           ? lang === 'ar'
-                            ? 'جاري الاستماع ومطابقة الكلمات...'
+                            ? 'جاري الإنصات ومطابقة الكلمات...'
                             : 'Listening & matching words...'
                           : lang === 'ar'
                           ? 'بانتظار قراءتك الصوتية'
@@ -1861,6 +2061,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                       setMistakeIndices([]);
                       setLastMatchedSpoken('');
                       setLastMismatchSpoken('');
+                      lastConsumedTokenNormRef.current = '';
                     }}
                     title={dict.resetSessionBtn}
                     className="p-1 rounded-lg bg-white/10 hover:bg-white/20 text-[#E6D7BE] hover:text-white cursor-pointer"
@@ -1874,78 +2075,139 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
 
           {/* --- NEW MEMORIZATION CONTROLS (`plan.planType === 'new_memorization'`) --- */}
           {plan.planType === 'new_memorization' && (
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={toggleMicrophoneSession}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-xs ${
-                    isListening
-                      ? 'bg-[#A84A32] text-white'
-                      : 'mustard-gradient-btn text-[#FFFDF9]'
-                  }`}
-                >
-                  {isListening ? <MicOff className="w-3.5 h-3.5" /> : <Repeat className="w-3.5 h-3.5" />}
-                  <span>{isListening ? dict.stopRepeatBtn : dict.startRepeatBtn}</span>
-                </button>
+            <div className="space-y-1.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 flex-1 min-w-[200px]">
+                  <button
+                    type="button"
+                    onClick={toggleMicrophoneSession}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-xs shrink-0 ${
+                      isListening
+                        ? 'bg-[#A84A32] text-white'
+                        : 'mustard-gradient-btn text-[#FFFDF9]'
+                    }`}
+                  >
+                    {isListening ? (
+                      <MicOff className="w-3.5 h-3.5" />
+                    ) : (
+                      <Mic className="w-3.5 h-3.5" />
+                    )}
+                    <span>{isListening ? dict.stopRepeatBtn : dict.startRepeatBtn}</span>
+                  </button>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    const nextRep = currentAyahRepCount + 1;
-                    if (nextRep < targetReps) {
-                      setCurrentAyahRepCount(nextRep);
-                      setAyahWordOffset(0);
-                    } else if (activeAyahIdx + 1 < ayahGroups.length) {
-                      setActiveAyahIdx((a) => a + 1);
-                      setCurrentAyahRepCount(0);
-                      setAyahWordOffset(0);
-                    }
-                  }}
-                  className="px-2.5 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 border border-white/20 text-xs font-bold text-[#FFFDF9] cursor-pointer"
-                >
-                  {lang === 'ar'
-                    ? `تكرار (${currentAyahRepCount + 1}/${targetReps})`
-                    : `Rep (${currentAyahRepCount + 1}/${targetReps})`}
-                </button>
-              </div>
-
-              <div className="flex items-center gap-1.5">
-                <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-black/25 border border-white/15">
-                  {[3, 5, 7, 10].map((rNum) => (
-                    <button
-                      key={rNum}
-                      type="button"
-                      onClick={() => {
-                        setTargetReps(rNum);
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextRep = currentAyahRepCountRef.current + 1;
+                      if (nextRep < targetRepsRef.current) {
+                        currentAyahRepCountRef.current = nextRep;
+                        setCurrentAyahRepCount(nextRep);
+                        ayahWordOffsetRef.current = 0;
+                        setAyahWordOffset(0);
+                      } else if (activeAyahIdxRef.current + 1 < ayahGroups.length) {
+                        const nextAyah = activeAyahIdxRef.current + 1;
+                        activeAyahIdxRef.current = nextAyah;
+                        setActiveAyahIdx(nextAyah);
+                        currentAyahRepCountRef.current = 0;
                         setCurrentAyahRepCount(0);
-                      }}
-                      className={`px-2 py-0.5 rounded-md text-xs font-mono-tabular font-bold cursor-pointer ${
-                        targetReps === rNum
-                          ? 'bg-[#C88A14] text-[#FFFDF9]'
-                          : 'text-[#E6D7BE]'
+                        ayahWordOffsetRef.current = 0;
+                        setAyahWordOffset(0);
+                      }
+                    }}
+                    className="px-2.5 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 border border-white/20 text-xs font-bold text-[#FFFDF9] cursor-pointer shrink-0"
+                  >
+                    {lang === 'ar'
+                      ? `تكرار (${currentAyahRepCount + 1}/${targetReps})`
+                      : `Rep (${currentAyahRepCount + 1}/${targetReps})`}
+                  </button>
+
+                  <div className="flex items-center gap-1 text-[11px] sm:text-xs text-[#E6D7BE] truncate">
+                    <Sparkles
+                      className={`w-3.5 h-3.5 shrink-0 transition-transform ${
+                        voiceActive ? 'text-[#EAB338] scale-125' : 'text-[#E6D7BE]/45'
                       }`}
-                    >
-                      {rNum}×
-                    </button>
-                  ))}
+                    />
+                    {lastMismatchSpoken ? (
+                      <span className="text-[#F8B4A0] font-semibold truncate">
+                        {lang === 'ar'
+                          ? `لم تتطابق: "${lastMismatchSpoken}"`
+                          : `Mismatch: "${lastMismatchSpoken}"`}
+                      </span>
+                    ) : lastMatchedSpoken ? (
+                      <span className="text-[#A8E09F] font-semibold truncate">
+                        {lang === 'ar'
+                          ? `تطابق: "${lastMatchedSpoken}"`
+                          : `Matched: "${lastMatchedSpoken}"`}
+                      </span>
+                    ) : (
+                      <span className="truncate">
+                        {!isListening
+                          ? lang === 'ar'
+                            ? 'اضغط وابدأ القراءة للتكرار الصوتي'
+                            : 'Start voice repetition'
+                          : lang === 'ar'
+                          ? 'جاري الإنصات ومطابقة الكلمات...'
+                          : 'Listening & matching...'}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
-                <span className="text-xs font-mono-tabular text-[#EAB338] font-bold">
-                  {activeAyahIdx + 1}/{ayahGroups.length}
-                </span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={handleRevealCurrentWordHint}
+                    className="px-2 py-1 rounded-lg bg-white/15 hover:bg-white/25 border border-white/20 text-[11px] font-bold text-[#EAB338] cursor-pointer flex items-center gap-1"
+                  >
+                    <HelpCircle className="w-3 h-3" />
+                    <span>{lang === 'ar' ? 'كشف كلمة' : 'Hint'}</span>
+                  </button>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveAyahIdx(0);
-                    setCurrentAyahRepCount(0);
-                    setAyahWordOffset(0);
-                  }}
-                  className="p-1 rounded-lg bg-white/10 hover:bg-white/20 text-[#E6D7BE] cursor-pointer"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                </button>
+                  <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-black/25 border border-white/15">
+                    {[3, 5, 7, 10].map((rNum) => (
+                      <button
+                        key={rNum}
+                        type="button"
+                        onClick={() => {
+                          targetRepsRef.current = rNum;
+                          setTargetReps(rNum);
+                          currentAyahRepCountRef.current = 0;
+                          setCurrentAyahRepCount(0);
+                        }}
+                        className={`px-2 py-0.5 rounded-md text-xs font-mono-tabular font-bold cursor-pointer ${
+                          targetReps === rNum
+                            ? 'bg-[#C88A14] text-[#FFFDF9]'
+                            : 'text-[#E6D7BE]'
+                        }`}
+                      >
+                        {rNum}×
+                      </button>
+                    ))}
+                  </div>
+
+                  <span className="text-xs font-mono-tabular text-[#EAB338] font-bold">
+                    {activeAyahIdx + 1}/{ayahGroups.length}
+                  </span>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      stopListeningSession();
+                      activeAyahIdxRef.current = 0;
+                      setActiveAyahIdx(0);
+                      currentAyahRepCountRef.current = 0;
+                      setCurrentAyahRepCount(0);
+                      ayahWordOffsetRef.current = 0;
+                      setAyahWordOffset(0);
+                      setLastMatchedSpoken('');
+                      setLastMismatchSpoken('');
+                      lastConsumedTokenNormRef.current = '';
+                    }}
+                    className="p-1 rounded-lg bg-white/10 hover:bg-white/20 text-[#E6D7BE] cursor-pointer"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -1954,7 +2216,33 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
           {plan.planType === 'review' && (
             <div className="space-y-1.5">
               <div className="flex flex-wrap items-center justify-between gap-1.5 text-xs">
-                <div className="flex flex-wrap items-center gap-1">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {/* Microphone Voice Review Button */}
+                  <button
+                    type="button"
+                    onClick={toggleMicrophoneSession}
+                    className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-xs ${
+                      isListening
+                        ? 'bg-[#A84A32] text-white'
+                        : 'mustard-gradient-btn text-[#FFFDF9]'
+                    }`}
+                  >
+                    {isListening ? (
+                      <MicOff className="w-3.5 h-3.5" />
+                    ) : (
+                      <Mic className="w-3.5 h-3.5" />
+                    )}
+                    <span>
+                      {isListening
+                        ? lang === 'ar'
+                          ? 'إيقاف الإنصات'
+                          : 'Stop Mic'
+                        : lang === 'ar'
+                        ? 'إنصات للمراجعة'
+                        : 'Voice Review'}
+                    </span>
+                  </button>
+
                   {(
                     [
                       { id: 'beginner', labelAr: 'مبتدئ', labelEn: 'Easy' },
@@ -1988,6 +2276,28 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                 </div>
 
                 <div className="flex items-center gap-1.5">
+                  {isListening && (
+                    <span className="text-[11px] font-semibold truncate max-w-[170px]">
+                      {lastMismatchSpoken ? (
+                        <span className="text-[#F8B4A0]">
+                          {lang === 'ar'
+                            ? `لم تتطابق: "${lastMismatchSpoken}"`
+                            : `Mismatch: "${lastMismatchSpoken}"`}
+                        </span>
+                      ) : lastMatchedSpoken ? (
+                        <span className="text-[#A8E09F]">
+                          {lang === 'ar'
+                            ? `تطابق: "${lastMatchedSpoken}"`
+                            : `Matched: "${lastMatchedSpoken}"`}
+                        </span>
+                      ) : (
+                        <span className="text-[#E6D7BE]">
+                          {lang === 'ar' ? 'انطق الكلمة المفقودة...' : 'Speak missing word...'}
+                        </span>
+                      )}
+                    </span>
+                  )}
+
                   <button
                     type="button"
                     onClick={() => {
