@@ -698,28 +698,11 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
     };
   }, [currentPage, buildWordsFromVerses]);
 
-  // Stop microphone & audio analyzer cleanly
+  // Stop microphone & audio analyzer cleanly (100% silent Web Audio API — no SpeechRecognition OS beeps)
   const stopListeningSession = useCallback(() => {
     isListeningRef.current = false;
     setIsListening(false);
     setVoiceActive(false);
-
-    if (recognitionRestartTimerRef.current) {
-      clearTimeout(recognitionRestartTimerRef.current);
-      recognitionRestartTimerRef.current = null;
-    }
-
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.onend = null;
-        recognitionRef.current.onerror = null;
-        recognitionRef.current.onresult = null;
-        recognitionRef.current.stop();
-      } catch {
-        // Ignore
-      }
-      recognitionRef.current = null;
-    }
 
     if (analyserIntervalRef.current) {
       clearInterval(analyserIntervalRef.current);
@@ -805,92 +788,13 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
     }
   }, [currentPage, actualPageRange.endPage, goToMushafPage, stopListeningSession]);
 
-  // Real-Time Speech Synchronizer — strictly locked to current word so it NEVER precedes the reader
-  const synchronizeWithSpokenWords = useCallback(
-    (newSpokenTokens: string[]) => {
-      if (newSpokenTokens.length === 0) return;
-      const now = Date.now();
-      const minIntervalMs = Math.round(540 / syncSpeedFactorRef.current);
-
-      if (plan.planType === 'new_memorization') {
-        const groups = ayahGroupsRef.current;
-        const currentGroup = groups[activeAyahIdxRef.current];
-        if (!currentGroup) return;
-        const lastSpoken = newSpokenTokens[newSpokenTokens.length - 1];
-        const targetW = currentGroup.words[ayahWordOffsetRef.current];
-        if (
-          targetW &&
-          now - lastWordAdvanceTimeRef.current >= minIntervalMs &&
-          wordMatchScore(lastSpoken, targetW.normalizedText, targetW.skeletonText) >= 0.8
-        ) {
-          accumulatedVoiceUnitsRef.current = 0;
-          lastWordAdvanceTimeRef.current = now;
-          stepRepetitionWord();
-        }
-        return;
-      }
-
-      // SARD MODE (`plan.planType === 'sard'`)
-      const wordsList = flatWordsRef.current;
-      if (wordsList.length === 0) return;
-
-      // Enforce cooldown so ASR and acoustic syllable tracker never double-advance or jump ahead
-      if (now - lastWordAdvanceTimeRef.current < minIntervalMs) {
-        return;
-      }
-
-      const pointer = currentIndexRef.current;
-      if (pointer >= wordsList.length) return;
-
-      const currentTarget = wordsList[pointer];
-      // Check only the latest spoken word against the current expected word first
-      const latestWord = newSpokenTokens[newSpokenTokens.length - 1];
-      const directScore = wordMatchScore(
-        latestWord,
-        currentTarget.normalizedText,
-        currentTarget.skeletonText
-      );
-
-      if (directScore >= 0.8) {
-        accumulatedVoiceUnitsRef.current = 0;
-        lastWordAdvanceTimeRef.current = now;
-        currentIndexRef.current = pointer + 1;
-        setCurrentWordIndex(pointer + 1);
-        return;
-      }
-
-      // Only allow advancing to pointer + 1 if user has been speaking long enough for 2 words AND latestWord strongly matches nextTarget
-      if (
-        pointer + 1 < wordsList.length &&
-        now - lastWordAdvanceTimeRef.current >= minIntervalMs * 2.1 &&
-        latestWord.length >= 3
-      ) {
-        const nextTarget = wordsList[pointer + 1];
-        const nextScore = wordMatchScore(
-          latestWord,
-          nextTarget.normalizedText,
-          nextTarget.skeletonText
-        );
-        if (nextScore >= 0.92 && directScore < 0.4) {
-          accumulatedVoiceUnitsRef.current = 0;
-          lastWordAdvanceTimeRef.current = now;
-          currentIndexRef.current = pointer + 1;
-          setCurrentWordIndex(pointer + 1);
-        }
-      }
-    },
-    [plan.planType, stepRepetitionWord]
-  );
-
-  // Start Continuous Microphone Session (Dual Time-Domain RMS + Vocal Formants + Auto-Resuming ASR)
+  // Start Continuous, 100% Silent Microphone Session (Pure Web Audio API RMS + Vocal Formants — Zero OS/Browser Notification Beeps)
   const startListeningSession = async () => {
     setSpeechError(null);
     setSardStarted(true);
     accumulatedVoiceUnitsRef.current = 0;
     lastWordAdvanceTimeRef.current = Date.now();
     lastVoiceDetectedTimeRef.current = 0;
-    processedResultIndexRef.current = 0;
-    processedTokenCountRef.current = 0;
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -916,7 +820,11 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
       const analyser = audioCtx.createAnalyser();
       analyser.fftSize = 512;
       analyser.smoothingTimeConstant = 0.35;
+      // Connect ONLY to analyser (never to audioCtx.destination) so zero sound is ever emitted
       source.connect(analyser);
+
+      isListeningRef.current = true;
+      setIsListening(true);
 
       const freqData = new Uint8Array(analyser.frequencyBinCount);
       const timeData = new Uint8Array(analyser.fftSize);
@@ -959,7 +867,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
         // Combined vocal signal metric
         const vocalSignal = rms * 1.9 + avgFreq * 0.55;
 
-        // Only update ambient noise floor when room is genuinely quiet (capped at 7.5 so it never drifts up to block the reader's voice)
+        // Only update ambient noise floor when room is genuinely quiet
         if (vocalSignal < noiseFloorRef.current + 2.5) {
           noiseFloorRef.current = Math.min(
             7.5,
@@ -996,7 +904,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
 
         accumulatedVoiceUnitsRef.current += TICK_MS * intensity * speedMul;
 
-        const minWordCooldown = Math.round(580 / speedMul);
+        const minWordCooldown = Math.round(540 / speedMul);
         if (now - lastWordAdvanceTimeRef.current < minWordCooldown) {
           return;
         }
@@ -1006,8 +914,8 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
           const currW = wordsList[currentIndexRef.current];
           if (!currW) return;
 
-          // Calibrated Quranic word duration: ~245ms per syllable weight unit (e.g. ~750ms - 1250ms per word in natural Tartil)
-          const requiredVoiceUnits = Math.max(660, currW.syllableWeight * 245);
+          // Calibrated Quranic word duration: ~230ms per syllable weight unit
+          const requiredVoiceUnits = Math.max(620, currW.syllableWeight * 230);
 
           if (accumulatedVoiceUnitsRef.current >= requiredVoiceUnits) {
             accumulatedVoiceUnitsRef.current = 0;
@@ -1022,7 +930,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
           const currentGroup = groups[activeAyahIdxRef.current];
           const currW = currentGroup?.words[ayahWordOffsetRef.current];
           const weight = currW?.syllableWeight || 3.2;
-          const requiredVoiceUnits = Math.max(680, weight * 250);
+          const requiredVoiceUnits = Math.max(640, weight * 235);
 
           if (accumulatedVoiceUnitsRef.current >= requiredVoiceUnits) {
             accumulatedVoiceUnitsRef.current = 0;
@@ -1038,80 +946,6 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
           : 'Please allow microphone access in your browser to synchronize verse display with your voice.'
       );
       return;
-    }
-
-    const SpeechRec =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-
-    if (SpeechRec) {
-      const startRecognitionInstance = () => {
-        if (!isListeningRef.current) return;
-        try {
-          const recognition = new SpeechRec();
-          recognition.lang = 'ar-SA';
-          recognition.continuous = true;
-          recognition.interimResults = true;
-          recognition.maxAlternatives = 1;
-
-          processedResultIndexRef.current = 0;
-          processedTokenCountRef.current = 0;
-
-          recognition.onresult = (event: any) => {
-            if (!isListeningRef.current) return;
-            const resIdx = event.results.length - 1;
-            const latestResult = event.results[resIdx];
-            if (!latestResult || !latestResult[0]) return;
-
-            if (resIdx !== processedResultIndexRef.current) {
-              processedResultIndexRef.current = resIdx;
-              processedTokenCountRef.current = 0;
-            }
-
-            const transcript = String(latestResult[0].transcript || '');
-            const allTokens = transcript
-              .trim()
-              .split(/\s+/)
-              .map((w) => normalizeArabicForAlignment(w))
-              .filter((w) => w.length > 0);
-
-            if (allTokens.length > processedTokenCountRef.current) {
-              const newlySpoken = allTokens.slice(processedTokenCountRef.current);
-              processedTokenCountRef.current = allTokens.length;
-              lastVoiceDetectedTimeRef.current = Date.now();
-              synchronizeWithSpokenWords(newlySpoken);
-            }
-          };
-
-          recognition.onerror = () => {
-            // Do not stop session on transient ASR errors; auto-restart smoothly
-          };
-
-          recognition.onend = () => {
-            if (isListeningRef.current) {
-              if (recognitionRestartTimerRef.current) {
-                clearTimeout(recognitionRestartTimerRef.current);
-              }
-              recognitionRestartTimerRef.current = setTimeout(() => {
-                if (isListeningRef.current) {
-                  startRecognitionInstance();
-                }
-              }, 140);
-            }
-          };
-
-          recognitionRef.current = recognition;
-          recognition.start();
-        } catch {
-          // Acoustic syllable analyzer continues uninterrupted
-        }
-      };
-
-      isListeningRef.current = true;
-      setIsListening(true);
-      startRecognitionInstance();
-    } else {
-      isListeningRef.current = true;
-      setIsListening(true);
     }
   };
 
