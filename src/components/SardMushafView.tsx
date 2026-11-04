@@ -232,12 +232,15 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
   onCompletePlanSard,
 }) => {
   const dict = t(lang);
-  const pageRange = getPlanMushafPageRange(plan);
+  const initialRange = useMemo(() => getPlanMushafPageRange(plan), [plan]);
 
-  const [currentPage, setCurrentPage] = useState<number>(pageRange.startPage);
+  const [actualPageRange, setActualPageRange] = useState<{ startPage: number; endPage: number }>(
+    initialRange
+  );
+  const [currentPage, setCurrentPage] = useState<number>(initialRange.startPage);
   const [ayahGroups, setAyahGroups] = useState<MushafAyahGroup[]>([]);
   const [flatWords, setFlatWords] = useState<MushafWordItem[]>([]);
-  const [loadingPage, setLoadingPage] = useState<boolean>(false);
+  const [loadingPage, setLoadingPage] = useState<boolean>(true);
   const [pageJuz, setPageJuz] = useState<number>(1);
   const [selectedEvaluation, setSelectedEvaluation] = useState<PlanEvaluation | undefined>(
     plan.evaluation
@@ -289,6 +292,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
   const processedResultIndexRef = useRef<number>(0);
   const processedTokenCountRef = useRef<number>(0);
   const activeWordDomRef = useRef<HTMLSpanElement | null>(null);
+  const mushafScrollContainerRef = useRef<HTMLDivElement | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const analyserIntervalRef = useRef<any>(null);
@@ -336,6 +340,98 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
       });
     }
   }, [currentWordIndex, ayahWordOffset, currentQuizStep]);
+
+  // Resolve exact Madinah Mushaf startPage and endPage when plan.scope === 'ayah'
+  useEffect(() => {
+    let cancelled = false;
+    const baseRange = getPlanMushafPageRange(plan);
+    setActualPageRange(baseRange);
+    setCurrentPage(baseRange.startPage);
+
+    if (plan.scope === 'ayah' && plan.ayahSurah) {
+      const surahObj = SURAH_LIST.find((s) => s.number === plan.ayahSurah);
+      const maxA = surahObj ? surahObj.ayahCount : 286;
+      const a1 = Math.max(1, Math.min(plan.ayahFrom || 1, plan.ayahTo || 1, maxA));
+      const a2 = Math.min(maxA, Math.max(plan.ayahFrom || 1, plan.ayahTo || 1, 1));
+
+      const resolveExactAyahPages = async () => {
+        try {
+          const [res1, res2] = await Promise.all([
+            fetch(
+              `https://api.quran.com/api/v4/verses/by_key/${plan.ayahSurah}:${a1}?fields=page_number`
+            ),
+            fetch(
+              `https://api.quran.com/api/v4/verses/by_key/${plan.ayahSurah}:${a2}?fields=page_number`
+            ),
+          ]);
+          if (res1.ok && res2.ok) {
+            const [d1, d2] = await Promise.all([res1.json(), res2.json()]);
+            const p1 = Number(d1?.verse?.page_number);
+            const p2 = Number(d2?.verse?.page_number);
+            if (!cancelled && p1 >= 1 && p2 >= 1) {
+              const exactStart = Math.min(p1, p2);
+              const exactEnd = Math.max(p1, p2);
+              setActualPageRange({ startPage: exactStart, endPage: exactEnd });
+              setCurrentPage(exactStart);
+              return;
+            }
+          }
+        } catch {
+          // Fallback to AlQuran.cloud
+        }
+
+        try {
+          const [r1, r2] = await Promise.all([
+            fetch(`https://api.alquran.cloud/v1/ayah/${plan.ayahSurah}:${a1}`),
+            fetch(`https://api.alquran.cloud/v1/ayah/${plan.ayahSurah}:${a2}`),
+          ]);
+          if (r1.ok && r2.ok) {
+            const [j1, j2] = await Promise.all([r1.json(), r2.json()]);
+            const p1 = Number(j1?.data?.page);
+            const p2 = Number(j2?.data?.page);
+            if (!cancelled && p1 >= 1 && p2 >= 1) {
+              const exactStart = Math.min(p1, p2);
+              const exactEnd = Math.max(p1, p2);
+              setActualPageRange({ startPage: exactStart, endPage: exactEnd });
+              setCurrentPage(exactStart);
+            }
+          }
+        } catch {
+          // Keep baseRange if offline
+        }
+      };
+
+      resolveExactAyahPages();
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [plan]);
+
+  // Helper to navigate to a specific page in order and reset scroll to top
+  const goToMushafPage = useCallback(
+    (targetPage: number) => {
+      const clamped = Math.max(
+        actualPageRange.startPage,
+        Math.min(actualPageRange.endPage, targetPage)
+      );
+      currentIndexRef.current = 0;
+      setCurrentWordIndex(0);
+      activeAyahIdxRef.current = 0;
+      setActiveAyahIdx(0);
+      ayahWordOffsetRef.current = 0;
+      setAyahWordOffset(0);
+      currentAyahRepCountRef.current = 0;
+      setCurrentAyahRepCount(0);
+      setLoadingPage(true);
+      setCurrentPage(clamped);
+      if (mushafScrollContainerRef.current) {
+        mushafScrollContainerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    },
+    [actualPageRange.startPage, actualPageRange.endPage]
+  );
 
   // Build Hidden Words & Interactive Questions for Review Mode
   const hiddenWordIndicesSet = useMemo(() => {
@@ -405,21 +501,28 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
     setWrongQuizAttempts(0);
   }, [quizLevel, quizFormat]);
 
-  // Build words list from fetched Uthmani verses
+  // Build words list from fetched Uthmani verses in strict ascending (surahNumber, ayahNumber) order
   const buildWordsFromVerses = useCallback(
     (
       verses: { surahNumber: number; ayahNumber: number; textUthmani: string; juz?: number }[]
     ) => {
-      let filteredVerses = verses;
+      // 1. Always sort verses in strict ascending Quranic order (Surah ascending, then Ayah ascending)
+      const sortedVerses = [...verses].sort((a, b) =>
+        a.surahNumber !== b.surahNumber
+          ? a.surahNumber - b.surahNumber
+          : a.ayahNumber - b.ayahNumber
+      );
+
+      let filteredVerses = sortedVerses;
 
       if (plan.scope === 'ayah' && plan.ayahSurah) {
-        const fromA = plan.ayahFrom || 1;
-        const toA = plan.ayahTo || 286;
-        const matchingInRange = verses.filter(
+        const a1 = Math.min(plan.ayahFrom || 1, plan.ayahTo || 286);
+        const a2 = Math.max(plan.ayahFrom || 1, plan.ayahTo || 286);
+        const matchingInRange = sortedVerses.filter(
           (v) =>
             v.surahNumber === plan.ayahSurah &&
-            v.ayahNumber >= fromA &&
-            v.ayahNumber <= toA
+            v.ayahNumber >= a1 &&
+            v.ayahNumber <= a2
         );
         if (matchingInRange.length > 0) {
           filteredVerses = matchingInRange;
@@ -427,11 +530,20 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
       } else if (plan.scope === 'surah' && plan.surahStart) {
         const s1 = Math.min(plan.surahStart, plan.surahEnd || plan.surahStart);
         const s2 = Math.max(plan.surahStart, plan.surahEnd || plan.surahStart);
-        const matchingSurahs = verses.filter(
+        const matchingSurahs = sortedVerses.filter(
           (v) => v.surahNumber >= s1 && v.surahNumber <= s2
         );
         if (matchingSurahs.length > 0) {
           filteredVerses = matchingSurahs;
+        }
+      } else if (plan.scope === 'juz' && plan.juzStart) {
+        const j1 = Math.min(plan.juzStart, plan.juzEnd || plan.juzStart);
+        const j2 = Math.max(plan.juzStart, plan.juzEnd || plan.juzStart);
+        const matchingJuz = sortedVerses.filter(
+          (v) => !v.juz || (v.juz >= j1 && v.juz <= j2)
+        );
+        if (matchingJuz.length > 0) {
+          filteredVerses = matchingJuz;
         }
       }
 
@@ -496,58 +608,39 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
       currentIndexRef.current = 0;
       setMistakeIndices([]);
       setActiveAyahIdx(0);
+      activeAyahIdxRef.current = 0;
       setCurrentAyahRepCount(0);
+      currentAyahRepCountRef.current = 0;
       setAyahWordOffset(0);
+      ayahWordOffsetRef.current = 0;
       setCurrentQuizStep(0);
       setSolvedQuizIndices([]);
       if (filteredVerses[0]?.juz) {
         setPageJuz(filteredVerses[0].juz);
       }
+      if (mushafScrollContainerRef.current) {
+        mushafScrollContainerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+      }
     },
-    [plan.id, plan.scope, plan.ayahSurah, plan.ayahFrom, plan.ayahTo, plan.surahStart, plan.surahEnd]
+    [
+      plan.id,
+      plan.scope,
+      plan.ayahSurah,
+      plan.ayahFrom,
+      plan.ayahTo,
+      plan.surahStart,
+      plan.surahEnd,
+      plan.juzStart,
+      plan.juzEnd,
+    ]
   );
 
-  // Fetch Uthmani verses from King Fahd Complex / Quran.com API v4
+  // Fetch Uthmani verses strictly page-by-page according to official Madinah Mushaf page numbers
   useEffect(() => {
     let cancelled = false;
     const fetchMushafVerses = async () => {
       setLoadingPage(true);
       try {
-        if (
-          plan.scope === 'ayah' &&
-          plan.ayahSurah &&
-          (plan.ayahTo || 15) - (plan.ayahFrom || 1) <= 35
-        ) {
-          const fromA = plan.ayahFrom || 1;
-          const toA = plan.ayahTo || 15;
-          const count = toA - fromA + 1;
-          const res = await fetch(
-            `https://api.quran.com/api/v4/verses/by_chapter/${plan.ayahSurah}?words=false&fields=text_uthmani,chapter_id,verse_number,juz_number&page=1&per_page=300`
-          );
-          if (res.ok) {
-            const data = await res.json();
-            if (!cancelled && Array.isArray(data.verses) && data.verses.length > 0) {
-              const sliced = data.verses
-                .filter(
-                  (v: any) =>
-                    Number(v.verse_number) >= fromA && Number(v.verse_number) <= toA
-                )
-                .slice(0, count)
-                .map((v: any) => ({
-                  surahNumber: Number(plan.ayahSurah),
-                  ayahNumber: Number(v.verse_number),
-                  textUthmani: v.text_uthmani,
-                  juz: v.juz_number || 1,
-                }));
-              if (sliced.length > 0) {
-                buildWordsFromVerses(sliced);
-                setLoadingPage(false);
-                return;
-              }
-            }
-          }
-        }
-
         const res = await fetch(
           `https://api.quran.com/api/v4/verses/by_page/${currentPage}?words=false&fields=text_uthmani,chapter_id,verse_number,juz_number&per_page=50`
         );
@@ -558,7 +651,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
             surahNumber: Number(v.chapter_id || String(v.verse_key).split(':')[0]),
             ayahNumber: Number(v.verse_number || String(v.verse_key).split(':')[1]),
             textUthmani: v.text_uthmani,
-            juz: v.juz_number || 1,
+            juz: Number(v.juz_number || 1),
           }));
           buildWordsFromVerses(mapped);
           setLoadingPage(false);
@@ -603,7 +696,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [currentPage, buildWordsFromVerses, plan.scope, plan.ayahSurah, plan.ayahFrom, plan.ayahTo]);
+  }, [currentPage, buildWordsFromVerses]);
 
   // Stop microphone & audio analyzer cleanly
   const stopListeningSession = useCallback(() => {
@@ -648,7 +741,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
     }
   }, []);
 
-  // Multi-page advance during Sard (keeps microphone alive if moving to next page in range; stops only after final word of final page)
+  // Multi-page advance during Sard (advances strictly 1 page at a time in ascending order without skipping)
   useEffect(() => {
     if (
       plan.planType === 'sard' &&
@@ -657,8 +750,8 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
       flatWords.length > 0 &&
       currentWordIndex >= flatWords.length
     ) {
-      if (currentPage < pageRange.endPage) {
-        setCurrentPage((p) => p + 1);
+      if (currentPage < actualPageRange.endPage) {
+        goToMushafPage(currentPage + 1);
       } else {
         stopListeningSession();
       }
@@ -670,7 +763,8 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
     flatWords.length,
     currentWordIndex,
     currentPage,
-    pageRange.endPage,
+    actualPageRange.endPage,
+    goToMushafPage,
     stopListeningSession,
   ]);
 
@@ -702,14 +796,14 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
           setCurrentAyahRepCount(0);
           ayahWordOffsetRef.current = 0;
           setAyahWordOffset(0);
-        } else if (currentPage < pageRange.endPage) {
-          setCurrentPage((p) => p + 1);
+        } else if (currentPage < actualPageRange.endPage) {
+          goToMushafPage(currentPage + 1);
         } else {
           stopListeningSession();
         }
       }
     }
-  }, [currentPage, pageRange.endPage, stopListeningSession]);
+  }, [currentPage, actualPageRange.endPage, goToMushafPage, stopListeningSession]);
 
   // Real-Time Speech Synchronizer — strictly locked to current word so it NEVER precedes the reader
   const synchronizeWithSpokenWords = useCallback(
@@ -1047,8 +1141,8 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
 
       if (currentQuizStep + 1 < quizQuestions.length) {
         setCurrentQuizStep((s) => s + 1);
-      } else if (currentPage < pageRange.endPage) {
-        setCurrentPage((p) => p + 1);
+      } else if (currentPage < actualPageRange.endPage) {
+        goToMushafPage(currentPage + 1);
       }
     } else {
       setWrongChoiceFlash(choiceText);
@@ -1065,6 +1159,19 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
       plan.planType === 'review' ? wrongQuizAttempts : mistakeIndices.length;
     onCompletePlanSard(plan.id, totalMistakes, finalEval, quizLevel);
   };
+
+  const totalPlanPages = Math.max(1, actualPageRange.endPage - actualPageRange.startPage + 1);
+  const currentPlanPageOrder = Math.max(
+    1,
+    Math.min(totalPlanPages, currentPage - actualPageRange.startPage + 1)
+  );
+  const orderedPlanPages = useMemo(() => {
+    const arr: number[] = [];
+    for (let p = actualPageRange.startPage; p <= actualPageRange.endPage; p++) {
+      arr.push(p);
+    }
+    return arr;
+  }, [actualPageRange.startPage, actualPageRange.endPage]);
 
   const progressPct =
     plan.planType === 'sard'
@@ -1099,24 +1206,40 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          {pageRange.endPage > pageRange.startPage ? (
-            <div className="flex items-center gap-1 bg-white/10 px-2 py-1 rounded-lg border border-white/15 text-xs font-mono-tabular text-[#FFFDF9]">
+          {actualPageRange.endPage > actualPageRange.startPage ? (
+            <div
+              dir="rtl"
+              className="flex items-center gap-1 bg-white/10 px-2 py-1 rounded-lg border border-white/15 text-xs text-[#FFFDF9]"
+            >
               <button
                 type="button"
-                disabled={currentPage <= pageRange.startPage}
-                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage <= actualPageRange.startPage}
+                onClick={() => goToMushafPage(currentPage - 1)}
                 className="p-0.5 disabled:opacity-35 hover:text-[#EAB338] cursor-pointer"
                 title={dict.prevPageBtn}
               >
                 <ChevronRight className="w-3.5 h-3.5" />
               </button>
-              <span className="px-1 font-bold">
-                ص {toArabicNumerals(currentPage)}/{toArabicNumerals(pageRange.endPage)}
-              </span>
+
+              <select
+                value={currentPage}
+                onChange={(e) => goToMushafPage(Number(e.target.value))}
+                className="bg-transparent text-[#FFFDF9] font-bold text-xs focus:outline-none cursor-pointer px-1"
+                aria-label="ترتيب صفحات الورد"
+              >
+                {orderedPlanPages.map((pageNum, idx) => (
+                  <option key={pageNum} value={pageNum} className="bg-[#2D2218] text-[#FFFDF9]">
+                    {`صفحة ${toArabicNumerals(idx + 1)} من ${toArabicNumerals(
+                      totalPlanPages
+                    )} (ص ${toArabicNumerals(pageNum)})`}
+                  </option>
+                ))}
+              </select>
+
               <button
                 type="button"
-                disabled={currentPage >= pageRange.endPage}
-                onClick={() => setCurrentPage((p) => Math.min(604, p + 1))}
+                disabled={currentPage >= actualPageRange.endPage}
+                onClick={() => goToMushafPage(currentPage + 1)}
                 className="p-0.5 disabled:opacity-35 hover:text-[#EAB338] cursor-pointer"
                 title={dict.nextPageBtn}
               >
@@ -1124,7 +1247,10 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
               </button>
             </div>
           ) : (
-            <span className="text-xs font-mono-tabular text-[#E6D7BE] bg-white/10 px-2.5 py-1 rounded-lg">
+            <span
+              dir="rtl"
+              className="text-xs font-bold text-[#E6D7BE] bg-white/10 px-2.5 py-1 rounded-lg"
+            >
               ص {toArabicNumerals(currentPage)}
             </span>
           )}
@@ -1146,16 +1272,28 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
       {/* =================================================================================
           1. MUSHAF VERSES PAGE — OCCUPIES TWO-THIRDS (2/3) OF THE SCREEN (`basis-2/3 flex-1`)
          ================================================================================= */}
-      <div className="basis-2/3 flex-1 min-h-[64dvh] overflow-y-auto px-2.5 py-2.5 sm:px-6 sm:py-4">
+      <div
+        ref={mushafScrollContainerRef}
+        className="basis-2/3 flex-1 min-h-[64dvh] overflow-y-auto px-2.5 py-2.5 sm:px-6 sm:py-4"
+      >
         <div className="max-w-4xl mx-auto min-h-full rounded-2xl sm:rounded-3xl bg-[#FFFDF7] border-2 border-[#C88A14]/60 shadow-sm p-3.5 sm:p-7 bg-gradient-to-b from-[#FFFDF9] to-[#FAF4E6] flex flex-col justify-between">
           <div>
-            {/* Mushaf Page Header Marginalia */}
-            <div className="flex items-center justify-between pb-2 mb-3.5 border-b border-[#DFD2B8] text-xs font-display-islamic font-bold text-[#5C4B3B]">
+            {/* Mushaf Page Header Marginalia (Always RTL for authentic Mushaf order) */}
+            <div
+              dir="rtl"
+              className="flex items-center justify-between pb-2 mb-3.5 border-b border-[#DFD2B8] text-xs font-display-islamic font-bold text-[#5C4B3B]"
+            >
+              <span>{ayahGroups[0] ? `سُورَةُ ${ayahGroups[0].surahNameAr}` : ''}</span>
+              <span className="text-[#C88A14]">
+                {totalPlanPages > 1
+                  ? `الورقة ${toArabicNumerals(currentPlanPageOrder)} من ${toArabicNumerals(
+                      totalPlanPages
+                    )} · صفحة المصحف ${toArabicNumerals(currentPage)}`
+                  : `صفحة المصحف ${toArabicNumerals(currentPage)}`}
+              </span>
               <span>
                 {JUZ_LIST.find((j) => j.number === pageJuz)?.nameAr || `الجزء ${pageJuz}`}
               </span>
-              <span className="text-[#C88A14]">صفحة {toArabicNumerals(currentPage)}</span>
-              <span>{ayahGroups[0] ? `سُورَةُ ${ayahGroups[0].surahNameAr}` : ''}</span>
             </div>
 
             {loadingPage ? (
@@ -1315,6 +1453,39 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
               </div>
             )}
           </div>
+
+          {/* Sequential Mushaf Page Navigation Footer inside the Mushaf Card */}
+          {totalPlanPages > 1 && (
+            <div
+              dir="rtl"
+              className="mt-4 pt-2.5 border-t border-[#DFD2B8] flex items-center justify-between gap-2 text-xs"
+            >
+              <button
+                type="button"
+                disabled={currentPage <= actualPageRange.startPage}
+                onClick={() => goToMushafPage(currentPage - 1)}
+                className="px-3 py-1 rounded-lg bg-[#F7F3EB] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-[#2D2218] font-bold disabled:opacity-40 cursor-pointer flex items-center gap-1"
+              >
+                <ChevronRight className="w-3.5 h-3.5 text-[#C88A14]" />
+                <span>الصفحة السابقة</span>
+              </button>
+
+              <span className="font-display-islamic font-bold text-[#5C4B3B]">
+                صفحة {toArabicNumerals(currentPlanPageOrder)} من {toArabicNumerals(totalPlanPages)}{' '}
+                (ص {toArabicNumerals(currentPage)})
+              </span>
+
+              <button
+                type="button"
+                disabled={currentPage >= actualPageRange.endPage}
+                onClick={() => goToMushafPage(currentPage + 1)}
+                className="px-3 py-1 rounded-lg bg-[#F7F3EB] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-[#2D2218] font-bold disabled:opacity-40 cursor-pointer flex items-center gap-1"
+              >
+                <span>الصفحة التالية</span>
+                <ChevronLeft className="w-3.5 h-3.5 text-[#C88A14]" />
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

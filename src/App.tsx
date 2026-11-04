@@ -117,13 +117,29 @@ export default function App() {
     }
   }, [plans]);
 
+  const chimeAudioCtxRef = useRef<AudioContext | null>(null);
+
+  const stopChimeAudio = () => {
+    if (chimeAudioCtxRef.current) {
+      try {
+        chimeAudioCtxRef.current.close();
+      } catch {
+        // Ignore
+      }
+      chimeAudioCtxRef.current = null;
+    }
+  };
+
   const playGentleChime = () => {
-    if (!soundEnabled) return;
+    // Never play reminder sound if muted OR during an active Sard / plan session
+    if (!soundEnabled || expandedSardPlanId) return;
     try {
+      stopChimeAudio();
       const AudioCtx =
         window.AudioContext ||
         (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       const ctx = new AudioCtx();
+      chimeAudioCtxRef.current = ctx;
       const now = ctx.currentTime;
 
       const freqs = [528, 660, 792];
@@ -146,7 +162,10 @@ export default function App() {
   };
 
   const triggerReminderNotification = (customPlan?: QuranPlanItem) => {
-    playGentleChime();
+    // Suppress reminder audio during active Sard / plan sessions
+    if (!expandedSardPlanId) {
+      playGentleChime();
+    }
     const title = dict.notificationTestTitle;
     const body = customPlan
       ? `${getPlanTypeLabel(customPlan.planType, lang)}: ${formatCurriculumTitle(
@@ -155,9 +174,12 @@ export default function App() {
         )} (${customPlan.estimatedAyahs} ${dict.ayahsUnit})`
       : dict.notificationTestBody;
 
-    setActiveToast({ title, body });
+    if (!expandedSardPlanId) {
+      setActiveToast({ title, body });
+    }
 
     if (
+      !expandedSardPlanId &&
       typeof window !== 'undefined' &&
       'Notification' in window &&
       Notification.permission === 'granted'
@@ -172,6 +194,9 @@ export default function App() {
 
   useEffect(() => {
     const interval = setInterval(() => {
+      // Do not trigger reminder sounds or alerts during an active Sard session
+      if (expandedSardPlanId) return;
+
       const now = new Date();
       const hh = String(now.getHours()).padStart(2, '0');
       const mm = String(now.getMinutes()).padStart(2, '0');
@@ -195,7 +220,7 @@ export default function App() {
     }, 25000);
 
     return () => clearInterval(interval);
-  }, [plans, lang, soundEnabled]);
+  }, [plans, lang, soundEnabled, expandedSardPlanId]);
 
   const handleRequestPermission = async () => {
     if (typeof window === 'undefined' || !('Notification' in window)) return;
@@ -211,6 +236,8 @@ export default function App() {
   };
 
   const handleOpenPlanScreen = (planId: string) => {
+    stopChimeAudio();
+    setActiveToast(null);
     setExpandedSardPlanId(planId);
     try {
       window.history.pushState({ planId }, '', `#plan-${planId}`);
