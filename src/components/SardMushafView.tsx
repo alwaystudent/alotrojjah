@@ -36,7 +36,9 @@ export interface MushafWordItem {
   wordPosition: number;
   textUthmani: string;
   normalizedText: string;
+  normalizedWithDagger: string;
   skeletonText: string;
+  phoneticSkeleton: string;
   syllableWeight: number;
   isFirstWordInAyah: boolean;
   isLastWordInAyah: boolean;
@@ -72,9 +74,86 @@ function toArabicNumerals(n: number): string {
   return String(n).replace(/\d/g, (d) => '٠١٢٣٤٥٦٧٨٩'[Number(d)]);
 }
 
-export function normalizeArabicForAlignment(raw: string): string {
+const UTHMANI_WORD_MAP: Record<string, string> = {
+  الرحمن: 'الرحمن',
+  الصلوه: 'الصلاه',
+  صلوه: 'صلاه',
+  الزكوه: 'الزكاه',
+  زكوه: 'زكاه',
+  الحيوه: 'الحياه',
+  حيوه: 'حياه',
+  الغدوه: 'الغداه',
+  مشكوه: 'مشكاه',
+  نجوه: 'نجاه',
+  منوه: 'مناه',
+  الربوا: 'الربا',
+  العلمين: 'العالمين',
+  السموت: 'السماوات',
+  سموت: 'سماوات',
+  الصلحت: 'الصالحات',
+  صلحت: 'صالحات',
+  ذلك: 'ذالك',
+  ذالك: 'ذالك',
+  هؤلاء: 'هاؤلاء',
+  هاؤلاء: 'هاؤلاء',
+  اولئك: 'اولءك',
+  اولاءك: 'اولءك',
+  اولءك: 'اولءك',
+  اله: 'الاه',
+  اللهم: 'اللهم',
+  ابرهم: 'ابراهيم',
+  ابرهيم: 'ابراهيم',
+  اسمعيل: 'اسماعيل',
+  اسحق: 'اسحاق',
+  هرون: 'هارون',
+  سليمن: 'سليمان',
+  لقمن: 'لقمان',
+  قرءان: 'قران',
+  القرءان: 'القران',
+  سبحن: 'سبحان',
+  سلطن: 'سلطان',
+  شيطن: 'شيطان',
+  الشيطن: 'الشيطان',
+  الانسن: 'الانسان',
+  انسن: 'انسان',
+};
+
+// Map Quranic Muqatta'at (disjoined letters at the start of Surahs) to their spoken letter names
+const MUQATTAAT_SPOKEN_FORMS: Record<string, string[]> = {
+  الم: ['الم', 'الفلامميم', 'الف', 'لام', 'ميم'],
+  المص: ['المص', 'الفلامميمصاد', 'الف', 'صاد'],
+  الر: ['الر', 'الفلامرا', 'الف', 'را', 'راء'],
+  المر: ['المر', 'الفلامميمرا', 'الف', 'را', 'راء'],
+  كهيعص: ['كهيعص', 'كافهاياينصاد', 'كاف', 'صاد'],
+  طه: ['طه', 'طاها', 'طا', 'ها'],
+  طسم: ['طسم', 'طاسينميم', 'طا', 'سين', 'ميم'],
+  طس: ['طس', 'طاسين', 'طا', 'سين'],
+  يس: ['يس', 'ياسين', 'يا', 'سين'],
+  ص: ['ص', 'صاد'],
+  حم: ['حم', 'حاميم', 'حا', 'ميم'],
+  عسق: ['عسق', 'عينسينقاف', 'عين', 'سين', 'قاف'],
+  ق: ['ق', 'قاف'],
+  ن: ['ن', 'نون'],
+};
+
+export function normalizeArabicForAlignment(raw: string, expandDaggerAlif = false): string {
   if (!raw) return '';
-  let s = raw
+  let s = raw;
+
+  // Convert Uthmani Tatweel+Hamza (ـٔ / ـٕ) to Alif before stripping diacritics
+  s = s.replace(/\u0640[\u0654\u0655]/g, 'ا');
+
+  if (expandDaggerAlif) {
+    // In Uthmani script: وٰ -> ا (e.g. الصلوٰة -> الصلاة), ىٰ -> ي (علىٰ -> علي), ـٰ -> ا (الكتـٰب -> الكتاب), ۧ/ۦ -> ي (إبرٰهيـۧم -> ابراهيم), ۥ -> و
+    s = s
+      .replace(/\u0648\u0670/g, 'ا')
+      .replace(/[\u0649\u064A]\u0670/g, 'ي')
+      .replace(/\u0670/g, 'ا')
+      .replace(/[\u06E6\u06E7]/g, 'ي')
+      .replace(/\u06E5/g, 'و');
+  }
+
+  s = s
     .replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u0640\u08F0-\u08FF]/g, '')
     .replace(/[\u0622\u0623\u0625\u0671\u0672\u0673\u0675]/g, 'ا')
     .replace(/[\u0649\u06CC]/g, 'ي')
@@ -82,30 +161,11 @@ export function normalizeArabicForAlignment(raw: string): string {
     .replace(/[\u0624\u0626]/g, 'ء')
     .replace(/[^\u0621-\u064A]/g, '');
 
-  const uthmaniMap: Record<string, string> = {
-    الرحمن: 'الرحمن',
-    الصلوه: 'الصلاه',
-    الزكوه: 'الزكاه',
-    الحيوه: 'الحياه',
-    الغدوه: 'الغداه',
-    مشكوه: 'مشكاه',
-    نجوه: 'نجاه',
-    منوه: 'مناه',
-    الربوا: 'الربا',
-    العلمين: 'العالمين',
-    السموت: 'السماوات',
-    سموت: 'سماوات',
-    الصلحت: 'الصالحات',
-    صلحت: 'صالحات',
-    ذلك: 'ذالك',
-    هؤلاء: 'هاؤلاء',
-    اولئك: 'اولاءك',
-    اله: 'الاه',
-    اللهم: 'اللهم',
-  };
+  // Normalize Uthmani initial/medial ءا -> ا (e.g. ءامنوا -> امنوا, بالاخره -> بالاخره)
+  s = s.replace(/ءا/g, 'ا').replace(/ا+/g, 'ا').replace(/ي+/g, 'ي').replace(/و+/g, 'و');
 
-  if (uthmaniMap[s]) {
-    s = uthmaniMap[s];
+  if (UTHMANI_WORD_MAP[s]) {
+    s = UTHMANI_WORD_MAP[s];
   }
 
   return s.trim();
@@ -113,6 +173,17 @@ export function normalizeArabicForAlignment(raw: string): string {
 
 function getConsonantalSkeleton(norm: string): string {
   return norm.replace(/[اويءه]/g, '');
+}
+
+function getPhoneticSkeleton(norm: string): string {
+  return norm
+    .replace(/ء/g, 'ا')
+    .replace(/ص/g, 'س')
+    .replace(/ض/g, 'ذ')
+    .replace(/ظ/g, 'ذ')
+    .replace(/ط/g, 'ت')
+    .replace(/ق/g, 'ك')
+    .replace(/[اويءه]/g, '');
 }
 
 // Compute realistic acoustic syllable weight of a Quranic word (letters + Madd elongations)
@@ -127,44 +198,92 @@ function computeWordSyllableWeight(textUthmani: string, norm: string): number {
   );
 }
 
-// Strict word matching so short prefixes ("ال", "من", "في") NEVER trigger false jumps ahead
-function wordMatchScore(spokenNorm: string, targetNorm: string, targetSkeleton: string): number {
+function singleFormMatchScore(
+  spokenNorm: string,
+  targetNorm: string,
+  targetSkeleton: string,
+  targetPhonetic: string
+): number {
   if (!spokenNorm || !targetNorm) return 0;
   if (spokenNorm === targetNorm) return 1.0;
+
+  // Check if target is a Muqatta'at word (e.g. الم, كهيعص, طه, يس, حم, ص, ق, ن)
+  const muqattaatForms = MUQATTAAT_SPOKEN_FORMS[targetNorm];
+  if (muqattaatForms && muqattaatForms.includes(spokenNorm)) {
+    return 0.98;
+  }
+
+  // Handle verb plural silent alif differences (e.g. قالوا vs قالو, امنوا vs امنو)
+  if (
+    spokenNorm.replace(/وا$/, 'و') === targetNorm.replace(/وا$/, 'و') &&
+    targetNorm.length >= 3
+  ) {
+    return 0.97;
+  }
 
   const spokenSkeleton = getConsonantalSkeleton(spokenNorm);
   if (
     spokenSkeleton.length >= 2 &&
     targetSkeleton.length >= 2 &&
-    spokenSkeleton === targetSkeleton
+    spokenSkeleton === targetSkeleton &&
+    Math.abs(spokenNorm.length - targetNorm.length) <= 2
   ) {
-    return 0.95;
+    return 0.94;
+  }
+
+  const spokenPhonetic = getPhoneticSkeleton(spokenNorm);
+  if (
+    spokenPhonetic.length >= 2 &&
+    targetPhonetic.length >= 2 &&
+    spokenPhonetic === targetPhonetic &&
+    Math.abs(spokenNorm.length - targetNorm.length) <= 2
+  ) {
+    return 0.89;
   }
 
   const minLen = Math.min(spokenNorm.length, targetNorm.length);
   const maxLen = Math.max(spokenNorm.length, targetNorm.length);
   if (maxLen === 0) return 0;
 
-  // Only allow substring containment if the shorter word is at least 4 letters AND >= 75% of the longer word
+  // Allow substring containment if shorter word >= 3 letters and >= 72% of longer word
   if (
-    minLen >= 4 &&
-    minLen / maxLen >= 0.75 &&
+    minLen >= 3 &&
+    minLen / maxLen >= 0.72 &&
     (spokenNorm.includes(targetNorm) || targetNorm.includes(spokenNorm))
   ) {
-    return 0.88;
+    return 0.86;
   }
 
-  // Prefix + character overlap for inflected Quranic words
+  // Edit distance / character overlap for inflected Quranic words
   if (minLen >= 3 && Math.abs(spokenNorm.length - targetNorm.length) <= 2) {
     let matches = 0;
     for (let i = 0; i < minLen; i++) {
       if (spokenNorm[i] === targetNorm[i]) matches++;
     }
     const ratio = matches / maxLen;
-    return ratio >= 0.78 ? ratio : 0;
+    if (ratio >= 0.75) return ratio;
   }
 
   return 0;
+}
+
+// Match spoken Arabic word against both Uthmani (no-dagger) and Imla'i (with-dagger) forms of the Mushaf word
+export function scoreSpokenAgainstMushafWord(spokenNorm: string, word: MushafWordItem): number {
+  if (!spokenNorm || !word) return 0;
+  const s1 = singleFormMatchScore(
+    spokenNorm,
+    word.normalizedText,
+    word.skeletonText,
+    word.phoneticSkeleton
+  );
+  if (s1 >= 0.95) return s1;
+  const s2 = singleFormMatchScore(
+    spokenNorm,
+    word.normalizedWithDagger,
+    word.skeletonText,
+    word.phoneticSkeleton
+  );
+  return Math.max(s1, s2);
 }
 
 // Determine whether a word should be hidden in Review Mode according to the 4 levels (مبتدئ / متوسط / متقدم / حافظ)
@@ -248,15 +367,18 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
   const [showExtraControls, setShowExtraControls] = useState<boolean>(false);
 
   // ============================================================================
-  // MODE 1: SARD (`plan.planType === 'sard'`) — Real-Time Voice Alignment
+  // MODE 1: SARD (`plan.planType === 'sard'`) — Strict Real-Time Speech-to-Verse Matching
   // ============================================================================
   const [currentWordIndex, setCurrentWordIndex] = useState<number>(0);
-  const [sardStarted, setSardStarted] = useState<boolean>(false);
+  const [sardStarted, setSardStarted] = useState<boolean>(true);
   const [isListening, setIsListening] = useState<boolean>(false);
   const [voiceActive, setVoiceActive] = useState<boolean>(false);
   const [mistakeIndices, setMistakeIndices] = useState<number[]>([]);
   const [speechError, setSpeechError] = useState<string | null>(null);
   const [syncSpeedFactor, setSyncSpeedFactor] = useState<number>(defaultSyncSpeed);
+  const [lastMatchedSpoken, setLastMatchedSpoken] = useState<string>('');
+  const [lastMismatchSpoken, setLastMismatchSpoken] = useState<string>('');
+  const [revealAllPreview, setRevealAllPreview] = useState<boolean>(false);
 
   // ============================================================================
   // MODE 2: NEW MEMORIZATION (`plan.planType === 'new_memorization'`) — Repetition
@@ -277,7 +399,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
   const [wrongQuizAttempts, setWrongQuizAttempts] = useState<number>(0);
   const [wrongChoiceFlash, setWrongChoiceFlash] = useState<string | null>(null);
 
-  // Refs for continuous, non-cutting, non-leading real-time voice alignment
+  // Refs for continuous, strict speech-to-word alignment
   const recognitionRef = useRef<any>(null);
   const recognitionRestartTimerRef = useRef<any>(null);
   const isListeningRef = useRef<boolean>(false);
@@ -286,7 +408,6 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
   const currentIndexRef = useRef<number>(0);
   const lastWordAdvanceTimeRef = useRef<number>(0);
   const lastVoiceDetectedTimeRef = useRef<number>(0);
-  const accumulatedVoiceUnitsRef = useRef<number>(0);
   const noiseFloorRef = useRef<number>(4.5);
   const syncSpeedFactorRef = useRef<number>(defaultSyncSpeed);
   const processedResultIndexRef = useRef<number>(0);
@@ -297,7 +418,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const analyserIntervalRef = useRef<any>(null);
 
-  // Refs for Repetition mode inside interval
+  // Refs for Repetition mode inside speech callback
   const activeAyahIdxRef = useRef<number>(0);
   const ayahWordOffsetRef = useRef<number>(0);
   const currentAyahRepCountRef = useRef<number>(0);
@@ -424,6 +545,8 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
       setAyahWordOffset(0);
       currentAyahRepCountRef.current = 0;
       setCurrentAyahRepCount(0);
+      setLastMatchedSpoken('');
+      setLastMismatchSpoken('');
       setLoadingPage(true);
       setCurrentPage(clamped);
       if (mushafScrollContainerRef.current) {
@@ -567,13 +690,20 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
             .trim();
         }
 
+        // Filter out non-word pause symbols (ۖ ۗ ۘ ۙ ۚ ۛ ۜ ۞ ۩) so only real Quranic words are matched
         const rawTokens = cleanText
           .split(/\s+/)
           .map((t) => t.trim())
-          .filter((t) => t.length > 0 && !/^[\u06D6-\u06ED\u06DD٠-٩0-9]+$/.test(t));
+          .filter(
+            (t) =>
+              t.length > 0 &&
+              !/^[\u06D6-\u06ED\u06DD٠-٩0-9]+$/.test(t) &&
+              normalizeArabicForAlignment(t, false).length > 0
+          );
 
         const ayahWords: MushafWordItem[] = rawTokens.map((token, idx) => {
-          const norm = normalizeArabicForAlignment(token);
+          const normNoDagger = normalizeArabicForAlignment(token, false);
+          const normWithDagger = normalizeArabicForAlignment(token, true);
           const item: MushafWordItem = {
             globalIndex: globalIdx++,
             surahNumber: v.surahNumber,
@@ -582,9 +712,11 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
             ayahGroupIndex: gIdx,
             wordPosition: idx + 1,
             textUthmani: token,
-            normalizedText: norm,
-            skeletonText: getConsonantalSkeleton(norm),
-            syllableWeight: computeWordSyllableWeight(token, norm),
+            normalizedText: normNoDagger,
+            normalizedWithDagger: normWithDagger,
+            skeletonText: getConsonantalSkeleton(normWithDagger),
+            phoneticSkeleton: getPhoneticSkeleton(normWithDagger),
+            syllableWeight: computeWordSyllableWeight(token, normWithDagger),
             isFirstWordInAyah: idx === 0,
             isLastWordInAyah: idx === rawTokens.length - 1,
           };
@@ -607,6 +739,8 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
       setCurrentWordIndex(0);
       currentIndexRef.current = 0;
       setMistakeIndices([]);
+      setLastMatchedSpoken('');
+      setLastMismatchSpoken('');
       setActiveAyahIdx(0);
       activeAyahIdxRef.current = 0;
       setCurrentAyahRepCount(0);
@@ -698,11 +832,28 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
     };
   }, [currentPage, buildWordsFromVerses]);
 
-  // Stop microphone & audio analyzer cleanly (100% silent Web Audio API — no SpeechRecognition OS beeps)
+  // Stop microphone & speech recognition session cleanly
   const stopListeningSession = useCallback(() => {
     isListeningRef.current = false;
     setIsListening(false);
     setVoiceActive(false);
+
+    if (recognitionRestartTimerRef.current) {
+      clearTimeout(recognitionRestartTimerRef.current);
+      recognitionRestartTimerRef.current = null;
+    }
+
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.onend = null;
+        recognitionRef.current.onerror = null;
+        recognitionRef.current.onresult = null;
+        recognitionRef.current.stop();
+      } catch {
+        // Ignore
+      }
+      recognitionRef.current = null;
+    }
 
     if (analyserIntervalRef.current) {
       clearInterval(analyserIntervalRef.current);
@@ -724,7 +875,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
     }
   }, []);
 
-  // Multi-page advance during Sard (advances strictly 1 page at a time in ascending order without skipping)
+  // Multi-page advance during Sard (advances strictly 1 page at a time in ascending order once all words on page are matched)
   useEffect(() => {
     if (
       plan.planType === 'sard' &&
@@ -788,15 +939,159 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
     }
   }, [currentPage, actualPageRange.endPage, goToMushafPage, stopListeningSession]);
 
-  // Start Continuous, 100% Silent Microphone Session (Pure Web Audio API RMS + Vocal Formants — Zero OS/Browser Notification Beeps)
+  // Helper to verify whether a spoken token (or alternative hypotheses) matches a target MushafWordItem
+  const checkTokenMatchesWord = useCallback(
+    (
+      spokenTokensAtPos: string[],
+      nextSpokenToken: string | undefined,
+      targetWord: MushafWordItem,
+      nextTargetWord: MushafWordItem | undefined
+    ): {
+      matched: boolean;
+      wordsAdvanced: 1 | 2;
+      tokensConsumed: 1 | 2;
+      matchedText: string;
+    } => {
+      for (const rawSpoken of spokenTokensAtPos) {
+        const spokenNorm = normalizeArabicForAlignment(rawSpoken, false);
+        if (!spokenNorm) continue;
+
+        // 1. Direct single-word match against Uthmani or Imla'i form
+        const directScore = scoreSpokenAgainstMushafWord(spokenNorm, targetWord);
+        if (directScore >= 0.78) {
+          return {
+            matched: true,
+            wordsAdvanced: 1,
+            tokensConsumed: 1,
+            matchedText: rawSpoken,
+          };
+        }
+
+        // 2. Prefix-attached/detached match (e.g. "والعصر" vs "العصر" or "فسبح" vs "سبح")
+        if (
+          spokenNorm.length >= 4 &&
+          (spokenNorm.startsWith('و') || spokenNorm.startsWith('ف'))
+        ) {
+          const strippedScore = scoreSpokenAgainstMushafWord(spokenNorm.slice(1), targetWord);
+          if (strippedScore >= 0.85) {
+            return {
+              matched: true,
+              wordsAdvanced: 1,
+              tokensConsumed: 1,
+              matchedText: rawSpoken,
+            };
+          }
+        }
+        if (
+          targetWord.normalizedWithDagger.length >= 4 &&
+          (targetWord.normalizedWithDagger.startsWith('و') ||
+            targetWord.normalizedWithDagger.startsWith('ف'))
+        ) {
+          const targetWithoutConjunction: MushafWordItem = {
+            ...targetWord,
+            normalizedText: targetWord.normalizedText.slice(1),
+            normalizedWithDagger: targetWord.normalizedWithDagger.slice(1),
+          };
+          if (scoreSpokenAgainstMushafWord(spokenNorm, targetWithoutConjunction) >= 0.86) {
+            return {
+              matched: true,
+              wordsAdvanced: 1,
+              tokensConsumed: 1,
+              matchedText: rawSpoken,
+            };
+          }
+        }
+
+        // 3. Compound 2-spoken-words -> 1-Uthmani-word (e.g. "يا أيها" -> "يَـٰٓأَيُّهَا", "يا قوم" -> "يَـٰقَوْمِ")
+        if (nextSpokenToken) {
+          const joinedSpoken = normalizeArabicForAlignment(rawSpoken + nextSpokenToken, false);
+          if (scoreSpokenAgainstMushafWord(joinedSpoken, targetWord) >= 0.82) {
+            return {
+              matched: true,
+              wordsAdvanced: 1,
+              tokensConsumed: 2,
+              matchedText: `${rawSpoken} ${nextSpokenToken}`,
+            };
+          }
+        }
+
+        // 4. Compound 1-spoken-word -> 2-Uthmani-words (e.g. "ألا" -> "أَن لَّا", "مما" -> "مِن مَّا")
+        if (nextTargetWord) {
+          const combinedTarget: MushafWordItem = {
+            ...targetWord,
+            normalizedText: targetWord.normalizedText + nextTargetWord.normalizedText,
+            normalizedWithDagger:
+              targetWord.normalizedWithDagger + nextTargetWord.normalizedWithDagger,
+            skeletonText: targetWord.skeletonText + nextTargetWord.skeletonText,
+            phoneticSkeleton: targetWord.phoneticSkeleton + nextTargetWord.phoneticSkeleton,
+          };
+          if (scoreSpokenAgainstMushafWord(spokenNorm, combinedTarget) >= 0.84) {
+            return {
+              matched: true,
+              wordsAdvanced: 2,
+              tokensConsumed: 1,
+              matchedText: rawSpoken,
+            };
+          }
+        }
+
+        // 5. Short-particle 1-word bridge: ONLY if current target word is a short particle (<= 3 letters)
+        // that ASR fused/dropped and the reader clearly pronounced the immediately following word
+        if (
+          nextTargetWord &&
+          targetWord.normalizedText.length <= 3 &&
+          nextTargetWord.normalizedText !== targetWord.normalizedText
+        ) {
+          const nextScore = scoreSpokenAgainstMushafWord(spokenNorm, nextTargetWord);
+          if (nextScore >= 0.88) {
+            return {
+              matched: true,
+              wordsAdvanced: 2,
+              tokensConsumed: 1,
+              matchedText: rawSpoken,
+            };
+          }
+        }
+      }
+
+      return {
+        matched: false,
+        wordsAdvanced: 1,
+        tokensConsumed: 1,
+        matchedText: '',
+      };
+    },
+    []
+  );
+
+  // Start Real-Time Speech-to-Verse Matching Session (Words & Verses ONLY appear when spoken speech matches!)
   const startListeningSession = async () => {
     setSpeechError(null);
     setSardStarted(true);
-    accumulatedVoiceUnitsRef.current = 0;
-    lastWordAdvanceTimeRef.current = Date.now();
+    setRevealAllPreview(false);
+    setLastMatchedSpoken('');
+    setLastMismatchSpoken('');
+    lastWordAdvanceTimeRef.current = 0;
     lastVoiceDetectedTimeRef.current = 0;
+    processedResultIndexRef.current = 0;
+    processedTokenCountRef.current = 0;
+
+    const SpeechRecognitionAPI =
+      (window as unknown as { SpeechRecognition?: any; webkitSpeechRecognition?: any })
+        .SpeechRecognition ||
+      (window as unknown as { webkitSpeechRecognition?: any }).webkitSpeechRecognition;
+
+    if (!SpeechRecognitionAPI) {
+      setSpeechError(
+        lang === 'ar'
+          ? 'متصفحك الحالي لا يدعم التعرف الصوتي المباشر (SpeechRecognition). يرجى استخدام متصفح Chrome أو Edge أو Safari لمطابقة القراءة الصوتية مع الآيات.'
+          : 'Your browser does not support Web SpeechRecognition. Please use Chrome, Edge, or Safari to match spoken recitation with verses.'
+      );
+      return;
+    }
 
     try {
+      // Optional Web Audio API stream ONLY for visual voice indicator (never advances words without speech match)
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -811,141 +1106,207 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
         (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       const audioCtx = new AudioCtx();
       audioContextRef.current = audioCtx;
-
       if (audioCtx.state === 'suspended') {
         await audioCtx.resume();
       }
 
       const source = audioCtx.createMediaStreamSource(stream);
       const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 512;
-      analyser.smoothingTimeConstant = 0.35;
-      // Connect ONLY to analyser (never to audioCtx.destination) so zero sound is ever emitted
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.4;
       source.connect(analyser);
 
-      isListeningRef.current = true;
-      setIsListening(true);
-
-      const freqData = new Uint8Array(analyser.frequencyBinCount);
       const timeData = new Uint8Array(analyser.fftSize);
-      const TICK_MS = 45;
-
       analyserIntervalRef.current = setInterval(() => {
         if (!isListeningRef.current) return;
-
-        // Keep AudioContext awake if browser tries to suspend it
-        if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
-          audioContextRef.current.resume().catch(() => {});
-        }
-
-        // Keep microphone tracks enabled
-        const tracks = mediaStreamRef.current?.getAudioTracks();
-        if (!tracks || tracks.length === 0 || tracks[0].readyState === 'ended') {
-          return;
-        }
-
-        analyser.getByteFrequencyData(freqData);
         analyser.getByteTimeDomainData(timeData);
-
-        // 1. Time-domain RMS amplitude (captures even soft/calm voice close to mic)
         let sumSq = 0;
         for (let i = 0; i < timeData.length; i++) {
           const centered = timeData[i] - 128;
           sumSq += centered * centered;
         }
         const rms = Math.sqrt(sumSq / timeData.length);
-
-        // 2. Vocal fundamental + formant frequencies (~100Hz - 2400Hz)
-        let freqSum = 0;
-        const startBin = 2;
-        const endBin = 28;
-        for (let i = startBin; i <= endBin; i++) {
-          freqSum += freqData[i];
+        if (rms < noiseFloorRef.current + 1.5) {
+          noiseFloorRef.current = Math.min(7, Math.max(2, noiseFloorRef.current * 0.95 + rms * 0.05));
         }
-        const avgFreq = freqSum / (endBin - startBin + 1);
+        const isVoice = rms >= noiseFloorRef.current + 2.2;
+        if (isVoice) {
+          lastVoiceDetectedTimeRef.current = Date.now();
+        }
+        setVoiceActive(isVoice || Date.now() - lastVoiceDetectedTimeRef.current <= 250);
+      }, 60);
+    } catch {
+      // Even if getUserMedia visualizer is blocked, still start SpeechRecognition
+    }
 
-        // Combined vocal signal metric
-        const vocalSignal = rms * 1.9 + avgFreq * 0.55;
+    try {
+      const recognition = new SpeechRecognitionAPI();
+      recognition.lang = 'ar-SA';
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 3;
 
-        // Only update ambient noise floor when room is genuinely quiet
-        if (vocalSignal < noiseFloorRef.current + 2.5) {
-          noiseFloorRef.current = Math.min(
-            7.5,
-            Math.max(2.5, noiseFloorRef.current * 0.95 + vocalSignal * 0.05)
+      recognition.onresult = (event: any) => {
+        if (!isListeningRef.current) return;
+        setVoiceActive(true);
+        lastVoiceDetectedTimeRef.current = Date.now();
+
+        for (let rIdx = processedResultIndexRef.current; rIdx < event.results.length; rIdx++) {
+          const resultObj = event.results[rIdx];
+          if (!resultObj || !resultObj[0]) continue;
+
+          if (rIdx > processedResultIndexRef.current) {
+            processedResultIndexRef.current = rIdx;
+            processedTokenCountRef.current = 0;
+          }
+
+          // Collect tokens from primary hypothesis and alternatives
+          const primaryTranscript = String(resultObj[0].transcript || '').trim();
+          if (!primaryTranscript) continue;
+
+          const primaryTokens = primaryTranscript
+            .split(/\s+/)
+            .map((t) => t.trim())
+            .filter((t) => normalizeArabicForAlignment(t, false).length > 0);
+
+          const alt1Tokens = resultObj[1]?.transcript
+            ? String(resultObj[1].transcript)
+                .trim()
+                .split(/\s+/)
+                .filter((t) => normalizeArabicForAlignment(t, false).length > 0)
+            : [];
+          const alt2Tokens = resultObj[2]?.transcript
+            ? String(resultObj[2].transcript)
+                .trim()
+                .split(/\s+/)
+                .filter((t) => normalizeArabicForAlignment(t, false).length > 0)
+            : [];
+
+          const startScanIdx = Math.max(
+            processedTokenCountRef.current,
+            primaryTokens.length - 6
           );
-        }
 
-        // Sensitive, stable voice threshold so normal recitation NEVER cuts off
-        const voiceThreshold = Math.max(7.2, Math.min(13.5, noiseFloorRef.current + 3.8));
-        const now = Date.now();
-        const isRawVoice = vocalSignal >= voiceThreshold;
+          let i = startScanIdx;
+          while (i < primaryTokens.length) {
+            const candidatesAtPos: string[] = [primaryTokens[i]];
+            if (alt1Tokens[i] && !candidatesAtPos.includes(alt1Tokens[i])) {
+              candidatesAtPos.push(alt1Tokens[i]);
+            }
+            if (alt2Tokens[i] && !candidatesAtPos.includes(alt2Tokens[i])) {
+              candidatesAtPos.push(alt2Tokens[i]);
+            }
 
-        if (isRawVoice) {
-          lastVoiceDetectedTimeRef.current = now;
-        }
+            const nextSpoken = primaryTokens[i + 1];
 
-        // 190ms syllable-bridge grace window so consonant stops (ق، ط، ب، ت، ك) don't drop voice state,
-        // while genuine silence (> 190ms) immediately freezes word reveal
-        const isSpeakingNow = isRawVoice || now - lastVoiceDetectedTimeRef.current <= 190;
-        setVoiceActive(isSpeakingNow);
+            if (plan.planType === 'sard') {
+              const wordsList = flatWordsRef.current;
+              const currIdx = currentIndexRef.current;
+              const targetWord = wordsList[currIdx];
+              if (!targetWord) break;
 
-        if (!isSpeakingNow) {
-          // User is silent: immediately stop revealing words!
-          accumulatedVoiceUnitsRef.current = 0;
-          return;
-        }
+              const nextTargetWord = wordsList[currIdx + 1];
+              const matchRes = checkTokenMatchesWord(
+                candidatesAtPos,
+                nextSpoken,
+                targetWord,
+                nextTargetWord
+              );
 
-        // User is actively reciting into the microphone!
-        // Clamp intensity to [0.9, 1.08] so reading louder NEVER makes words race ahead of the reader
-        const intensity = isRawVoice
-          ? Math.min(1.08, Math.max(0.9, (vocalSignal - voiceThreshold) / 35 + 0.92))
-          : 0.5;
-        const speedMul = syncSpeedFactorRef.current;
+              if (matchRes.matched) {
+                const nextWordIdx = Math.min(
+                  wordsList.length,
+                  currIdx + matchRes.wordsAdvanced
+                );
+                currentIndexRef.current = nextWordIdx;
+                setCurrentWordIndex(nextWordIdx);
+                setLastMatchedSpoken(matchRes.matchedText);
+                setLastMismatchSpoken('');
+                lastWordAdvanceTimeRef.current = Date.now();
+                i += matchRes.tokensConsumed;
+                processedTokenCountRef.current = i;
+              } else {
+                // Only report a mismatch if the user has finished speaking this word (not mid-syllable)
+                if (i < primaryTokens.length - 1 || resultObj.isFinal) {
+                  setLastMismatchSpoken(primaryTokens[i]);
+                }
+                i += 1;
+              }
+            } else if (plan.planType === 'new_memorization') {
+              const groups = ayahGroupsRef.current;
+              const currentGroup = groups[activeAyahIdxRef.current];
+              const targetWord = currentGroup?.words[ayahWordOffsetRef.current];
+              if (!targetWord) break;
 
-        accumulatedVoiceUnitsRef.current += TICK_MS * intensity * speedMul;
+              const nextTargetWord = currentGroup?.words[ayahWordOffsetRef.current + 1];
+              const matchRes = checkTokenMatchesWord(
+                candidatesAtPos,
+                nextSpoken,
+                targetWord,
+                nextTargetWord
+              );
 
-        const minWordCooldown = Math.round(540 / speedMul);
-        if (now - lastWordAdvanceTimeRef.current < minWordCooldown) {
-          return;
-        }
-
-        if (plan.planType === 'sard') {
-          const wordsList = flatWordsRef.current;
-          const currW = wordsList[currentIndexRef.current];
-          if (!currW) return;
-
-          // Calibrated Quranic word duration: ~230ms per syllable weight unit
-          const requiredVoiceUnits = Math.max(620, currW.syllableWeight * 230);
-
-          if (accumulatedVoiceUnitsRef.current >= requiredVoiceUnits) {
-            accumulatedVoiceUnitsRef.current = 0;
-            lastWordAdvanceTimeRef.current = now;
-            if (currentIndexRef.current < wordsList.length) {
-              currentIndexRef.current += 1;
-              setCurrentWordIndex(currentIndexRef.current);
+              if (matchRes.matched) {
+                stepRepetitionWord();
+                if (matchRes.wordsAdvanced === 2) {
+                  stepRepetitionWord();
+                }
+                setLastMatchedSpoken(matchRes.matchedText);
+                setLastMismatchSpoken('');
+                lastWordAdvanceTimeRef.current = Date.now();
+                i += matchRes.tokensConsumed;
+                processedTokenCountRef.current = i;
+              } else {
+                if (i < primaryTokens.length - 1 || resultObj.isFinal) {
+                  setLastMismatchSpoken(primaryTokens[i]);
+                }
+                i += 1;
+              }
+            } else {
+              i += 1;
             }
           }
-        } else if (plan.planType === 'new_memorization') {
-          const groups = ayahGroupsRef.current;
-          const currentGroup = groups[activeAyahIdxRef.current];
-          const currW = currentGroup?.words[ayahWordOffsetRef.current];
-          const weight = currW?.syllableWeight || 3.2;
-          const requiredVoiceUnits = Math.max(640, weight * 235);
-
-          if (accumulatedVoiceUnitsRef.current >= requiredVoiceUnits) {
-            accumulatedVoiceUnitsRef.current = 0;
-            lastWordAdvanceTimeRef.current = now;
-            stepRepetitionWord();
-          }
         }
-      }, TICK_MS);
+      };
+
+      recognition.onerror = (event: any) => {
+        const errCode = event?.error;
+        if (errCode === 'not-allowed' || errCode === 'service-not-allowed') {
+          setSpeechError(
+            lang === 'ar'
+              ? 'يرجى السماح بصلاحية الميكروفون في المتصفح لمطابقة كلامك مع الآيات.'
+              : 'Please allow microphone access to match your speech with the verses.'
+          );
+          stopListeningSession();
+        }
+      };
+
+      recognition.onend = () => {
+        if (!isListeningRef.current) return;
+        // Reconnect recognition session smoothly if the browser ended the stream after a long pause
+        recognitionRestartTimerRef.current = setTimeout(() => {
+          if (!isListeningRef.current || !recognitionRef.current) return;
+          try {
+            processedResultIndexRef.current = 0;
+            processedTokenCountRef.current = 0;
+            recognitionRef.current.start();
+          } catch {
+            // Ignore if already started
+          }
+        }, 450);
+      };
+
+      recognitionRef.current = recognition;
+      isListeningRef.current = true;
+      setIsListening(true);
+      recognition.start();
     } catch {
       setSpeechError(
         lang === 'ar'
-          ? 'يرجى السماح بصلاحية الميكروفون في المتصفح ليتزامن ظهور الآيات مع قراءتك الصوتية.'
-          : 'Please allow microphone access in your browser to synchronize verse display with your voice.'
+          ? 'تعذر بدء التعرف الصوتي. تأكد من صلاحية الميكروفون.'
+          : 'Could not start speech recognition. Please check microphone permissions.'
       );
-      return;
+      stopListeningSession();
     }
   };
 
@@ -954,6 +1315,17 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
       stopListeningSession();
     } else {
       startListeningSession();
+    }
+  };
+
+  // Reveal current word manually if the reader forgot it (logs a mistake so they can continue reciting)
+  const handleRevealCurrentWordHint = () => {
+    if (plan.planType === 'sard' && currentWordIndex < flatWords.length) {
+      const idxToReveal = currentWordIndex;
+      setMistakeIndices((prev) => (prev.includes(idxToReveal) ? prev : [...prev, idxToReveal]));
+      currentIndexRef.current = idxToReveal + 1;
+      setCurrentWordIndex(idxToReveal + 1);
+      setLastMismatchSpoken('');
     }
   };
 
@@ -1006,6 +1378,13 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
     }
     return arr;
   }, [actualPageRange.startPage, actualPageRange.endPage]);
+
+  // Active Ayah group index during Sard (so future verses do not appear until reached and matched)
+  const currentSardAyahGroupIndex = useMemo(() => {
+    if (flatWords.length === 0) return 0;
+    if (currentWordIndex >= flatWords.length) return ayahGroups.length;
+    return flatWords[currentWordIndex]?.ayahGroupIndex ?? 0;
+  }, [flatWords, currentWordIndex, ayahGroups.length]);
 
   const progressPct =
     plan.planType === 'sard'
@@ -1137,6 +1516,15 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
             ) : (
               <div dir="rtl" className="text-justify leading-[2.45] sm:leading-[2.6] select-none">
                 {ayahGroups.map((group) => {
+                  // In Sard mode, future verses DO NOT appear at all until the reader reaches them via matched speech
+                  if (
+                    plan.planType === 'sard' &&
+                    !revealAllPreview &&
+                    group.groupIndex > currentSardAyahGroupIndex
+                  ) {
+                    return null;
+                  }
+
                   const isCurrentRepAyah =
                     plan.planType === 'new_memorization' && group.groupIndex === activeAyahIdx;
                   const isPastRepAyah =
@@ -1164,39 +1552,49 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
 
                       {group.words.map((word, wIdxInAyah) => {
                         // --- CASE A: SARD MODE (`plan.planType === 'sard'`) ---
+                        // Words & verses DO NOT appear unless the reader's speech via microphone matches them!
                         if (plan.planType === 'sard') {
                           const isRecited = word.globalIndex < currentWordIndex;
                           const isCurrent = word.globalIndex === currentWordIndex;
-                          const isHiddenDuringSard = sardStarted && !isRecited;
+                          const wasHintedMistake = mistakeIndices.includes(word.globalIndex);
+
+                          // Hide all words after the current expected word unless preview is toggled
+                          if (!revealAllPreview && word.globalIndex > currentWordIndex) {
+                            return null;
+                          }
 
                           return (
                             <React.Fragment key={word.globalIndex}>
                               <span
                                 ref={isCurrent ? activeWordDomRef : null}
                                 onClick={() => {
-                                  currentIndexRef.current = word.globalIndex + 1;
-                                  setCurrentWordIndex(word.globalIndex + 1);
+                                  if (isCurrent) {
+                                    handleRevealCurrentWordHint();
+                                  }
                                 }}
-                                className={`font-uthmani text-xl sm:text-[26px] inline-block px-1.5 py-0.5 mx-0.5 my-0.5 rounded-lg transition-all duration-150 cursor-pointer ${
+                                title={
+                                  isCurrent
+                                    ? lang === 'ar'
+                                      ? 'انقر لكشف الكلمة الحالية إذا نسيتها'
+                                      : 'Click to reveal current word'
+                                    : undefined
+                                }
+                                className={`font-uthmani text-xl sm:text-[26px] inline-block px-1.5 py-0.5 mx-0.5 my-0.5 rounded-lg transition-all duration-150 ${
                                   isRecited
-                                    ? 'text-[#261C14] bg-[#4A6144]/12'
-                                    : isCurrent && sardStarted
-                                    ? 'bg-[#C88A14]/25 border border-dashed border-[#C88A14] text-transparent select-none'
-                                    : isHiddenDuringSard
-                                    ? 'bg-[#EFE9DC]/70 text-transparent select-none rounded-md'
-                                    : 'text-[#261C14] hover:bg-[#EFE9DC]'
+                                    ? wasHintedMistake
+                                      ? 'text-[#A84A32] bg-[#A84A32]/12 border border-[#A84A32]/30'
+                                      : 'text-[#261C14] bg-[#4A6144]/12'
+                                    : isCurrent && !revealAllPreview
+                                    ? lastMismatchSpoken
+                                      ? 'bg-[#A84A32]/20 border-2 border-dashed border-[#A84A32] text-transparent select-none min-w-[68px] cursor-pointer animate-pulse'
+                                      : 'bg-[#C88A14]/20 border-2 border-dashed border-[#C88A14] text-transparent select-none min-w-[68px] cursor-pointer'
+                                    : 'text-[#84715E]/70 bg-[#EFE9DC]/50'
                                 }`}
                               >
-                                {word.textUthmani}
+                                {isRecited || revealAllPreview ? word.textUthmani : '••••'}
                               </span>
-                              {word.isLastWordInAyah && (
-                                <span
-                                  className={`font-uthmani text-base sm:text-xl mx-1 select-none ${
-                                    isHiddenDuringSard && !isRecited
-                                      ? 'text-[#D5C7B2]'
-                                      : 'text-[#C88A14]'
-                                  }`}
-                                >
+                              {word.isLastWordInAyah && (isRecited || revealAllPreview) && (
+                                <span className="font-uthmani text-base sm:text-xl mx-1 select-none text-[#C88A14]">
                                   ﴿{toArabicNumerals(group.ayahNumber)}﴾
                                 </span>
                               )}
@@ -1222,7 +1620,9 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                                 }}
                                 className={`font-uthmani text-xl sm:text-[26px] inline-block px-1.5 py-0.5 mx-0.5 my-0.5 rounded-lg transition-all duration-150 cursor-pointer ${
                                   isCurrentRepWord
-                                    ? 'bg-[#C88A14] text-[#FFFDF9] shadow-2xs'
+                                    ? hideInBlindRep
+                                      ? 'bg-[#C88A14]/25 border-2 border-dashed border-[#C88A14] text-transparent select-none min-w-[64px]'
+                                      : 'bg-[#C88A14] text-[#FFFDF9] shadow-2xs'
                                     : isWordSpokenInRep || isPastRepAyah
                                     ? 'text-[#3B5934] bg-[#4A6144]/12'
                                     : isCurrentRepAyah
@@ -1232,7 +1632,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                                     : 'text-[#84715E]/60'
                                 }`}
                               >
-                                {word.textUthmani}
+                                {hideInBlindRep ? '••••' : word.textUthmani}
                               </span>
                               {word.isLastWordInAyah && (
                                 <span className="font-uthmani text-base sm:text-xl text-[#C88A14] mx-1 select-none">
@@ -1284,6 +1684,25 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                     </React.Fragment>
                   );
                 })}
+
+                {plan.planType === 'sard' && !revealAllPreview && currentWordIndex === 0 && (
+                  <div className="my-6 p-4 rounded-2xl bg-[#F6E9C8]/45 border border-dashed border-[#C88A14]/60 text-center space-y-1">
+                    <p className="font-display-islamic font-bold text-sm sm:text-base text-[#2D2218]">
+                      {lang === 'ar'
+                        ? 'الآيات والكلمات مخفية — ابدأ السرد بالميكروفون وستظهر كل كلمة وآية فور تطابق قراءتك معها'
+                        : 'Verses and words are hidden — start reciting into the microphone and each word will appear as it matches your voice'}
+                    </p>
+                    <p className="text-xs text-[#5C4B3B]">
+                      {lang === 'ar'
+                        ? `الآية الحالية: سورة ${
+                            ayahGroups[0]?.surahNameAr || ''
+                          } — الآية ${toArabicNumerals(ayahGroups[0]?.ayahNumber || 1)}`
+                        : `Current Verse: Surah ${ayahGroups[0]?.surahNameAr || ''} — Ayah ${
+                            ayahGroups[0]?.ayahNumber || 1
+                          }`}
+                    </p>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1340,8 +1759,8 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
           {plan.planType === 'sard' && (
             <div className="space-y-1.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                {/* Primary Start/Pause Sard Button + Live Voice Status */}
-                <div className="flex items-center gap-2 flex-1 min-w-[180px]">
+                {/* Primary Start/Pause Sard Button + Live Speech Match Status */}
+                <div className="flex items-center gap-2 flex-1 min-w-[200px]">
                   <button
                     type="button"
                     onClick={toggleMicrophoneSession}
@@ -1355,52 +1774,77 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                     <span>{isListening ? dict.stopSardBtn : dict.startSardBtn}</span>
                   </button>
 
-                  <div className="flex items-center gap-1 text-[11px] sm:text-xs text-[#E6D7BE] truncate">
+                  <div className="flex items-center gap-1.5 text-[11px] sm:text-xs text-[#E6D7BE] truncate">
                     <Sparkles
                       className={`w-3.5 h-3.5 shrink-0 transition-transform ${
                         voiceActive ? 'text-[#EAB338] scale-125' : 'text-[#E6D7BE]/45'
                       }`}
                     />
-                    <span className="truncate">
-                      {!isListening
-                        ? lang === 'ar'
-                          ? 'اضغط وابدأ القراءة'
-                          : 'Start & recite'
-                        : voiceActive
-                        ? lang === 'ar'
-                          ? 'متزامن...'
-                          : 'Synced...'
-                        : lang === 'ar'
-                        ? 'بانتظار الصوت'
-                        : 'Waiting for voice'}
-                    </span>
+                    {lastMismatchSpoken ? (
+                      <span className="text-[#F8B4A0] font-semibold truncate">
+                        {lang === 'ar'
+                          ? `لم تتطابق: "${lastMismatchSpoken}" — أعد قراءة الكلمة`
+                          : `Mismatch: "${lastMismatchSpoken}" — repeat word`}
+                      </span>
+                    ) : lastMatchedSpoken ? (
+                      <span className="text-[#A8E09F] font-semibold truncate">
+                        {lang === 'ar'
+                          ? `تطابق: "${lastMatchedSpoken}"`
+                          : `Matched: "${lastMatchedSpoken}"`}
+                      </span>
+                    ) : (
+                      <span className="truncate">
+                        {!isListening
+                          ? lang === 'ar'
+                            ? 'اضغط بدء السرد واقرأ ليظهر النص المتطابق'
+                            : 'Start & recite to reveal matching words'
+                          : voiceActive
+                          ? lang === 'ar'
+                            ? 'جاري الاستماع ومطابقة الكلمات...'
+                            : 'Listening & matching words...'
+                          : lang === 'ar'
+                          ? 'بانتظار قراءتك الصوتية'
+                          : 'Waiting for your recitation'}
+                      </span>
+                    )}
                   </div>
                 </div>
 
-                {/* Speed Calibration + Counter + Reset */}
+                {/* Hint Current Word + Preview Toggle + Counter + Reset */}
                 <div className="flex items-center gap-1.5">
-                  <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-black/25 border border-white/15">
-                    {(
-                      [
-                        { factor: 0.75, labelAr: 'ترتيل', labelEn: 'Slow' },
-                        { factor: 1.0, labelAr: 'طبيعي', labelEn: 'Sync' },
-                        { factor: 1.28, labelAr: 'حدر', labelEn: 'Fast' },
-                      ] as const
-                    ).map((mode) => (
-                      <button
-                        key={mode.factor}
-                        type="button"
-                        onClick={() => setSyncSpeedFactor(mode.factor)}
-                        className={`px-2 py-0.5 rounded-md text-[11px] font-semibold transition-colors cursor-pointer ${
-                          Math.abs(syncSpeedFactor - mode.factor) < 0.08
-                            ? 'bg-[#C88A14] text-[#FFFDF9]'
-                            : 'text-[#E6D7BE] hover:text-white'
-                        }`}
-                      >
-                        {lang === 'ar' ? mode.labelAr : mode.labelEn}
-                      </button>
-                    ))}
-                  </div>
+                  {currentWordIndex < flatWords.length && (
+                    <button
+                      type="button"
+                      onClick={handleRevealCurrentWordHint}
+                      className="px-2.5 py-1 rounded-lg bg-white/15 hover:bg-white/25 border border-white/20 text-[11px] font-bold text-[#EAB338] cursor-pointer flex items-center gap-1"
+                      title={
+                        lang === 'ar'
+                          ? 'كشف الكلمة الحالية عند النسيان'
+                          : 'Reveal current word hint'
+                      }
+                    >
+                      <HelpCircle className="w-3 h-3" />
+                      <span>{lang === 'ar' ? 'كشف كلمة' : 'Hint'}</span>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => setRevealAllPreview((p) => !p)}
+                    className={`px-2 py-1 rounded-lg text-[11px] font-semibold border cursor-pointer ${
+                      revealAllPreview
+                        ? 'bg-[#C88A14] text-[#FFFDF9] border-[#EAB338]'
+                        : 'bg-black/25 text-[#E6D7BE] border-white/15 hover:text-white'
+                    }`}
+                  >
+                    {lang === 'ar'
+                      ? revealAllPreview
+                        ? 'إخفاء للسرد'
+                        : 'معاينة'
+                      : revealAllPreview
+                      ? 'Hide'
+                      : 'Preview'}
+                  </button>
 
                   <span className="text-xs font-mono-tabular text-[#EAB338] font-bold px-1">
                     {currentWordIndex}/{flatWords.length}
@@ -1410,10 +1854,13 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                     type="button"
                     onClick={() => {
                       stopListeningSession();
-                      setSardStarted(false);
+                      setSardStarted(true);
+                      setRevealAllPreview(false);
                       currentIndexRef.current = 0;
                       setCurrentWordIndex(0);
                       setMistakeIndices([]);
+                      setLastMatchedSpoken('');
+                      setLastMismatchSpoken('');
                     }}
                     title={dict.resetSessionBtn}
                     className="p-1 rounded-lg bg-white/10 hover:bg-white/20 text-[#E6D7BE] hover:text-white cursor-pointer"
