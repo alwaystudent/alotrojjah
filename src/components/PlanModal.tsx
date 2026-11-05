@@ -1,15 +1,18 @@
-import React, { useState, useEffect } from 'react';
-import { X, BookOpen, Layers, Hash, Clock, Check, Calendar, Sparkles } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { X, BookOpen, Layers, Hash, Clock, Check, Calendar, Sparkles, Repeat } from 'lucide-react';
 import {
   Language,
   PlanType,
   CurriculumScope,
   DayId,
   QuranPlanItem,
+  CalendarMode,
   WEEK_DAYS,
   SURAH_LIST,
   JUZ_LIST,
   getTodayDayId,
+  getWeekDayDate,
+  formatCalendarDate,
   calculateMetrics,
 } from '@/src/data/quranData';
 import { t } from '@/src/data/translations';
@@ -17,6 +20,7 @@ import { t } from '@/src/data/translations';
 interface PlanModalProps {
   isOpen: boolean;
   lang: Language;
+  calendarMode?: CalendarMode;
   initialDay?: DayId;
   editingPlan?: QuranPlanItem | null;
   onClose: () => void;
@@ -26,6 +30,7 @@ interface PlanModalProps {
 export const PlanModal: React.FC<PlanModalProps> = ({
   isOpen,
   lang,
+  calendarMode = 'both',
   initialDay,
   editingPlan,
   onClose,
@@ -56,6 +61,7 @@ export const PlanModal: React.FC<PlanModalProps> = ({
   // Reminder & details
   const [reminderTime, setReminderTime] = useState<string>('05:30');
   const [reminderEnabled, setReminderEnabled] = useState<boolean>(true);
+  const [repeatWeekly, setRepeatWeekly] = useState<boolean>(true);
   const [notes, setNotes] = useState<string>('');
   const [mistakesCount, setMistakesCount] = useState<number>(0);
 
@@ -78,12 +84,19 @@ export const PlanModal: React.FC<PlanModalProps> = ({
       setJuzEnd(jEnd);
       setSingleJuz(jStart === jEnd);
 
-      setAyahSurah(editingPlan.ayahSurah ?? 3);
-      setAyahFrom(editingPlan.ayahFrom ?? 1);
-      setAyahTo(editingPlan.ayahTo ?? 15);
+      const aSurah = editingPlan.ayahSurah ?? 3;
+      const surahObj = SURAH_LIST.find((s) => s.number === aSurah);
+      const sMaxA = surahObj ? surahObj.ayahCount : 200;
+      const aFrom = Math.max(1, Math.min(sMaxA, editingPlan.ayahFrom ?? 1));
+      const aTo = Math.max(aFrom, Math.min(sMaxA, editingPlan.ayahTo ?? Math.min(15, sMaxA)));
+
+      setAyahSurah(aSurah);
+      setAyahFrom(aFrom);
+      setAyahTo(aTo);
 
       setReminderTime(editingPlan.reminderTime || '05:30');
       setReminderEnabled(editingPlan.reminderEnabled ?? true);
+      setRepeatWeekly(editingPlan.repeatWeekly ?? true);
       setNotes(editingPlan.notes || '');
       setMistakesCount(editingPlan.mistakesCount ?? 0);
     } else {
@@ -101,15 +114,27 @@ export const PlanModal: React.FC<PlanModalProps> = ({
       setAyahTo(20);
       setReminderTime('06:00');
       setReminderEnabled(true);
+      setRepeatWeekly(true);
       setNotes('');
       setMistakesCount(0);
     }
   }, [isOpen, editingPlan, initialDay, todayId]);
 
-  if (!isOpen) return null;
-
   const selectedAyahSurahObj = SURAH_LIST.find((s) => s.number === ayahSurah) || SURAH_LIST[0];
   const maxAyahs = selectedAyahSurahObj.ayahCount;
+  const safeAyahFrom = Math.max(1, Math.min(maxAyahs, ayahFrom));
+  const safeAyahTo = Math.max(safeAyahFrom, Math.min(maxAyahs, ayahTo));
+
+  const ayahOptions = useMemo(
+    () => Array.from({ length: maxAyahs }, (_, idx) => idx + 1),
+    [maxAyahs]
+  );
+  const toAyahOptions = useMemo(
+    () => ayahOptions.filter((num) => num >= safeAyahFrom),
+    [ayahOptions, safeAyahFrom]
+  );
+
+  if (!isOpen) return null;
 
   const handleToggleDay = (dayId: DayId) => {
     if (editingPlan) {
@@ -135,8 +160,8 @@ export const PlanModal: React.FC<PlanModalProps> = ({
     juzStart,
     effectiveJuzEnd,
     ayahSurah,
-    ayahFrom,
-    ayahTo
+    safeAyahFrom,
+    safeAyahTo
   );
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -145,10 +170,12 @@ export const PlanModal: React.FC<PlanModalProps> = ({
     const s2 = Math.max(surahStart, effectiveSurahEnd);
     const j1 = Math.min(juzStart, effectiveJuzEnd);
     const j2 = Math.max(juzStart, effectiveJuzEnd);
-    const a1 = Math.max(1, Math.min(ayahFrom, ayahTo, maxAyahs));
-    const a2 = Math.min(maxAyahs, Math.max(ayahFrom, ayahTo, 1));
+    const a1 = Math.max(1, Math.min(safeAyahFrom, safeAyahTo, maxAyahs));
+    const a2 = Math.min(maxAyahs, Math.max(safeAyahFrom, safeAyahTo, 1));
 
-    const plans = selectedDays.map((day) => ({
+    const targetDays = selectedDays.length > 0 ? selectedDays : [initialDay || todayId];
+
+    const plans = targetDays.map((day) => ({
       day,
       planType,
       scope,
@@ -159,13 +186,14 @@ export const PlanModal: React.FC<PlanModalProps> = ({
       ayahSurah: scope === 'ayah' ? ayahSurah : undefined,
       ayahFrom: scope === 'ayah' ? a1 : undefined,
       ayahTo: scope === 'ayah' ? a2 : undefined,
-      reminderTime,
+      reminderTime: reminderTime || '05:30',
       reminderEnabled,
+      repeatWeekly,
       status: editingPlan ? editingPlan.status : ('pending' as const),
       estimatedAyahs,
       estimatedPages,
       notes: notes.trim() || undefined,
-      mistakesCount,
+      mistakesCount: Number(mistakesCount) || 0,
     }));
 
     onSave(plans, editingPlan?.id);
@@ -228,12 +256,15 @@ export const PlanModal: React.FC<PlanModalProps> = ({
               {WEEK_DAYS.map((day) => {
                 const isSelected = selectedDays.includes(day.id);
                 const isToday = day.id === todayId;
+                const dateStr = formatCalendarDate(getWeekDayDate(day.id), lang, calendarMode, {
+                  compact: true,
+                });
                 return (
                   <button
                     key={day.id}
                     type="button"
                     onClick={() => handleToggleDay(day.id)}
-                    className={`py-1.5 px-1 rounded-lg border text-center transition-all cursor-pointer ${
+                    className={`py-1.5 px-0.5 rounded-lg border text-center transition-all cursor-pointer flex flex-col items-center justify-center gap-0.5 ${
                       isSelected
                         ? 'bg-[#2D2218] text-[#FFFDF9] border-[#C88A14]'
                         : 'bg-[#F7F3EB] text-[#5C4B3B] border-[#DDD2BE] hover:border-[#C88A14]/60'
@@ -242,9 +273,16 @@ export const PlanModal: React.FC<PlanModalProps> = ({
                     <div className="text-[11px] font-bold truncate">
                       {lang === 'ar' ? day.nameAr : day.shortEn}
                     </div>
+                    <div
+                      className={`text-[8.5px] font-mono-tabular leading-none truncate max-w-full px-0.5 ${
+                        isSelected ? 'text-[#EAB338]' : 'text-[#84715E]'
+                      }`}
+                    >
+                      {dateStr}
+                    </div>
                     {isToday && (
                       <div
-                        className={`text-[9px] font-medium leading-tight ${
+                        className={`text-[9px] font-medium leading-none ${
                           isSelected ? 'text-[#EAB338]' : 'text-[#B87D10]'
                         }`}
                       >
@@ -481,34 +519,43 @@ export const PlanModal: React.FC<PlanModalProps> = ({
                     <label className="block text-[11px] font-medium text-[#5C4B3B] mb-0.5">
                       {dict.fromAyahLabel}
                     </label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={maxAyahs}
-                      value={ayahFrom}
+                    <select
+                      value={safeAyahFrom}
                       onChange={(e) => {
                         const val = Math.max(1, Math.min(maxAyahs, Number(e.target.value) || 1));
                         setAyahFrom(val);
                         if (val > ayahTo) setAyahTo(val);
                       }}
-                      className="w-full px-2.5 py-1.5 rounded-lg bg-[#FFFDF9] border border-[#D5C7B2] text-xs font-mono-tabular text-[#261C14] focus:outline-none focus:border-[#C88A14]"
-                    />
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-[#FFFDF9] border border-[#D5C7B2] text-xs font-mono-tabular text-[#261C14] focus:outline-none focus:border-[#C88A14] cursor-pointer"
+                    >
+                      {ayahOptions.map((num) => (
+                        <option key={num} value={num}>
+                          {lang === 'ar' ? `الآية ${num}` : `Ayah ${num}`}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className="block text-[11px] font-medium text-[#5C4B3B] mb-0.5">
                       {dict.toAyahLabel}
                     </label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={maxAyahs}
-                      value={ayahTo}
+                    <select
+                      value={safeAyahTo}
                       onChange={(e) => {
-                        const val = Math.max(1, Math.min(maxAyahs, Number(e.target.value) || 1));
+                        const val = Math.max(
+                          safeAyahFrom,
+                          Math.min(maxAyahs, Number(e.target.value) || safeAyahFrom)
+                        );
                         setAyahTo(val);
                       }}
-                      className="w-full px-2.5 py-1.5 rounded-lg bg-[#FFFDF9] border border-[#D5C7B2] text-xs font-mono-tabular text-[#261C14] focus:outline-none focus:border-[#C88A14]"
-                    />
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-[#FFFDF9] border border-[#D5C7B2] text-xs font-mono-tabular text-[#261C14] focus:outline-none focus:border-[#C88A14] cursor-pointer"
+                    >
+                      {toAyahOptions.map((num) => (
+                        <option key={num} value={num}>
+                          {lang === 'ar' ? `الآية ${num}` : `Ayah ${num}`}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
               </div>
@@ -582,6 +629,33 @@ export const PlanModal: React.FC<PlanModalProps> = ({
                 className="w-full px-2 py-1 rounded-lg bg-[#FFFDF9] border border-[#D5C7B2] text-xs text-[#261C14] placeholder-[#84715E] focus:outline-none focus:border-[#C88A14]"
               />
             </div>
+          </div>
+
+          {/* 5. Weekly Repetition Option (خاصية تكرار الخطة أسبوعياً) */}
+          <div className="p-2.5 rounded-xl bg-[#FBF5E6] border border-[#C88A14]/40 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-[#C88A14]/15 flex items-center justify-center text-[#9E6A0C] shrink-0">
+                <Repeat className="w-3.5 h-3.5" />
+              </div>
+              <div>
+                <label
+                  htmlFor="repeatWeeklyCheck"
+                  className="text-xs font-bold text-[#261C14] cursor-pointer block"
+                >
+                  {dict.repeatWeeklyLabel}
+                </label>
+                <span className="text-[10.5px] text-[#84715E] block leading-tight">
+                  {dict.repeatWeeklyHint}
+                </span>
+              </div>
+            </div>
+            <input
+              id="repeatWeeklyCheck"
+              type="checkbox"
+              checked={repeatWeekly}
+              onChange={(e) => setRepeatWeekly(e.target.checked)}
+              className="w-4 h-4 rounded border-[#C88A14] text-[#C88A14] focus:ring-[#C88A14] cursor-pointer"
+            />
           </div>
 
           {/* Footer Actions */}

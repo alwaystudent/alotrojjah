@@ -23,6 +23,13 @@ import {
   X,
   Volume2,
   VolumeX,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ListFilter,
+  Maximize2,
+  Minimize2,
+  WifiOff,
 } from 'lucide-react';
 import {
   Language,
@@ -31,9 +38,12 @@ import {
   QuranPlanItem,
   PlanEvaluation,
   QuizLevel,
+  CalendarMode,
   WEEK_DAYS,
   INITIAL_PLANS,
   getTodayDayId,
+  getWeekDayDate,
+  formatCalendarDate,
   formatCurriculumTitle,
   getPlanTypeLabel,
   getScopeLabel,
@@ -44,15 +54,42 @@ import { PlanModal } from './components/PlanModal';
 import { AnalyticsSection } from './components/AnalyticsSection';
 import { RemindersSection } from './components/RemindersSection';
 import { SardMushafView } from './components/SardMushafView';
+import { PWAInstallButton } from './components/PWAInstallButton';
+import { useOnlineStatus } from './hooks/useOnlineStatus';
 
 const STORAGE_KEY_PLANS = 'mishkat_sard_user_plans_v2';
 const STORAGE_KEY_LANG = 'mishkat_sard_lang_v1';
+const STORAGE_KEY_CALENDAR_MODE = 'al_utrujjah_calendar_mode_v1';
+const STORAGE_KEY_FOCUS_MODE = 'al_utrujjah_focus_mode_v1';
 
 export default function App() {
+  const isOnline = useOnlineStatus();
   const [lang, setLang] = useState<Language>(() => {
     const saved = localStorage.getItem(STORAGE_KEY_LANG);
     return saved === 'en' || saved === 'ar' ? saved : 'ar';
   });
+
+  const [calendarMode, setCalendarMode] = useState<CalendarMode>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY_CALENDAR_MODE);
+    return saved === 'both' || saved === 'hijri' || saved === 'gregorian' ? saved : 'both';
+  });
+
+  const [focusModeEnabled, setFocusModeEnabled] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_FOCUS_MODE);
+      return saved ? JSON.parse(saved) === true : false;
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY_FOCUS_MODE, JSON.stringify(focusModeEnabled));
+    } catch {
+      // Ignore
+    }
+  }, [focusModeEnabled]);
 
   const [plans, setPlans] = useState<QuranPlanItem[]>(() => {
     try {
@@ -71,7 +108,11 @@ export default function App() {
     'schedule' | 'today' | 'analytics' | 'reminders'
   >('schedule');
   const [expandedSardPlanId, setExpandedSardPlanId] = useState<string | null>(null);
-  const [scheduleViewMode, setScheduleViewMode] = useState<'grid' | 'table'>('table');
+  const [scheduleViewMode, setScheduleViewMode] = useState<'dropdown' | 'table' | 'grid'>('dropdown');
+  const [selectedDropdownPlanId, setSelectedDropdownPlanId] = useState<string | null>(null);
+  const [dropdownDayFilter, setDropdownDayFilter] = useState<'all' | DayId>('all');
+  const [daySelectedPlanMap, setDaySelectedPlanMap] = useState<Record<string, string>>({});
+  const [dayExpandedAllMap, setDayExpandedAllMap] = useState<Record<string, boolean>>({});
   const [filterType, setFilterType] = useState<'all' | PlanType>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
@@ -108,6 +149,14 @@ export default function App() {
     document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
     localStorage.setItem(STORAGE_KEY_LANG, lang);
   }, [lang]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY_CALENDAR_MODE, calendarMode);
+    } catch {
+      // Ignore quota
+    }
+  }, [calendarMode]);
 
   useEffect(() => {
     try {
@@ -194,8 +243,8 @@ export default function App() {
 
   useEffect(() => {
     const interval = setInterval(() => {
-      // Do not trigger reminder sounds or alerts during an active Sard session
-      if (expandedSardPlanId) return;
+      // Do not trigger reminder sounds or alerts during an active Sard session or when tab is hidden
+      if (expandedSardPlanId || document.hidden) return;
 
       const now = new Date();
       const hh = String(now.getHours()).padStart(2, '0');
@@ -217,7 +266,7 @@ export default function App() {
         lastNotifiedMinuteRef.current = currentHM;
         triggerReminderNotification(duePlan);
       }
-    }, 25000);
+    }, 30000);
 
     return () => clearInterval(interval);
   }, [plans, lang, soundEnabled, expandedSardPlanId]);
@@ -267,19 +316,20 @@ export default function App() {
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
-  // Explicit completion handler triggered ONLY when user clicks one of the evaluation buttons (مثبت / متردد / متفلت) or Finish Plan
+  // Explicit completion handler triggered ONLY when user explicitly chooses to mark the plan as completed
   const handleCompletePlanSard = (
     planId: string,
     recordedMistakes: number,
     evaluation?: PlanEvaluation,
-    quizLevel?: QuizLevel
+    quizLevel?: QuizLevel,
+    markAsCompleted: boolean = true
   ) => {
     setPlans((prev) =>
       prev.map((p) =>
         p.id === planId
           ? {
               ...p,
-              status: 'completed',
+              status: markAsCompleted ? 'completed' : p.status,
               evaluation: evaluation || p.evaluation,
               quizLevel: quizLevel || p.quizLevel,
               mistakesCount: (p.mistakesCount || 0) + recordedMistakes,
@@ -306,25 +356,40 @@ export default function App() {
     newPlansData: Omit<QuranPlanItem, 'id' | 'createdAt'>[],
     editingId?: string
   ) => {
+    let nextPlans: QuranPlanItem[] = [];
     if (editingId && newPlansData.length > 0) {
       const updatedFields = newPlansData[0];
-      setPlans((prev) =>
-        prev.map((item) =>
+      setPlans((prev) => {
+        nextPlans = prev.map((item) =>
           item.id === editingId
             ? {
                 ...item,
                 ...updatedFields,
               }
             : item
-        )
-      );
+        );
+        try {
+          localStorage.setItem(STORAGE_KEY_PLANS, JSON.stringify(nextPlans));
+        } catch {
+          // Ignore
+        }
+        return nextPlans;
+      });
     } else {
       const createdItems: QuranPlanItem[] = newPlansData.map((data, index) => ({
         ...data,
         id: `plan-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 6)}`,
         createdAt: new Date().toISOString(),
       }));
-      setPlans((prev) => [...prev, ...createdItems]);
+      setPlans((prev) => {
+        nextPlans = [...prev, ...createdItems];
+        try {
+          localStorage.setItem(STORAGE_KEY_PLANS, JSON.stringify(nextPlans));
+        } catch {
+          // Ignore
+        }
+        return nextPlans;
+      });
     }
   };
 
@@ -416,11 +481,69 @@ export default function App() {
     return WEEK_DAYS;
   }, [activeSection, todayId]);
 
+  // Pre-group and sort filteredPlans by day once in O(N log N) instead of repeating inside every day row/card
+  const plansByDayMap = useMemo(() => {
+    const map: Record<DayId, QuranPlanItem[]> = {
+      saturday: [],
+      sunday: [],
+      monday: [],
+      tuesday: [],
+      wednesday: [],
+      thursday: [],
+      friday: [],
+    };
+    filteredPlans.forEach((p) => {
+      if (map[p.day]) {
+        map[p.day].push(p);
+      }
+    });
+    (Object.keys(map) as DayId[]).forEach((dKey) => {
+      map[dKey].sort((a, b) => a.reminderTime.localeCompare(b.reminderTime));
+    });
+    return map;
+  }, [filteredPlans]);
+
+  const dropdownFilteredPlans = useMemo(() => {
+    return filteredPlans.filter((p) => {
+      if (dropdownDayFilter !== 'all' && p.day !== dropdownDayFilter) return false;
+      return true;
+    });
+  }, [filteredPlans, dropdownDayFilter]);
+
+  const activeDropdownPlan = useMemo(() => {
+    if (selectedDropdownPlanId) {
+      const found = dropdownFilteredPlans.find((p) => p.id === selectedDropdownPlanId);
+      if (found) return found;
+    }
+    const todayPlan = dropdownFilteredPlans.find((p) => p.day === todayId);
+    return todayPlan || dropdownFilteredPlans[0] || null;
+  }, [dropdownFilteredPlans, selectedDropdownPlanId, todayId]);
+
+  const activeDropdownPlanIndex = activeDropdownPlan
+    ? dropdownFilteredPlans.findIndex((p) => p.id === activeDropdownPlan.id)
+    : -1;
+
+  const handleStepDropdownPlan = (direction: -1 | 1) => {
+    if (dropdownFilteredPlans.length === 0 || activeDropdownPlanIndex === -1) return;
+    const nextIdx =
+      (activeDropdownPlanIndex + direction + dropdownFilteredPlans.length) %
+      dropdownFilteredPlans.length;
+    setSelectedDropdownPlanId(dropdownFilteredPlans[nextIdx].id);
+  };
+
+  const { todayPlansCount, todayCompletedCount } = useMemo(() => {
+    let total = 0;
+    let done = 0;
+    for (let i = 0; i < plans.length; i++) {
+      if (plans[i].day === todayId) {
+        total++;
+        if (plans[i].status === 'completed') done++;
+      }
+    }
+    return { todayPlansCount: total, todayCompletedCount: done };
+  }, [plans, todayId]);
+
   const todayInfo = WEEK_DAYS.find((d) => d.id === todayId) || WEEK_DAYS[0];
-  const todayPlansCount = plans.filter((p) => p.day === todayId).length;
-  const todayCompletedCount = plans.filter(
-    (p) => p.day === todayId && p.status === 'completed'
-  ).length;
 
   return (
     <div className="min-h-screen flex flex-col bg-[#F7F3EB] text-[#261C14] islamic-pattern-subtle">
@@ -483,12 +606,32 @@ export default function App() {
             </span>
           </a>
 
-          {/* Left: Compact All-Settings Control Button */}
+          {/* Left: Compact Date, Counter & Settings Control Button */}
           <div className="flex items-center gap-2 shrink-0">
-            <span className="text-xs font-mono-tabular font-semibold text-[#84715E] bg-[#F7F3EB] px-2.5 py-1 rounded-lg border border-[#E5DEC9]">
-              {lang === 'ar' ? todayInfo.nameAr : todayInfo.shortEn} · {todayCompletedCount}/
-              {todayPlansCount}
-            </span>
+            <div className="flex flex-col items-end text-end">
+              <span className="text-[11px] sm:text-xs font-bold text-[#2D2218] flex items-center gap-1 font-mono-tabular leading-tight">
+                <Calendar className="w-3 h-3 text-[#C88A14] shrink-0" />
+                <span>{formatCalendarDate(new Date(), lang, calendarMode, { compact: true })}</span>
+              </span>
+              <span className="text-[10px] sm:text-[11px] font-mono-tabular text-[#84715E] leading-tight">
+                {lang === 'ar' ? todayInfo.nameAr : todayInfo.shortEn} · {todayCompletedCount}/
+                {todayPlansCount}
+              </span>
+            </div>
+
+            {/* Offline Network Status Indicator */}
+            {!isOnline && (
+              <span
+                className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[#A84A32]/15 border border-[#A84A32]/30 text-[#A84A32] text-[10px] font-bold shrink-0 animate-pulse"
+                title={lang === 'ar' ? 'أنت تعمل دون اتصال — كل البيانات والآيات تعمل محلياً 100%' : 'Working offline — 100% locally available'}
+              >
+                <WifiOff className="w-3 h-3 shrink-0" />
+                <span className="hidden sm:inline">{lang === 'ar' ? 'دون إنترنت' : 'Offline'}</span>
+              </span>
+            )}
+
+            {/* In-App PWA Install Button for Android / Desktop */}
+            <PWAInstallButton lang={lang} variant="header" />
 
             <button
               type="button"
@@ -632,31 +775,46 @@ export default function App() {
                   />
                 </div>
 
-                {/* View Mode Toggle on Desktop */}
-                <div className="hidden lg:flex items-center gap-1 p-0.5 bg-[#F7F3EB] rounded-lg border border-[#DDD2BE]">
+                {/* View Mode Toggle */}
+                <div className="flex items-center gap-1 p-0.5 bg-[#F7F3EB] rounded-lg border border-[#DDD2BE]">
+                  <button
+                    type="button"
+                    onClick={() => setScheduleViewMode('dropdown')}
+                    className={`flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                      scheduleViewMode === 'dropdown'
+                        ? 'bg-[#2D2218] text-[#EAB338] shadow-2xs'
+                        : 'text-[#5C4B3B] hover:text-[#261C14]'
+                    }`}
+                    title={dict.viewModeDropdown}
+                  >
+                    <ListFilter className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">{dict.viewModeDropdown}</span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => setScheduleViewMode('table')}
-                    className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                    className={`flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
                       scheduleViewMode === 'table'
-                        ? 'bg-[#C88A14] text-[#FFFDF9]'
+                        ? 'bg-[#C88A14] text-[#FFFDF9] shadow-2xs'
                         : 'text-[#5C4B3B] hover:text-[#261C14]'
                     }`}
+                    title={dict.viewModeTable}
                   >
                     <TableIcon className="w-3.5 h-3.5" />
-                    <span>{dict.viewModeTable}</span>
+                    <span className="hidden sm:inline">{dict.viewModeTable}</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => setScheduleViewMode('grid')}
-                    className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                    className={`flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
                       scheduleViewMode === 'grid'
-                        ? 'bg-[#C88A14] text-[#FFFDF9]'
+                        ? 'bg-[#C88A14] text-[#FFFDF9] shadow-2xs'
                         : 'text-[#5C4B3B] hover:text-[#261C14]'
                     }`}
+                    title={dict.viewModeGrid}
                   >
                     <LayoutGrid className="w-3.5 h-3.5" />
-                    <span>{dict.viewModeGrid}</span>
+                    <span className="hidden sm:inline">{dict.viewModeGrid}</span>
                   </button>
                 </div>
 
@@ -670,6 +828,353 @@ export default function App() {
                 </button>
               </div>
             </div>
+
+            {/* VERTICAL WEEKLY SCHEDULE WITH DROPDOWNS (الجدول الأسبوعي العمودي بالقوائم المنسدلة) */}
+            {scheduleViewMode === 'dropdown' && (
+              <div className="space-y-3.5">
+                {/* Top Control Bar: Vertical Day Filter Selector + Overall Stats & Quick Add */}
+                <div className="bg-[#FFFDF9] p-3 rounded-2xl border border-[#DDD2BE] shadow-2xs flex flex-wrap items-center justify-between gap-2.5">
+                  <div className="flex items-center gap-2 flex-1 min-w-[240px]">
+                    <span className="text-xs font-bold text-[#5C4B3B] flex items-center gap-1.5 shrink-0">
+                      <Calendar className="w-4 h-4 text-[#C88A14]" />
+                      <span>{lang === 'ar' ? 'عرض أيام الجدول:' : 'Schedule Days:'}</span>
+                    </span>
+
+                    {/* Vertical Filter Dropdown */}
+                    <div className="relative flex-1 max-w-xs">
+                      <select
+                        value={dropdownDayFilter}
+                        onChange={(e) => setDropdownDayFilter(e.target.value as 'all' | DayId)}
+                        className="w-full appearance-none ps-3 pe-8 py-1.5 rounded-xl bg-[#F7F3EB] border border-[#DDD2BE] hover:border-[#C88A14] text-xs font-bold text-[#2D2218] focus:outline-none focus:ring-1 focus:ring-[#C88A14] cursor-pointer"
+                      >
+                        <option value="all">
+                          {lang === 'ar' ? '📅 جميع أيام الأسبوع (السبت - الجمعة) عمودياً' : '📅 All Week Days (Sat - Fri)'}
+                        </option>
+                        {WEEK_DAYS.map((d) => (
+                          <option key={d.id} value={d.id}>
+                            {lang === 'ar' ? d.nameAr : d.nameEn} {d.id === todayId ? (lang === 'ar' ? '· (اليوم)' : '· (Today)') : ''} ({(plansByDayMap[d.id] || []).length} {dict.dropdownPlanCount})
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown className="w-3.5 h-3.5 text-[#C88A14] absolute end-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 ms-auto shrink-0">
+                    <span className="text-xs font-mono-tabular font-bold text-[#84715E] bg-[#F7F3EB] px-2.5 py-1 rounded-lg border border-[#DDD2BE]">
+                      {filteredPlans.filter(p => p.status === 'completed').length}/{filteredPlans.length} {dict.dropdownPlanCount} {dict.statusCompleted}
+                    </span>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleOpenAddModal(dropdownDayFilter !== 'all' ? dropdownDayFilter : todayId)
+                      }
+                      className="mustard-gradient-btn px-3 py-1.5 rounded-xl text-xs font-bold text-[#FFFDF9] shadow-2xs hover:opacity-95 transition-all cursor-pointer flex items-center gap-1.5"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>{dict.addPlanBtn}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Vertical Stack of Days (عمودية) */}
+                <div className="space-y-3">
+                  {(dropdownDayFilter === 'all'
+                    ? visibleDays
+                    : visibleDays.filter((d) => d.id === dropdownDayFilter)
+                  ).map((day) => {
+                    const dayPlans = plansByDayMap[day.id] || [];
+                    const isToday = day.id === todayId;
+                    const dateStr = formatCalendarDate(getWeekDayDate(day.id), lang, calendarMode, { compact: true });
+                    const doneCount = dayPlans.filter((p) => p.status === 'completed').length;
+                    const isAllExpanded = !!dayExpandedAllMap[day.id];
+
+                    // Active selected plan for this day
+                    const activePlanForDay =
+                      dayPlans.find((p) => p.id === daySelectedPlanMap[day.id]) ||
+                      dayPlans[0] ||
+                      null;
+
+                    return (
+                      <div
+                        key={day.id}
+                        className={`rounded-2xl border transition-all ${
+                          isToday
+                            ? 'bg-gradient-to-b from-[#FFFDF9] to-[#FBF7EE] border-[#C88A14]/70 shadow-sm'
+                            : 'bg-[#FFFDF9] border-[#DDD2BE] shadow-2xs'
+                        } p-3.5 sm:p-4 space-y-3`}
+                      >
+                        {/* Day Header Bar */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#DDD2BE]/60 pb-2.5">
+                          <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-bold font-display-islamic text-base sm:text-lg text-[#2D2218]">
+                                {lang === 'ar' ? day.nameAr : day.nameEn}
+                              </span>
+                              {isToday && (
+                                <span className="px-2 py-0.5 rounded-full bg-[#C88A14]/20 border border-[#C88A14]/40 text-[#9E6A0C] text-[11px] font-bold animate-pulse">
+                                  {dict.todayBadge}
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[#84715E] text-xs font-mono-tabular">
+                              · {dateStr}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            {dayPlans.length > 0 && (
+                              <span className="text-[11px] font-mono-tabular font-bold text-[#5C4B3B] bg-[#F7F3EB] px-2 py-0.5 rounded-lg border border-[#DDD2BE]">
+                                {doneCount}/{dayPlans.length} {dict.statusCompleted}
+                              </span>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => handleOpenAddModal(day.id)}
+                              title={dict.addAnotherForDay}
+                              className="px-2 py-1 rounded-lg bg-[#F7F3EB] hover:bg-[#EFE9DC] border border-[#DDD2BE] hover:border-[#C88A14] text-xs font-semibold text-[#8A5E09] flex items-center gap-1 transition-colors cursor-pointer"
+                            >
+                              <Plus className="w-3 h-3" />
+                              <span className="hidden sm:inline">{lang === 'ar' ? 'إضافة خطة' : 'Add'}</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Day Content */}
+                        {dayPlans.length === 0 ? (
+                          <div className="py-4 px-3 text-center rounded-xl border border-dashed border-[#DDD2BE] bg-[#F7F3EB]/40 flex items-center justify-between gap-2">
+                            <span className="text-xs text-[#84715E]">
+                              {lang === 'ar'
+                                ? `لا توجد خطط مجدولة ليوم ${day.nameAr}`
+                                : `No plans scheduled for ${day.nameEn}`}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenAddModal(day.id)}
+                              className="text-xs font-bold text-[#C88A14] hover:underline cursor-pointer"
+                            >
+                              + {dict.addFirstPlanForDay}
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            {/* If day has 2+ plans: provide the elegant Dropdown Selector */}
+                            {dayPlans.length > 1 && (
+                              <div className="flex flex-wrap items-center justify-between gap-2 bg-[#F7F3EB]/70 p-2 rounded-xl border border-[#DDD2BE]">
+                                <div className="relative flex-1 min-w-[200px]">
+                                  <div className="relative flex items-center">
+                                    <select
+                                      value={activePlanForDay?.id || ''}
+                                      onChange={(e) =>
+                                        setDaySelectedPlanMap((prev) => ({
+                                          ...prev,
+                                          [day.id]: e.target.value,
+                                        }))
+                                      }
+                                      className="w-full appearance-none ps-3 pe-9 py-2 rounded-xl bg-[#FFFDF9] border border-[#C88A14]/60 hover:border-[#C88A14] text-xs font-bold text-[#2D2218] shadow-2xs focus:outline-none focus:ring-2 focus:ring-[#C88A14]/30 cursor-pointer transition-all"
+                                    >
+                                      {dayPlans.map((p, pIdx) => {
+                                        const typeLabel = getPlanTypeLabel(p.planType, lang);
+                                        const currTitle = formatCurriculumTitle(p, lang);
+                                        const statusLabel =
+                                          p.status === 'completed'
+                                            ? lang === 'ar'
+                                              ? '✓ مكتمل'
+                                              : '✓ Done'
+                                            : lang === 'ar'
+                                            ? '○ متبقٍ'
+                                            : '○ Pending';
+                                        return (
+                                          <option key={p.id} value={p.id}>
+                                            {pIdx + 1}. {typeLabel}: {currTitle} ({p.reminderTime}) - {statusLabel}
+                                          </option>
+                                        );
+                                      })}
+                                    </select>
+                                    <ChevronDown className="w-4 h-4 text-[#C88A14] absolute end-2.5 pointer-events-none" />
+                                  </div>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setDayExpandedAllMap((prev) => ({
+                                      ...prev,
+                                      [day.id]: !isAllExpanded,
+                                    }))
+                                  }
+                                  className="px-2.5 py-1.5 rounded-lg bg-[#FFFDF9] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-[11px] font-bold text-[#5C4B3B] transition-colors cursor-pointer shrink-0"
+                                >
+                                  {isAllExpanded
+                                    ? lang === 'ar'
+                                      ? 'طي إلى القائمة المنسدلة'
+                                      : 'Collapse to Dropdown'
+                                    : lang === 'ar'
+                                    ? `عرض كل الخطط (${dayPlans.length})`
+                                    : `View all (${dayPlans.length})`}
+                                </button>
+                              </div>
+                            )}
+
+                            {/* Render either All Expanded Plans or the Single Selected Dropdown Plan */}
+                            <div className="space-y-2.5">
+                              {(isAllExpanded || dayPlans.length === 1
+                                ? dayPlans
+                                : activePlanForDay
+                                ? [activePlanForDay]
+                                : []
+                              ).map((plan) => {
+                                const isCompleted = plan.status === 'completed';
+                                const { label: practiceLabel, Icon: PracticeIcon } =
+                                  getPlanPracticeButtonMeta(plan.planType);
+
+                                return (
+                                  <div
+                                    key={plan.id}
+                                    className={`rounded-xl border p-3 sm:p-3.5 transition-all ${
+                                      isCompleted
+                                        ? 'bg-[#F7F3EB]/60 border-[#DDD2BE]'
+                                        : 'bg-gradient-to-b from-[#FFFDF9] to-[#FBF9F3] border-[#C88A14]/35 shadow-2xs'
+                                    }`}
+                                  >
+                                    <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                                      <div className="flex flex-wrap items-center gap-1.5">
+                                        <span
+                                          className={`px-2 py-0.5 rounded-lg text-xs font-bold ${
+                                            plan.planType === 'new_memorization'
+                                              ? 'bg-[#4A6144]/15 text-[#354930] border border-[#4A6144]/30'
+                                              : plan.planType === 'sard'
+                                              ? 'bg-[#C88A14]/15 text-[#8A5E09] border border-[#C88A14]/30'
+                                              : 'bg-[#9C4A32]/15 text-[#733320] border border-[#9C4A32]/30'
+                                          }`}
+                                        >
+                                          {getPlanTypeLabel(plan.planType, lang)}
+                                        </span>
+
+                                        <span className="px-2 py-0.5 rounded-lg text-xs font-medium bg-[#EFE9DC] text-[#5C4B3B] border border-[#DDD2BE]">
+                                          {getScopeLabel(plan.scope, lang)}
+                                        </span>
+
+                                        {plan.repeatWeekly && (
+                                          <span className="px-2 py-0.5 rounded-lg text-xs font-semibold bg-[#C88A14]/15 text-[#8A5E09] border border-[#C88A14]/30 flex items-center gap-1">
+                                            <Repeat className="w-3 h-3 text-[#C88A14]" />
+                                            <span>{dict.repeatWeeklyBadge}</span>
+                                          </span>
+                                        )}
+                                      </div>
+
+                                      <div className="flex items-center gap-2">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleTogglePlanReminder(plan.id)}
+                                          className={`flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-mono-tabular border transition-colors cursor-pointer ${
+                                            plan.reminderEnabled
+                                              ? 'bg-[#2D2218] text-[#EAB338] border-[#2D2218]'
+                                              : 'bg-[#EFE9DC] text-[#84715E] border-[#DDD2BE]'
+                                          }`}
+                                          title={dict.colReminder}
+                                        >
+                                          <Bell className="w-3 h-3" />
+                                          <span>{plan.reminderTime}</span>
+                                        </button>
+
+                                        <span
+                                          className={`text-xs font-bold px-2 py-0.5 rounded-md ${
+                                            isCompleted
+                                              ? 'bg-[#4A6144]/15 text-[#4A6144]'
+                                              : 'bg-[#84715E]/15 text-[#5C4B3B]'
+                                          }`}
+                                        >
+                                          {isCompleted ? dict.statusCompleted : dict.statusPending}
+                                        </span>
+                                      </div>
+                                    </div>
+
+                                    {/* Headline & Notes */}
+                                    <div className="space-y-1 mb-2.5">
+                                      <div className="flex flex-wrap items-baseline justify-between gap-2">
+                                        <h4 className="text-sm sm:text-base font-bold font-display-islamic text-[#2D2218]">
+                                          {formatCurriculumTitle(plan, lang)}
+                                        </h4>
+                                        {plan.evaluation && (
+                                          <span
+                                            className={`text-xs font-semibold px-2 py-0.5 rounded-md ${getEvalColorClass(
+                                              plan.evaluation
+                                            )} bg-[#F7F3EB]`}
+                                          >
+                                            {getEvaluationLabel(plan.evaluation, lang)}
+                                          </span>
+                                        )}
+                                      </div>
+                                      {plan.notes && (
+                                        <p className="text-[11px] text-[#5C4B3B] bg-[#FFFDF9] p-1.5 rounded-lg border border-[#E5DEC9] italic">
+                                          {plan.notes}
+                                        </p>
+                                      )}
+                                    </div>
+
+                                    {/* Bottom Action Bar */}
+                                    <div className="pt-2 border-t border-[#DDD2BE]/60 flex flex-wrap items-center justify-between gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenPlanScreen(plan.id)}
+                                        className="mustard-gradient-btn px-4 py-1.5 rounded-xl text-xs font-bold text-[#FFFDF9] shadow-2xs hover:shadow transition-all cursor-pointer flex items-center gap-1.5"
+                                      >
+                                        <PracticeIcon className="w-3.5 h-3.5" />
+                                        <span>{practiceLabel}</span>
+                                      </button>
+
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="text-[11px] font-mono-tabular text-[#84715E] me-1">
+                                          {plan.estimatedAyahs} {dict.ayahsUnit} · ~{plan.estimatedPages} {dict.pagesUnit}
+                                        </span>
+
+                                        <button
+                                          type="button"
+                                          onClick={() => handleToggleStatus(plan.id)}
+                                          className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${
+                                            isCompleted
+                                              ? 'bg-[#4A6144] text-white border-[#4A6144]'
+                                              : 'bg-[#F7F3EB] text-[#5C4B3B] hover:text-[#261C14] border-[#DDD2BE]'
+                                          }`}
+                                          title={isCompleted ? dict.statusCompleted : 'تعليم كمكتمل'}
+                                        >
+                                          <Check className="w-3.5 h-3.5" />
+                                        </button>
+
+                                        <button
+                                          type="button"
+                                          onClick={() => handleOpenEditModal(plan)}
+                                          title={dict.editPlan}
+                                          className="p-1.5 rounded-lg border border-[#DDD2BE] bg-[#F7F3EB] hover:bg-[#EFE9DC] text-[#5C4B3B] hover:text-[#261C14] transition-colors cursor-pointer"
+                                        >
+                                          <Edit3 className="w-3.5 h-3.5" />
+                                        </button>
+
+                                        <button
+                                          type="button"
+                                          onClick={() => handleDeletePlan(plan.id)}
+                                          title={dict.deletePlan}
+                                          className="p-1.5 rounded-lg border border-[#DDD2BE] bg-[#F7F3EB] hover:bg-[#A84A32]/10 text-[#5C4B3B] hover:text-[#A84A32] transition-colors cursor-pointer"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* DESKTOP TABLE VIEW (`hidden lg:block` when table mode is selected) */}
             {scheduleViewMode === 'table' && (
@@ -689,9 +1194,7 @@ export default function App() {
                     </thead>
                     <tbody className="divide-y divide-[#EFE9DC] text-xs sm:text-sm">
                       {visibleDays.map((day) => {
-                        const dayPlans = filteredPlans
-                          .filter((p) => p.day === day.id)
-                          .sort((a, b) => a.reminderTime.localeCompare(b.reminderTime));
+                        const dayPlans = plansByDayMap[day.id] || [];
                         const isToday = day.id === todayId;
 
                         if (dayPlans.length === 0) {
@@ -701,13 +1204,18 @@ export default function App() {
                               className={isToday ? 'bg-[#FBF5E6]/50' : 'hover:bg-[#F7F3EB]/40'}
                             >
                               <td className="py-2 px-3 font-bold text-[#261C14] whitespace-nowrap">
-                                <div className="flex items-center gap-1.5">
-                                  <span>{lang === 'ar' ? day.nameAr : day.nameEn}</span>
-                                  {isToday && (
-                                    <span className="text-[11px] font-semibold text-[#C88A14]">
-                                      · {dict.todayBadge}
-                                    </span>
-                                  )}
+                                <div className="flex flex-col">
+                                  <div className="flex items-center gap-1.5">
+                                    <span>{lang === 'ar' ? day.nameAr : day.nameEn}</span>
+                                    {isToday && (
+                                      <span className="text-[11px] font-semibold text-[#C88A14]">
+                                        · {dict.todayBadge}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="text-[10px] font-mono-tabular text-[#84715E] font-normal">
+                                    {formatCalendarDate(getWeekDayDate(day.id), lang, calendarMode, { compact: true })}
+                                  </span>
                                 </div>
                               </td>
                               <td colSpan={5} className="py-2 px-3 text-xs text-[#84715E]">
@@ -746,13 +1254,18 @@ export default function App() {
                                 <td className="py-2.5 px-3 align-middle whitespace-nowrap">
                                   {idx === 0 ? (
                                     <div className="flex items-center gap-2">
-                                      <div className="flex items-center gap-1 font-bold text-[#261C14]">
-                                        <span>{lang === 'ar' ? day.nameAr : day.nameEn}</span>
-                                        {isToday && (
-                                          <span className="text-[11px] font-semibold text-[#C88A14]">
-                                            · {dict.todayBadge}
-                                          </span>
-                                        )}
+                                      <div className="flex flex-col">
+                                        <div className="flex items-center gap-1 font-bold text-[#261C14]">
+                                          <span>{lang === 'ar' ? day.nameAr : day.nameEn}</span>
+                                          {isToday && (
+                                            <span className="text-[11px] font-semibold text-[#C88A14]">
+                                              · {dict.todayBadge}
+                                            </span>
+                                          )}
+                                        </div>
+                                        <span className="text-[10px] font-mono-tabular text-[#84715E] font-normal">
+                                          {formatCalendarDate(getWeekDayDate(day.id), lang, calendarMode, { compact: true })}
+                                        </span>
                                       </div>
                                       <button
                                         type="button"
@@ -788,7 +1301,7 @@ export default function App() {
                                 </td>
 
                                 <td className="py-2.5 px-3 align-middle">
-                                  <div className="flex flex-wrap items-center gap-2">
+                                  <div className="flex flex-wrap items-center gap-1.5">
                                     <span
                                       className={`font-bold text-[#261C14] ${
                                         isCompleted ? 'line-through opacity-65' : ''
@@ -796,6 +1309,12 @@ export default function App() {
                                     >
                                       {formatCurriculumTitle(plan, lang)}
                                     </span>
+                                    {plan.repeatWeekly && (
+                                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#C88A14]/15 text-[#9E6A0C] border border-[#C88A14]/30 font-semibold inline-flex items-center gap-0.5">
+                                        <Repeat className="w-2.5 h-2.5" />
+                                        <span>{dict.repeatWeeklyBadge}</span>
+                                      </span>
+                                    )}
                                     {plan.evaluation && (
                                       <span className={`text-xs ${getEvalColorClass(plan.evaluation)}`}>
                                         · {getEvaluationLabel(plan.evaluation, lang)}
@@ -901,192 +1420,209 @@ export default function App() {
               </div>
             )}
 
-            {/* RESPONSIVE CARDS VIEW (Always active on Mobile/Tablet `< lg`, or when Grid View is selected on Desktop) */}
-            <div
-              className={`${
-                scheduleViewMode === 'table' ? 'block lg:hidden' : 'block'
-              } grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-3`}
-            >
-              {visibleDays.map((day) => {
-                const dayPlans = filteredPlans
-                  .filter((p) => p.day === day.id)
-                  .sort((a, b) => a.reminderTime.localeCompare(b.reminderTime));
-                const isToday = day.id === todayId;
-                const doneCount = dayPlans.filter((p) => p.status === 'completed').length;
+            {/* RESPONSIVE CARDS VIEW (Active when Grid View is selected, or on Mobile/Tablet `< lg` when Table View is selected) */}
+            {scheduleViewMode !== 'dropdown' && (
+              <div
+                className={`${
+                  scheduleViewMode === 'table' ? 'block lg:hidden' : 'block'
+                } grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-3`}
+              >
+                {visibleDays.map((day) => {
+                  const dayPlans = plansByDayMap[day.id] || [];
+                  const isToday = day.id === todayId;
+                  const doneCount = dayPlans.filter((p) => p.status === 'completed').length;
 
-                return (
-                  <div
-                    key={day.id}
-                    className={`rounded-xl bg-[#FFFDF9] border flex flex-col justify-between overflow-hidden ${
-                      isToday ? 'border-[#C88A14] shadow-2xs' : 'border-[#DDD2BE]'
-                    }`}
-                  >
-                    <div>
-                      <div
-                        className={`px-3 py-2 border-b flex items-center justify-between ${
-                          isToday
-                            ? 'bg-[#2D2218] text-[#FFFDF9] border-[#2D2218]'
-                            : 'bg-[#F7F3EB] text-[#261C14] border-[#DDD2BE]'
-                        }`}
-                      >
-                        <div className="flex items-center gap-1.5">
-                          <h3 className="text-sm font-bold font-display-islamic">
-                            {lang === 'ar' ? day.nameAr : day.nameEn}
-                          </h3>
-                          {isToday && (
-                            <span className="text-[11px] font-semibold text-[#EAB338]">
-                              · {dict.todayBadge}
+                  return (
+                    <div
+                      key={day.id}
+                      className={`rounded-xl bg-[#FFFDF9] border flex flex-col justify-between overflow-hidden ${
+                        isToday ? 'border-[#C88A14] shadow-2xs' : 'border-[#DDD2BE]'
+                      }`}
+                    >
+                      <div>
+                        <div
+                          className={`px-3 py-2 border-b flex items-center justify-between ${
+                            isToday
+                              ? 'bg-[#2D2218] text-[#FFFDF9] border-[#2D2218]'
+                              : 'bg-[#F7F3EB] text-[#261C14] border-[#DDD2BE]'
+                          }`}
+                        >
+                          <div className="flex flex-col">
+                            <div className="flex items-center gap-1.5">
+                              <h3 className="text-sm font-bold font-display-islamic">
+                                {lang === 'ar' ? day.nameAr : day.nameEn}
+                              </h3>
+                              {isToday && (
+                                <span className="text-[11px] font-semibold text-[#EAB338]">
+                                  · {dict.todayBadge}
+                                </span>
+                              )}
+                            </div>
+                            <span
+                              className={`text-[10px] font-mono-tabular ${
+                                isToday ? 'text-[#E6D7BE]' : 'text-[#84715E]'
+                              }`}
+                            >
+                              {formatCalendarDate(getWeekDayDate(day.id), lang, calendarMode, { compact: true })}
                             </span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`text-xs font-mono-tabular ${
-                              isToday ? 'text-[#E6D7BE]' : 'text-[#84715E]'
-                            }`}
-                          >
-                            {doneCount}/{dayPlans.length}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => handleOpenAddModal(day.id)}
-                            title={dict.addAnotherForDay}
-                            className={`px-2 py-0.5 rounded-md text-[11px] font-bold flex items-center gap-0.5 cursor-pointer transition-colors ${
-                              isToday
-                                ? 'bg-[#C88A14] text-[#FFFDF9]'
-                                : 'bg-[#EFE9DC] text-[#9E6A0C] hover:bg-[#E5DEC9]'
-                            }`}
-                          >
-                            <Plus className="w-3 h-3" />
-                            <span>{dict.addAnotherForDay}</span>
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="divide-y divide-[#EFE9DC]">
-                        {dayPlans.length === 0 ? (
-                          <div className="py-3 px-3 text-center">
-                            <p className="text-xs text-[#84715E]">{dict.noPlansForDay}</p>
                           </div>
-                        ) : (
-                          dayPlans.map((plan) => {
-                            const isCompleted = plan.status === 'completed';
-                            const { label: practiceLabel, Icon: PracticeIcon } =
-                              getPlanPracticeButtonMeta(plan.planType);
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`text-xs font-mono-tabular ${
+                                isToday ? 'text-[#E6D7BE]' : 'text-[#84715E]'
+                              }`}
+                            >
+                              {doneCount}/{dayPlans.length}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenAddModal(day.id)}
+                              title={dict.addAnotherForDay}
+                              className={`px-2 py-0.5 rounded-md text-[11px] font-bold flex items-center gap-0.5 cursor-pointer transition-colors ${
+                                isToday
+                                  ? 'bg-[#C88A14] text-[#FFFDF9]'
+                                  : 'bg-[#EFE9DC] text-[#9E6A0C] hover:bg-[#E5DEC9]'
+                              }`}
+                            >
+                              <Plus className="w-3 h-3" />
+                              <span>{dict.addAnotherForDay}</span>
+                            </button>
+                          </div>
+                        </div>
 
-                            return (
-                              <div
-                                key={plan.id}
-                                className="p-2.5 sm:p-3 space-y-1.5 hover:bg-[#F7F3EB]/50 transition-colors"
-                              >
-                                <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] text-[#84715E]">
-                                  <div className="flex items-center gap-1">
+                        <div className="divide-y divide-[#EFE9DC]">
+                          {dayPlans.length === 0 ? (
+                            <div className="py-3 px-3 text-center">
+                              <p className="text-xs text-[#84715E]">{dict.noPlansForDay}</p>
+                            </div>
+                          ) : (
+                            dayPlans.map((plan) => {
+                              const isCompleted = plan.status === 'completed';
+                              const { label: practiceLabel, Icon: PracticeIcon } =
+                                getPlanPracticeButtonMeta(plan.planType);
+
+                              return (
+                                <div
+                                  key={plan.id}
+                                  className="p-2.5 sm:p-3 space-y-1.5 hover:bg-[#F7F3EB]/50 transition-colors"
+                                >
+                                  <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] text-[#84715E]">
+                                    <div className="flex items-center gap-1">
+                                      <span
+                                        className={`font-bold ${
+                                          plan.planType === 'new_memorization'
+                                            ? 'text-[#4A6144]'
+                                            : plan.planType === 'sard'
+                                            ? 'text-[#B87D10]'
+                                            : 'text-[#9C4A32]'
+                                        }`}
+                                      >
+                                        {getPlanTypeLabel(plan.planType, lang)}
+                                      </span>
+                                      <span aria-hidden="true">·</span>
+                                      <span>{getScopeLabel(plan.scope, lang)}</span>
+                                      <span aria-hidden="true">·</span>
+                                      <span className="font-mono-tabular">{plan.reminderTime}</span>
+                                      {plan.evaluation && (
+                                        <>
+                                          <span aria-hidden="true">·</span>
+                                          <span className={getEvalColorClass(plan.evaluation)}>
+                                            {getEvaluationLabel(plan.evaluation, lang)}
+                                          </span>
+                                        </>
+                                      )}
+                                    </div>
+
+                                    <span className="font-mono-tabular">
+                                      {plan.estimatedAyahs} {dict.ayahsUnit} (~{plan.estimatedPages}{' '}
+                                      {dict.pagesUnit})
+                                    </span>
+                                  </div>
+
+                                  <div className="flex flex-wrap items-center gap-1.5">
                                     <span
-                                      className={`font-bold ${
-                                        plan.planType === 'new_memorization'
-                                          ? 'text-[#4A6144]'
-                                          : plan.planType === 'sard'
-                                          ? 'text-[#B87D10]'
-                                          : 'text-[#9C4A32]'
+                                      className={`text-sm font-bold text-[#261C14] ${
+                                        isCompleted ? 'line-through opacity-60' : ''
                                       }`}
                                     >
-                                      {getPlanTypeLabel(plan.planType, lang)}
+                                      {formatCurriculumTitle(plan, lang)}
                                     </span>
-                                    <span aria-hidden="true">·</span>
-                                    <span>{getScopeLabel(plan.scope, lang)}</span>
-                                    <span aria-hidden="true">·</span>
-                                    <span className="font-mono-tabular">{plan.reminderTime}</span>
-                                    {plan.evaluation && (
-                                      <>
-                                        <span aria-hidden="true">·</span>
-                                        <span className={getEvalColorClass(plan.evaluation)}>
-                                          {getEvaluationLabel(plan.evaluation, lang)}
-                                        </span>
-                                      </>
+                                    {plan.repeatWeekly && (
+                                      <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#C88A14]/15 text-[#8A5E09] border border-[#C88A14]/30 font-semibold inline-flex items-center gap-0.5">
+                                        <Repeat className="w-2.5 h-2.5" />
+                                        <span>{dict.repeatWeeklyBadge}</span>
+                                      </span>
                                     )}
                                   </div>
 
-                                  <span className="font-mono-tabular">
-                                    {plan.estimatedAyahs} {dict.ayahsUnit} (~{plan.estimatedPages}{' '}
-                                    {dict.pagesUnit})
-                                  </span>
-                                </div>
+                                  {plan.notes && (
+                                    <p className="text-[11px] text-[#5C4B3B] line-clamp-1">
+                                      {plan.notes}
+                                    </p>
+                                  )}
 
-                                <div
-                                  className={`text-sm font-bold text-[#261C14] ${
-                                    isCompleted ? 'line-through opacity-60' : ''
-                                  }`}
-                                >
-                                  {formatCurriculumTitle(plan, lang)}
-                                </div>
+                                  <div className="pt-1 flex flex-wrap items-center justify-between gap-1.5">
+                                    <div className="flex items-center gap-1.5 flex-1 sm:flex-initial">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenPlanScreen(plan.id)}
+                                        className="mustard-gradient-btn text-[#FFFDF9] flex-1 sm:flex-initial justify-center px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer whitespace-nowrap flex items-center gap-1 shadow-2xs"
+                                      >
+                                        <PracticeIcon className="w-3 h-3" />
+                                        <span>{practiceLabel}</span>
+                                      </button>
 
-                                {plan.notes && (
-                                  <p className="text-[11px] text-[#5C4B3B] line-clamp-1">
-                                    {plan.notes}
-                                  </p>
-                                )}
+                                      <button
+                                        type="button"
+                                        onClick={() => handleToggleStatus(plan.id)}
+                                        className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                                          isCompleted
+                                            ? 'bg-[#4A6144] text-white'
+                                            : 'bg-[#EFE9DC] text-[#5C4B3B]'
+                                        }`}
+                                      >
+                                        {isCompleted ? dict.markCompleted : dict.statusPending}
+                                      </button>
+                                    </div>
 
-                                <div className="pt-1 flex flex-wrap items-center justify-between gap-1.5">
-                                  <div className="flex items-center gap-1.5 flex-1 sm:flex-initial">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleOpenPlanScreen(plan.id)}
-                                      className="mustard-gradient-btn text-[#FFFDF9] flex-1 sm:flex-initial justify-center px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer whitespace-nowrap flex items-center gap-1 shadow-2xs"
-                                    >
-                                      <PracticeIcon className="w-3 h-3" />
-                                      <span>{practiceLabel}</span>
-                                    </button>
-
-                                    <button
-                                      type="button"
-                                      onClick={() => handleToggleStatus(plan.id)}
-                                      className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
-                                        isCompleted
-                                          ? 'bg-[#4A6144] text-white'
-                                          : 'bg-[#EFE9DC] text-[#5C4B3B]'
-                                      }`}
-                                    >
-                                      {isCompleted ? dict.markCompleted : dict.statusPending}
-                                    </button>
-                                  </div>
-
-                                  <div className="flex items-center gap-0.5">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleOpenEditModal(plan)}
-                                      className="p-1 rounded-md text-[#5C4B3B] hover:text-[#261C14] hover:bg-[#EFE9DC] cursor-pointer"
-                                      title={dict.editPlan}
-                                    >
-                                      <Edit3 className="w-3.5 h-3.5" />
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleDuplicatePlan(plan)}
-                                      className="p-1 rounded-md text-[#5C4B3B] hover:text-[#261C14] hover:bg-[#EFE9DC] cursor-pointer"
-                                      title={dict.duplicatePlan}
-                                    >
-                                      <Copy className="w-3.5 h-3.5" />
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleDeletePlan(plan.id)}
-                                      className="p-1 rounded-md text-[#A84A32] hover:bg-[#A84A32]/10 cursor-pointer"
-                                      title={dict.deletePlan}
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
+                                    <div className="flex items-center gap-0.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenEditModal(plan)}
+                                        className="p-1 rounded-md text-[#5C4B3B] hover:text-[#261C14] hover:bg-[#EFE9DC] cursor-pointer"
+                                        title={dict.editPlan}
+                                      >
+                                        <Edit3 className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDuplicatePlan(plan)}
+                                        className="p-1 rounded-md text-[#5C4B3B] hover:text-[#261C14] hover:bg-[#EFE9DC] cursor-pointer"
+                                        title={dict.duplicatePlan}
+                                      >
+                                        <Copy className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeletePlan(plan.id)}
+                                        className="p-1 rounded-md text-[#A84A32] hover:bg-[#A84A32]/10 cursor-pointer"
+                                        title={dict.deletePlan}
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
                                   </div>
                                 </div>
-                              </div>
-                            );
-                          })
-                        )}
+                              );
+                            })
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </section>
         )}
 
@@ -1098,6 +1634,7 @@ export default function App() {
           <RemindersSection
             plans={plans}
             lang={lang}
+            calendarMode={calendarMode}
             notificationPermission={notificationPermission}
             soundEnabled={soundEnabled}
             onToggleSound={() => setSoundEnabled(!soundEnabled)}
@@ -1113,13 +1650,14 @@ export default function App() {
       <footer className="mt-4 border-t border-[#DDD2BE] bg-[#EFE9DC]/60 py-2.5 px-4 text-center text-[11px] text-[#84715E]">
         <span>{dict.brandTitle}</span>
         <span className="mx-1.5">·</span>
-        <span>{dict.brandSubtitle}</span>
+        <span>{dict.heroSubtitle}</span>
       </footer>
 
       {/* Add / Edit Plan Modal */}
       <PlanModal
         isOpen={isModalOpen}
         lang={lang}
+        calendarMode={calendarMode}
         initialDay={modalInitialDay}
         editingPlan={editingPlan}
         onClose={() => setIsModalOpen(false)}
@@ -1147,14 +1685,17 @@ export default function App() {
             </div>
 
             <div className="p-3.5 sm:p-4 overflow-y-auto space-y-3 text-xs sm:text-sm">
-              {/* 1. Language & Schedule Layout */}
-              <div className="p-3 rounded-xl bg-[#F7F3EB] border border-[#DDD2BE] space-y-2.5">
+              {/* PWA App Installation for Android & Desktop */}
+              <PWAInstallButton lang={lang} variant="settings" />
+
+              {/* 1. Language, Layout & Calendar System */}
+              <div className="p-3 rounded-xl bg-[#F7F3EB] border border-[#DDD2BE] space-y-3">
                 <h3 className="font-bold text-[#2D2218] flex items-center gap-1.5 text-xs">
                   <Globe className="w-3.5 h-3.5 text-[#C88A14]" />
-                  <span>{lang === 'ar' ? 'اللغة والعرض' : 'Language & View'}</span>
+                  <span>{lang === 'ar' ? 'اللغة والتقويم ونمط العرض' : 'Language, Calendar & View'}</span>
                 </h3>
 
-                <div className="grid grid-cols-2 gap-2.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div>
                     <div className="text-[11px] text-[#5C4B3B] mb-1 font-semibold">
                       {lang === 'ar' ? 'اللغة' : 'Language'}
@@ -1189,32 +1730,77 @@ export default function App() {
                     <div className="text-[11px] text-[#5C4B3B] mb-1 font-semibold">
                       {lang === 'ar' ? 'نمط الجدول' : 'Layout'}
                     </div>
-                    <div className="flex gap-1 p-0.5 rounded-lg bg-[#EFE9DC] border border-[#DDD2BE]">
+                    <div className="grid grid-cols-3 gap-1 p-0.5 rounded-lg bg-[#EFE9DC] border border-[#DDD2BE]">
+                      <button
+                        type="button"
+                        onClick={() => setScheduleViewMode('dropdown')}
+                        className={`py-1 rounded-md text-[11px] font-bold cursor-pointer flex items-center justify-center gap-1 truncate ${
+                          scheduleViewMode === 'dropdown'
+                            ? 'bg-[#2D2218] text-[#EAB338] shadow-2xs'
+                            : 'text-[#5C4B3B]'
+                        }`}
+                        title={dict.viewModeDropdown}
+                      >
+                        <ListFilter className="w-3 h-3 shrink-0" />
+                        <span className="truncate">{dict.viewModeDropdown}</span>
+                      </button>
                       <button
                         type="button"
                         onClick={() => setScheduleViewMode('table')}
-                        className={`flex-1 py-1 rounded-md text-xs font-bold cursor-pointer flex items-center justify-center gap-1 ${
+                        className={`py-1 rounded-md text-[11px] font-bold cursor-pointer flex items-center justify-center gap-1 truncate ${
                           scheduleViewMode === 'table'
-                            ? 'bg-[#C88A14] text-[#FFFDF9]'
+                            ? 'bg-[#C88A14] text-[#FFFDF9] shadow-2xs'
                             : 'text-[#5C4B3B]'
                         }`}
+                        title={dict.viewModeTable}
                       >
-                        <TableIcon className="w-3 h-3" />
-                        <span>{lang === 'ar' ? 'جدول' : 'Table'}</span>
+                        <TableIcon className="w-3 h-3 shrink-0" />
+                        <span className="truncate">{dict.viewModeTable}</span>
                       </button>
                       <button
                         type="button"
                         onClick={() => setScheduleViewMode('grid')}
-                        className={`flex-1 py-1 rounded-md text-xs font-bold cursor-pointer flex items-center justify-center gap-1 ${
+                        className={`py-1 rounded-md text-[11px] font-bold cursor-pointer flex items-center justify-center gap-1 truncate ${
                           scheduleViewMode === 'grid'
-                            ? 'bg-[#C88A14] text-[#FFFDF9]'
+                            ? 'bg-[#C88A14] text-[#FFFDF9] shadow-2xs'
                             : 'text-[#5C4B3B]'
                         }`}
+                        title={dict.viewModeGrid}
                       >
-                        <LayoutGrid className="w-3 h-3" />
-                        <span>{lang === 'ar' ? 'بطاقات' : 'Cards'}</span>
+                        <LayoutGrid className="w-3 h-3 shrink-0" />
+                        <span className="truncate">{dict.viewModeGrid}</span>
                       </button>
                     </div>
+                  </div>
+                </div>
+
+                {/* Calendar System Switcher (الهجري / الميلادي / كلاهما) */}
+                <div className="pt-2 border-t border-[#E5DEC9]">
+                  <div className="text-[11px] text-[#5C4B3B] mb-1 font-semibold flex items-center gap-1">
+                    <Calendar className="w-3 h-3 text-[#C88A14]" />
+                    <span>{dict.calendarModeLabel}</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1 p-0.5 rounded-lg bg-[#EFE9DC] border border-[#DDD2BE]">
+                    {(
+                      [
+                        { id: 'both', label: dict.calendarBoth },
+                        { id: 'hijri', label: dict.calendarHijri },
+                        { id: 'gregorian', label: dict.calendarGregorian },
+                      ] as const
+                    ).map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => setCalendarMode(c.id)}
+                        className={`py-1.5 px-1 rounded-md text-[11px] font-bold cursor-pointer transition-colors truncate ${
+                          calendarMode === c.id
+                            ? 'bg-[#2D2218] text-[#EAB338] shadow-2xs'
+                            : 'text-[#5C4B3B] hover:text-[#261C14]'
+                        }`}
+                      >
+                        {c.label}
+                      </button>
+                    ))}
                   </div>
                 </div>
               </div>
@@ -1307,6 +1893,39 @@ export default function App() {
                       ))}
                     </div>
                   </div>
+                </div>
+
+                {/* Focus Mode during Recitation Toggle (وضع التركيز أثناء جلسات السرد) */}
+                <div className="pt-2 border-t border-[#DDD2BE] flex items-center justify-between gap-3">
+                  <div className="flex flex-col pe-2">
+                    <span className="font-bold text-[#2D2218] flex items-center gap-1.5 text-xs">
+                      <Maximize2 className="w-3.5 h-3.5 text-[#C88A14]" />
+                      <span>{dict.focusModeLabel}</span>
+                    </span>
+                    <span className="text-[11px] text-[#84715E] leading-relaxed">
+                      {dict.focusModeHint}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setFocusModeEnabled((prev) => !prev)}
+                    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                      focusModeEnabled ? 'bg-[#4A6144]' : 'bg-[#DDD2BE]'
+                    }`}
+                    role="switch"
+                    aria-checked={focusModeEnabled}
+                    title={dict.focusModeLabel}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                        focusModeEnabled
+                          ? lang === 'ar'
+                            ? '-translate-x-5'
+                            : 'translate-x-5'
+                          : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
                 </div>
               </div>
 
@@ -1425,6 +2044,8 @@ export default function App() {
               defaultSyncSpeed={defaultSyncSpeed}
               defaultTargetReps={defaultTargetReps}
               defaultQuizLevel={defaultQuizLevel}
+              focusModeEnabled={focusModeEnabled}
+              onToggleFocusMode={() => setFocusModeEnabled((prev) => !prev)}
               onClose={handleClosePlanScreen}
               onCompletePlanSard={handleCompletePlanSard}
             />
