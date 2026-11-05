@@ -1,22 +1,18 @@
 import React from 'react';
-import { Bell, Volume2, CheckCircle2, Clock, Send, Repeat } from 'lucide-react';
+import { Bell, Volume2, CheckCircle2, Clock, Send } from 'lucide-react';
 import {
   Language,
   QuranPlanItem,
-  CalendarMode,
   WEEK_DAYS,
   formatCurriculumTitle,
   getPlanTypeLabel,
   getTodayDayId,
-  getWeekDayDate,
-  formatCalendarDate,
 } from '@/src/data/quranData';
 import { t } from '@/src/data/translations';
 
 interface RemindersSectionProps {
   plans: QuranPlanItem[];
   lang: Language;
-  calendarMode?: CalendarMode;
   notificationPermission: NotificationPermission | 'unsupported';
   soundEnabled: boolean;
   onToggleSound: () => void;
@@ -29,7 +25,6 @@ interface RemindersSectionProps {
 export const RemindersSection: React.FC<RemindersSectionProps> = ({
   plans,
   lang,
-  calendarMode = 'both',
   notificationPermission,
   soundEnabled,
   onToggleSound,
@@ -146,16 +141,9 @@ export const RemindersSection: React.FC<RemindersSectionProps> = ({
                     </span>
                   )}
                   <span className="text-[#84715E]">
-                    · {dayInfo ? (lang === 'ar' ? dayInfo.nameAr : dayInfo.nameEn) : ''}{' '}
-                    ({formatCalendarDate(getWeekDayDate(plan.day), lang, calendarMode, { compact: true })}) ·{' '}
+                    · {dayInfo ? (lang === 'ar' ? dayInfo.nameAr : dayInfo.nameEn) : ''} ·{' '}
                     {getPlanTypeLabel(plan.planType, lang)} · {plan.estimatedAyahs} {dict.ayahsUnit}
                   </span>
-                  {plan.repeatWeekly && (
-                    <span className="inline-flex items-center gap-0.5 text-[9.5px] font-bold px-1.5 py-0.2 rounded bg-[#8F681E]/10 text-[#8F681E] border border-[#8F681E]/20">
-                      <Repeat className="w-2.5 h-2.5" />
-                      <span>{dict.repeatWeeklyBadge}</span>
-                    </span>
-                  )}
                 </div>
 
                 <div className="flex items-center gap-2">

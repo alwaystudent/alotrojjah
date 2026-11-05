@@ -51,8 +51,6 @@ export interface WeekDayInfo {
   shortEn: string;
 }
 
-export type CalendarMode = 'both' | 'hijri' | 'gregorian';
-
 export interface QuranPlanItem {
   id: string;
   day: DayId;
@@ -61,7 +59,6 @@ export interface QuranPlanItem {
   // When scope === 'surah'
   surahStart?: number;
   surahEnd?: number;
-  selectedSurahs?: number[]; // قائمة أرقام السور المختارة من أجزاء مختلفة
   // When scope === 'juz'
   juzStart?: number;
   juzEnd?: number;
@@ -73,7 +70,6 @@ export interface QuranPlanItem {
   // Common fields
   reminderTime: string; // e.g. "05:30"
   reminderEnabled: boolean;
-  repeatWeekly?: boolean; // خاصية تكرار الخطة أسبوعياً
   status: PlanStatus;
   evaluation?: PlanEvaluation; // مثبت | متردد | متفلت
   quizLevel?: QuizLevel; // مبتدئ | متوسط | متقدم | حافظ
@@ -98,96 +94,6 @@ export function getTodayDayId(): DayId {
   const jsDay = new Date().getDay();
   const found = WEEK_DAYS.find((d) => d.jsDay === jsDay);
   return found ? found.id : 'sunday';
-}
-
-/**
- * Calculates the exact Date corresponding to a given DayId in the current week.
- */
-export function getWeekDayDate(dayId: DayId, baseDate = new Date()): Date {
-  const target = WEEK_DAYS.find((d) => d.id === dayId);
-  if (!target) return baseDate;
-  const currentJsDay = baseDate.getDay();
-  const diff = target.jsDay - currentJsDay;
-  const d = new Date(baseDate);
-  d.setDate(baseDate.getDate() + diff);
-  return d;
-}
-
-/**
- * Formats a Date in the Umm al-Qura Hijri Islamic calendar.
- */
-export function formatHijriDate(date: Date, lang: Language, includeYear = true): string {
-  try {
-    const locale = lang === 'ar' ? 'ar-SA-u-ca-islamic-umalqura' : 'en-US-u-ca-islamic-umalqura';
-    const formatter = new Intl.DateTimeFormat(locale, {
-      day: 'numeric',
-      month: 'long',
-      ...(includeYear ? { year: 'numeric' } : {}),
-    });
-    const formatted = formatter.format(date);
-    if (lang === 'ar' && !formatted.includes('هـ') && includeYear) {
-      return `${formatted} هـ`;
-    }
-    if (lang === 'en' && !formatted.includes('AH') && includeYear) {
-      return `${formatted} AH`;
-    }
-    return formatted;
-  } catch {
-    return '';
-  }
-}
-
-/**
- * Formats a Date in the Gregorian calendar.
- */
-export function formatGregorianDate(date: Date, lang: Language, includeYear = true): string {
-  try {
-    const locale = lang === 'ar' ? 'ar-EG' : 'en-US';
-    const formatter = new Intl.DateTimeFormat(locale, {
-      day: 'numeric',
-      month: lang === 'ar' ? 'long' : 'short',
-      ...(includeYear ? { year: 'numeric' } : {}),
-    });
-    const formatted = formatter.format(date);
-    if (lang === 'ar' && !formatted.includes('م') && includeYear) {
-      return `${formatted} م`;
-    }
-    return formatted;
-  } catch {
-    return date.toLocaleDateString();
-  }
-}
-
-/**
- * Unified calendar date formatter supporting 'both' (Hijri + Gregorian), 'hijri', or 'gregorian'.
- */
-export function formatCalendarDate(
-  date: Date,
-  lang: Language,
-  mode: CalendarMode = 'both',
-  options?: { compact?: boolean; includeYear?: boolean }
-): string {
-  const includeYear = options?.includeYear ?? true;
-  const isCompact = options?.compact ?? false;
-
-  const hijriStr = formatHijriDate(date, lang, includeYear);
-  const gregStr = formatGregorianDate(date, lang, includeYear);
-
-  if (mode === 'hijri') {
-    return hijriStr || gregStr;
-  }
-  if (mode === 'gregorian') {
-    return gregStr;
-  }
-
-  // mode === 'both'
-  if (isCompact) {
-    const hijriShort = formatHijriDate(date, lang, false);
-    const gregShort = formatGregorianDate(date, lang, false);
-    return `${hijriShort} · ${gregShort}`;
-  }
-
-  return `${hijriStr} (${gregStr})`;
 }
 
 // Official King Fahd Glorious Quran Printing Complex (Madinah Mushaf) Juz pages (1 - 604)
@@ -368,38 +274,7 @@ export const SURAH_LIST: SurahInfo[] = RAW_SURAHS.map((row, idx) => ({
   type: row[6],
 }));
 
-export function getPlanMushafPages(plan: QuranPlanItem): number[] {
-  if (plan.scope === 'surah' && plan.selectedSurahs && plan.selectedSurahs.length > 0) {
-    const pagesSet = new Set<number>();
-    plan.selectedSurahs.forEach((surahNum) => {
-      const s = SURAH_LIST.find((item) => item.number === surahNum);
-      if (s) {
-        for (let p = s.startPage; p <= s.endPage; p++) {
-          pagesSet.add(p);
-        }
-      }
-    });
-    const sorted = Array.from(pagesSet).sort((a, b) => a - b);
-    return sorted.length > 0 ? sorted : [1];
-  }
-
-  const range = getPlanMushafPageRange(plan);
-  const arr: number[] = [];
-  for (let p = range.startPage; p <= range.endPage; p++) {
-    arr.push(p);
-  }
-  return arr.length > 0 ? arr : [1];
-}
-
 export function getPlanMushafPageRange(plan: QuranPlanItem): { startPage: number; endPage: number } {
-  if (plan.scope === 'surah' && plan.selectedSurahs && plan.selectedSurahs.length > 0) {
-    const pages = getPlanMushafPages(plan);
-    return {
-      startPage: pages[0],
-      endPage: pages[pages.length - 1],
-    };
-  }
-
   if (plan.scope === 'juz') {
     const j1 = Math.min(plan.juzStart || 1, plan.juzEnd || plan.juzStart || 1);
     const j2 = Math.max(plan.juzStart || 1, plan.juzEnd || plan.juzStart || 1);
@@ -438,31 +313,6 @@ export function getPlanMushafPageRange(plan: QuranPlanItem): { startPage: number
 
 export function formatCurriculumTitle(item: QuranPlanItem, lang: Language): string {
   if (item.scope === 'surah') {
-    if (item.selectedSurahs && item.selectedSurahs.length > 0) {
-      const surahs = item.selectedSurahs
-        .map((num) => SURAH_LIST.find((s) => s.number === num))
-        .filter(Boolean) as SurahInfo[];
-
-      if (surahs.length === 0) return '';
-      if (surahs.length === 1) {
-        return lang === 'ar' ? `سورة ${surahs[0].nameAr}` : `Surah ${surahs[0].nameEn}`;
-      }
-      if (surahs.length === 2) {
-        return lang === 'ar'
-          ? `سورة ${surahs[0].nameAr} وسورة ${surahs[1].nameAr}`
-          : `Surahs ${surahs[0].nameEn} & ${surahs[1].nameEn}`;
-      }
-      if (surahs.length === 3) {
-        return lang === 'ar'
-          ? `سور ${surahs[0].nameAr}، ${surahs[1].nameAr}، ${surahs[2].nameAr}`
-          : `Surahs ${surahs[0].nameEn}, ${surahs[1].nameEn}, ${surahs[2].nameEn}`;
-      }
-      const remaining = surahs.length - 2;
-      return lang === 'ar'
-        ? `سور ${surahs[0].nameAr}، ${surahs[1].nameAr} (+${remaining} سور)`
-        : `Surahs ${surahs[0].nameEn}, ${surahs[1].nameEn} (+${remaining} more)`;
-    }
-
     const start = SURAH_LIST.find((s) => s.number === (item.surahStart || 1));
     const end = SURAH_LIST.find((s) => s.number === (item.surahEnd || item.surahStart || 1));
     if (!start) return '';
@@ -526,25 +376,9 @@ export function calculateMetrics(
   juzEnd: number,
   ayahSurah: number,
   ayahFrom: number,
-  ayahTo: number,
-  selectedSurahs?: number[]
+  ayahTo: number
 ): { estimatedAyahs: number; estimatedPages: number } {
   if (scope === 'surah') {
-    if (selectedSurahs && selectedSurahs.length > 0) {
-      let totalAyahs = 0;
-      const pagesSet = new Set<number>();
-      selectedSurahs.forEach((num) => {
-        const s = SURAH_LIST.find((x) => x.number === num);
-        if (s) {
-          totalAyahs += s.ayahCount;
-          for (let p = s.startPage; p <= s.endPage; p++) {
-            pagesSet.add(p);
-          }
-        }
-      });
-      return { estimatedAyahs: totalAyahs, estimatedPages: Math.max(1, pagesSet.size) };
-    }
-
     const s1 = Math.min(surahStart, surahEnd);
     const s2 = Math.max(surahStart, surahEnd);
     let totalAyahs = 0;

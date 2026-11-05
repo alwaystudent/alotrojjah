@@ -9,21 +9,13 @@
     <meta property="og:description" content="الأترجة: تطبيق متكامل لجدولة ومتابعة سرد وحفظ ومراجعة القرآن الكريم وفق خطة أسبوعية مع إحصائيات دقيقة وتذكيرات يومية باللغتين العربية والإنجليزية." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="theme-color" content="#2D2218" />
-    <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="الأترجة" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
-    <link rel="alternate icon" href="/favicon.ico" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:ital,wght@0,400;0,700;1,400&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Scheherazade+New:wght@400;700&display=swap" rel="stylesheet" />
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <script type="module" src="./src/main.tsx"></script>
     <script>
       (function () {
         var loaded = false;
@@ -32,17 +24,14 @@
           var root = document.getElementById('root');
           if (root && root.children.length > 0) return;
           loaded = true;
-          var tryLoadJs = function (paths, idx) {
-            if (idx >= paths.length) return;
-            var script = document.createElement('script');
-            script.type = 'module';
-            script.src = paths[idx];
-            script.onerror = function () {
-              tryLoadJs(paths, idx + 1);
-            };
-            document.body.appendChild(script);
-          };
-          tryLoadJs(['./public/gh-pages-fallback.js', './gh-pages-fallback.js'], 0);
+          var css = document.createElement('link');
+          css.rel = 'stylesheet';
+          css.href = './public/gh-pages-fallback.css';
+          document.head.appendChild(css);
+          var script = document.createElement('script');
+          script.type = 'module';
+          script.src = './public/gh-pages-fallback.js';
+          document.body.appendChild(script);
         }
         window.addEventListener(
           'error',
@@ -58,6 +47,9 @@
           },
           true
         );
+        window.addEventListener('DOMContentLoaded', function () {
+          setTimeout(injectFallbackBundle, 900);
+        });
       })();
     </script>
   </body>
