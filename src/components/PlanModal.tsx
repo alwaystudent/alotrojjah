@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, BookOpen, Layers, Hash, Clock, Check, Calendar, Sparkles } from 'lucide-react';
+import { X, BookOpen, Layers, Hash, Clock, Check, Calendar, Sparkles, Repeat } from 'lucide-react';
 import {
   Language,
   PlanType,
@@ -58,6 +58,7 @@ export const PlanModal: React.FC<PlanModalProps> = ({
   const [reminderEnabled, setReminderEnabled] = useState<boolean>(true);
   const [notes, setNotes] = useState<string>('');
   const [mistakesCount, setMistakesCount] = useState<number>(0);
+  const [repeatWeekly, setRepeatWeekly] = useState<boolean>(false);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -86,6 +87,7 @@ export const PlanModal: React.FC<PlanModalProps> = ({
       setReminderEnabled(editingPlan.reminderEnabled ?? true);
       setNotes(editingPlan.notes || '');
       setMistakesCount(editingPlan.mistakesCount ?? 0);
+      setRepeatWeekly(editingPlan.repeatWeekly ?? false);
     } else {
       setSelectedDays([initialDay || todayId]);
       setPlanType('sard');
@@ -103,6 +105,7 @@ export const PlanModal: React.FC<PlanModalProps> = ({
       setReminderEnabled(true);
       setNotes('');
       setMistakesCount(0);
+      setRepeatWeekly(false);
     }
   }, [isOpen, editingPlan, initialDay, todayId]);
 
@@ -165,6 +168,7 @@ export const PlanModal: React.FC<PlanModalProps> = ({
       estimatedAyahs,
       estimatedPages,
       notes: notes.trim() || undefined,
+      repeatWeekly,
       mistakesCount,
     }));
 
@@ -583,6 +587,29 @@ export const PlanModal: React.FC<PlanModalProps> = ({
               />
             </div>
           </div>
+
+          {/* Weekly Recurrence Option (تكرار الخطة أسبوعياً) */}
+          <label className="flex items-center justify-between p-2.5 rounded-xl bg-[#F7F3EB] border border-[#DDD2BE] hover:border-[#C88A14]/60 transition-colors cursor-pointer select-none">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 rounded-lg bg-[#C88A14]/15 text-[#C88A14]">
+                <Repeat className="w-3.5 h-3.5" />
+              </div>
+              <div>
+                <span className="block text-xs font-bold text-[#2D2218]">
+                  {dict.repeatWeeklyLabel}
+                </span>
+                <span className="block text-[11px] text-[#84715E]">
+                  {dict.repeatWeeklyHint}
+                </span>
+              </div>
+            </div>
+            <input
+              type="checkbox"
+              checked={repeatWeekly}
+              onChange={(e) => setRepeatWeekly(e.target.checked)}
+              className="w-4 h-4 rounded border-[#C88A14] text-[#C88A14] focus:ring-[#C88A14] cursor-pointer"
+            />
+          </label>
 
           {/* Footer Actions */}
           <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#DDD2BE]">

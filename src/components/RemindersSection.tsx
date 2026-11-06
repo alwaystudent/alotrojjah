@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bell, Volume2, CheckCircle2, Clock, Send } from 'lucide-react';
+import { Bell, Volume2, VolumeX, CheckCircle2, Clock, Send, Repeat } from 'lucide-react';
 import {
   Language,
   QuranPlanItem,
@@ -8,6 +8,7 @@ import {
   getPlanTypeLabel,
   getTodayDayId,
 } from '@/src/data/quranData';
+import { getCompactDualDate } from '@/src/utils/calendar';
 import { t } from '@/src/data/translations';
 
 interface RemindersSectionProps {
@@ -111,6 +112,16 @@ export const RemindersSection: React.FC<RemindersSectionProps> = ({
         </div>
       </div>
 
+      {/* Automatic Silent Mode Banner for Recitation Sessions */}
+      <div className="p-2.5 rounded-xl bg-[#FBF5E6] border border-[#E8D29F] flex items-center gap-2 text-xs text-[#2D2218]">
+        <VolumeX className="w-4 h-4 text-[#C88A14] shrink-0" />
+        <span className="leading-relaxed">
+          {lang === 'ar'
+            ? 'يتم تحويل التنبيهات والأصوات تلقائياً إلى الوضع الصامت أثناء جلسات السرد والحفظ والمراجعة لضمان الخشوع والتركيز دون تشويش.'
+            : 'Alerts and sound chimes are automatically silenced during active recitation, memorization, and quiz sessions to ensure complete focus.'}
+        </span>
+      </div>
+
       {/* Scheduled Reminders Table */}
       <div className="rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] overflow-hidden">
         <div className="px-4 py-2.5 bg-[#F7F3EB] border-b border-[#DDD2BE] flex items-center justify-between">
@@ -141,9 +152,16 @@ export const RemindersSection: React.FC<RemindersSectionProps> = ({
                     </span>
                   )}
                   <span className="text-[#84715E]">
-                    · {dayInfo ? (lang === 'ar' ? dayInfo.nameAr : dayInfo.nameEn) : ''} ·{' '}
+                    · {dayInfo ? (lang === 'ar' ? dayInfo.nameAr : dayInfo.nameEn) : ''}{' '}
+                    ({getCompactDualDate(plan.day, lang).hijri} · {getCompactDualDate(plan.day, lang).greg}) ·{' '}
                     {getPlanTypeLabel(plan.planType, lang)} · {plan.estimatedAyahs} {dict.ayahsUnit}
                   </span>
+                  {plan.repeatWeekly && (
+                    <span className="inline-flex items-center gap-0.5 text-[9.5px] font-bold px-1.5 py-0.2 rounded bg-[#8F681E]/10 text-[#8F681E] border border-[#8F681E]/20">
+                      <Repeat className="w-2.5 h-2.5" />
+                      <span>{dict.repeatWeeklyBadge}</span>
+                    </span>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-2">

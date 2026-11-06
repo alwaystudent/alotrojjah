@@ -13,6 +13,11 @@ import {
   Repeat,
   HelpCircle,
   SlidersHorizontal,
+  Eye,
+  EyeOff,
+  Maximize2,
+  Minimize2,
+  VolumeX,
 } from 'lucide-react';
 import {
   Language,
@@ -61,6 +66,7 @@ interface SardMushafViewProps {
   defaultSyncSpeed?: number;
   defaultTargetReps?: number;
   defaultQuizLevel?: QuizLevel;
+  focusModeDefault?: boolean;
   onClose: () => void;
   onCompletePlanSard: (
     planId: string,
@@ -347,11 +353,21 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
   defaultSyncSpeed = 1.0,
   defaultTargetReps = 5,
   defaultQuizLevel = 'intermediate',
+  focusModeDefault,
   onClose,
   onCompletePlanSard,
 }) => {
   const dict = t(lang);
   const initialRange = useMemo(() => getPlanMushafPageRange(plan), [plan]);
+
+  const [focusMode, setFocusMode] = useState<boolean>(() => {
+    if (typeof focusModeDefault === 'boolean') return focusModeDefault;
+    try {
+      return localStorage.getItem('alutrujjah_focus_mode') === 'true';
+    } catch {
+      return false;
+    }
+  });
 
   const [actualPageRange, setActualPageRange] = useState<{ startPage: number; endPage: number }>(
     initialRange
@@ -1583,82 +1599,123 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col h-dvh bg-[#F7F3EB] text-[#261C14] islamic-pattern-subtle overflow-hidden">
-      {/* Compact Top Bar of the Plan Execution Screen */}
-      <header className="px-3 sm:px-6 py-2 bg-[#2D2218] text-[#FFFDF9] border-b border-[#C88A14]/50 flex items-center justify-between gap-2 shrink-0 shadow-xs">
-        <div className="flex items-center gap-2 text-xs sm:text-sm font-bold min-w-0">
-          <BookOpen className="w-4 h-4 text-[#EAB338] shrink-0" />
-          <span className="font-display-islamic text-base sm:text-lg text-[#FFFDF9] truncate">
-            {formatCurriculumTitle(plan, lang)}
-          </span>
-          <span className="text-[#84715E] shrink-0">·</span>
-          <span className="text-xs text-[#EAB338] shrink-0">
-            {getPlanTypeLabel(plan.planType, lang)}
-          </span>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          {actualPageRange.endPage > actualPageRange.startPage ? (
-            <div
-              dir="rtl"
-              className="flex items-center gap-1 bg-white/10 px-2 py-1 rounded-lg border border-white/15 text-xs text-[#FFFDF9]"
-            >
-              <button
-                type="button"
-                disabled={currentPage <= actualPageRange.startPage}
-                onClick={() => goToMushafPage(currentPage - 1)}
-                className="p-0.5 disabled:opacity-35 hover:text-[#EAB338] cursor-pointer"
-                title={dict.prevPageBtn}
-              >
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-
-              <select
-                value={currentPage}
-                onChange={(e) => goToMushafPage(Number(e.target.value))}
-                className="bg-transparent text-[#FFFDF9] font-bold text-xs focus:outline-none cursor-pointer px-1"
-                aria-label="ترتيب صفحات الورد"
-              >
-                {orderedPlanPages.map((pageNum, idx) => (
-                  <option key={pageNum} value={pageNum} className="bg-[#2D2218] text-[#FFFDF9]">
-                    {`صفحة ${toArabicNumerals(idx + 1)} من ${toArabicNumerals(
-                      totalPlanPages
-                    )} (ص ${toArabicNumerals(pageNum)})`}
-                  </option>
-                ))}
-              </select>
-
-              <button
-                type="button"
-                disabled={currentPage >= actualPageRange.endPage}
-                onClick={() => goToMushafPage(currentPage + 1)}
-                className="p-0.5 disabled:opacity-35 hover:text-[#EAB338] cursor-pointer"
-                title={dict.nextPageBtn}
-              >
-                <ChevronLeft className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          ) : (
-            <span
-              dir="rtl"
-              className="text-xs font-bold text-[#E6D7BE] bg-white/10 px-2.5 py-1 rounded-lg"
-            >
-              ص {toArabicNumerals(currentPage)}
+      {/* Compact Top Bar of the Plan Execution Screen (Hidden in Focus Mode) */}
+      {!focusMode ? (
+        <header className="px-3 sm:px-6 py-2 bg-[#2D2218] text-[#FFFDF9] border-b border-[#C88A14]/50 flex items-center justify-between gap-2 shrink-0 shadow-xs">
+          <div className="flex items-center gap-2 text-xs sm:text-sm font-bold min-w-0">
+            <BookOpen className="w-4 h-4 text-[#EAB338] shrink-0" />
+            <span className="font-display-islamic text-base sm:text-lg text-[#FFFDF9] truncate">
+              {formatCurriculumTitle(plan, lang)}
             </span>
-          )}
+            <span className="text-[#84715E] shrink-0">·</span>
+            <span className="text-xs text-[#EAB338] shrink-0">
+              {getPlanTypeLabel(plan.planType, lang)}
+            </span>
+          </div>
 
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Automatic Silent Alerts Indicator */}
+            <div
+              className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/10 border border-white/15 text-[11px] text-[#E6D7BE]"
+              title={lang === 'ar' ? 'تم تحويل التنبيهات إلى الوضع الصامت تلقائياً أثناء الجلسة لمنع الإزعاج' : 'Alerts are automatically muted during this session'}
+            >
+              <VolumeX className="w-3.5 h-3.5 text-[#EAB338]" />
+              <span>{lang === 'ar' ? 'التنبيهات صامتة' : 'Alerts Muted'}</span>
+            </div>
+
+            {/* Clear & Prominent Focus Mode Button */}
+            <button
+              type="button"
+              onClick={() => setFocusMode(true)}
+              className="px-3 py-1.5 rounded-xl bg-[#C88A14] hover:bg-[#DCA026] text-[#2D2218] font-bold text-xs sm:text-sm flex items-center gap-1.5 shadow-xs transition-all cursor-pointer ring-1 ring-[#FFFDF9]/40"
+              title={dict.focusModeLabel}
+            >
+              <Eye className="w-4 h-4 text-[#2D2218]" />
+              <span>{lang === 'ar' ? 'وضع التركيز' : 'Focus Mode'}</span>
+            </button>
+
+            {actualPageRange.endPage > actualPageRange.startPage ? (
+              <div
+                dir="rtl"
+                className="flex items-center gap-1 bg-white/10 px-2 py-1 rounded-lg border border-white/15 text-xs text-[#FFFDF9]"
+              >
+                <button
+                  type="button"
+                  disabled={currentPage <= actualPageRange.startPage}
+                  onClick={() => goToMushafPage(currentPage - 1)}
+                  className="p-0.5 disabled:opacity-35 hover:text-[#EAB338] cursor-pointer"
+                  title={dict.prevPageBtn}
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+
+                <select
+                  value={currentPage}
+                  onChange={(e) => goToMushafPage(Number(e.target.value))}
+                  className="bg-transparent text-[#FFFDF9] font-bold text-xs focus:outline-none cursor-pointer px-1"
+                  aria-label="ترتيب صفحات الورد"
+                >
+                  {orderedPlanPages.map((pageNum, idx) => (
+                    <option key={pageNum} value={pageNum} className="bg-[#2D2218] text-[#FFFDF9]">
+                      {`صفحة ${toArabicNumerals(idx + 1)} من ${toArabicNumerals(
+                        totalPlanPages
+                      )} (ص ${toArabicNumerals(pageNum)})`}
+                    </option>
+                  ))}
+                </select>
+
+                <button
+                  type="button"
+                  disabled={currentPage >= actualPageRange.endPage}
+                  onClick={() => goToMushafPage(currentPage + 1)}
+                  className="p-0.5 disabled:opacity-35 hover:text-[#EAB338] cursor-pointer"
+                  title={dict.nextPageBtn}
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <span
+                dir="rtl"
+                className="text-xs font-bold text-[#E6D7BE] bg-white/10 px-2.5 py-1 rounded-lg"
+              >
+                ص {toArabicNumerals(currentPage)}
+              </span>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                stopListeningSession();
+                onClose();
+              }}
+              className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-semibold text-[#FFFDF9] transition-colors cursor-pointer flex items-center gap-1"
+            >
+              <X className="w-3.5 h-3.5" />
+              <span>{lang === 'ar' ? 'رجوع' : 'Back'}</span>
+            </button>
+          </div>
+        </header>
+      ) : (
+        /* Floating clear status badge & Exit button in Focus Mode */
+        <div className="fixed top-3 end-3 z-50 flex items-center gap-2 bg-[#2D2218]/95 backdrop-blur-md px-3.5 py-1.5 rounded-2xl border border-[#EAB338] shadow-lg">
+          <div className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-[#EAB338] animate-pulse"></span>
+            <span className="text-xs font-bold text-[#EAB338]">
+              {dict.focusModeActiveBadge} · ص {toArabicNumerals(currentPage)}
+            </span>
+          </div>
           <button
             type="button"
-            onClick={() => {
-              stopListeningSession();
-              onClose();
-            }}
-            className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-semibold text-[#FFFDF9] transition-colors cursor-pointer flex items-center gap-1"
+            onClick={() => setFocusMode(false)}
+            className="px-2.5 py-1 rounded-xl bg-white/15 hover:bg-white/25 text-[#FFFDF9] text-xs font-bold transition-all cursor-pointer flex items-center gap-1 border border-white/25"
+            title={lang === 'ar' ? 'الخروج من وضع التركيز وإظهار الواجهات' : 'Exit Focus Mode'}
           >
-            <X className="w-3.5 h-3.5" />
-            <span>{lang === 'ar' ? 'رجوع' : 'Back'}</span>
+            <EyeOff className="w-3.5 h-3.5 text-[#EAB338]" />
+            <span>{lang === 'ar' ? 'إنهاء التركيز' : 'Exit Focus'}</span>
           </button>
         </div>
-      </header>
+      )}
 
       {/* =================================================================================
           1. MUSHAF VERSES PAGE — OCCUPIES TWO-THIRDS (2/3) OF THE SCREEN (`basis-2/3 flex-1`)
@@ -1943,9 +2000,107 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
       </div>
 
       {/* =================================================================================
-          2. FLEXIBLE COMPACT CONTROL & EVALUATION DOCK (1/3 OF SCREEN — `max-h-[34dvh]`)
+          2. FOCUS MODE FLOATING CONTROLS (Floating minimal bar with Evaluation, Finish & Cancel)
          ================================================================================= */}
-      <div className="shrink-0 max-h-[34dvh] overflow-y-auto px-3 py-2 sm:px-5 sm:py-2.5 earthy-gradient-banner text-[#FFFDF9] border-t border-[#C88A14]/50 shadow-lg">
+      {focusMode ? (
+        <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-50 bg-[#2D2218]/95 backdrop-blur-md px-3.5 py-2 rounded-2xl border border-[#C88A14]/50 shadow-2xl flex flex-wrap items-center justify-center gap-2 max-w-[96vw] animate-in fade-in slide-in-from-bottom-2 duration-150">
+          {/* Micro Mic button */}
+          <button
+            type="button"
+            onClick={toggleMicrophoneSession}
+            className={`p-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1 shrink-0 ${
+              isListening ? 'bg-[#A84A32] text-white animate-pulse' : 'bg-[#C88A14] text-white'
+            }`}
+            title={isListening ? dict.stopSardBtn : dict.startSardBtn}
+          >
+            {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+          </button>
+
+          {/* Evaluation Pills: مثبت | متردد | متفلت (ALWAYS VISIBLE in focus mode, sets selectedEvaluation without auto-completing!) */}
+          <div className="flex items-center gap-1 border-s border-white/20 ps-2">
+            <button
+              type="button"
+              onClick={() =>
+                setSelectedEvaluation(selectedEvaluation === 'muthabbat' ? undefined : 'muthabbat')
+              }
+              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1 border ${
+                selectedEvaluation === 'muthabbat'
+                  ? 'bg-[#4A6144] text-white border-[#88B87E] ring-2 ring-[#88B87E]'
+                  : 'bg-[#4A6144]/80 text-white/90 border-transparent hover:bg-[#4A6144]'
+              }`}
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              <span>{lang === 'ar' ? 'مُثبَّت' : 'Mastered'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                setSelectedEvaluation(selectedEvaluation === 'mutaraddid' ? undefined : 'mutaraddid')
+              }
+              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                selectedEvaluation === 'mutaraddid'
+                  ? 'bg-[#C88A14] text-white border-[#F6E9C8] ring-2 ring-[#F6E9C8]'
+                  : 'bg-[#C88A14]/80 text-white/90 border-transparent hover:bg-[#C88A14]'
+              }`}
+            >
+              <span>{lang === 'ar' ? 'مُتردِّد' : 'Hesitant'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                setSelectedEvaluation(selectedEvaluation === 'mutafallit' ? undefined : 'mutafallit')
+              }
+              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                selectedEvaluation === 'mutafallit'
+                  ? 'bg-[#A84A32] text-white border-[#F3B5A4] ring-2 ring-[#F3B5A4]'
+                  : 'bg-[#A84A32]/80 text-white/90 border-transparent hover:bg-[#A84A32]'
+              }`}
+            >
+              <span>{lang === 'ar' ? 'مُتفلِّت' : 'Slipping'}</span>
+            </button>
+          </div>
+
+          {/* Finish Plan Button (ALWAYS VISIBLE in focus mode, requires user click!) */}
+          <button
+            type="button"
+            onClick={() => handleExplicitFinishWithEvaluation(selectedEvaluation)}
+            className="mustard-gradient-btn px-3.5 py-1.5 rounded-xl text-[#FFFDF9] text-xs font-bold shadow-xs hover:brightness-110 transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
+          >
+            <CheckCircle2 className="w-3.5 h-3.5 text-white" />
+            <span>{dict.finishPlanManualBtn}</span>
+          </button>
+
+          {/* Cancel Button (ALWAYS VISIBLE in focus mode!) */}
+          <button
+            type="button"
+            onClick={() => {
+              stopListeningSession();
+              onClose();
+            }}
+            className="px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-[#FFFDF9] text-xs font-semibold cursor-pointer shrink-0"
+            title={dict.cancelBtn}
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Exit Focus Mode Button */}
+          <button
+            type="button"
+            onClick={() => setFocusMode(false)}
+            className="px-2.5 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 border border-white/25 text-[#EAB338] hover:text-white text-xs font-bold transition-all cursor-pointer flex items-center gap-1 shrink-0"
+            title={lang === 'ar' ? 'الخروج من وضع التركيز' : 'Exit Focus Mode'}
+          >
+            <EyeOff className="w-3.5 h-3.5 text-[#EAB338]" />
+            <span className="text-[11px] font-bold">{lang === 'ar' ? 'إلغاء التركيز' : 'Exit Focus'}</span>
+          </button>
+        </div>
+      ) : (
+        /* =================================================================================
+            3. REGULAR COMPACT CONTROL & EVALUATION DOCK (1/3 OF SCREEN — `max-h-[34dvh]`)
+           ================================================================================= */
+        <div className="shrink-0 max-h-[34dvh] overflow-y-auto px-3 py-2 sm:px-5 sm:py-2.5 earthy-gradient-banner text-[#FFFDF9] border-t border-[#C88A14]/50 shadow-lg">
         <div className="max-w-4xl mx-auto space-y-2">
           {/* Thin Progress Bar */}
           <div className="w-full h-1 rounded-full bg-black/30 overflow-hidden">
@@ -2369,12 +2524,29 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
             </div>
           )}
 
+          {/* Reading Completed Banner */}
+          {(progressPct === 100 || (flatWords.length > 0 && currentWordIndex >= flatWords.length)) && (
+            <div className="p-2 rounded-xl bg-[#4A6144]/90 border border-[#88B87E] text-white text-xs font-semibold flex items-center justify-between gap-2 shadow-xs animate-in fade-in duration-200">
+              <div className="flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4 text-[#EAB338] shrink-0" />
+                <span>{dict.readingDonePrompt}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleExplicitFinishWithEvaluation(selectedEvaluation)}
+                className="px-2.5 py-1 rounded-lg bg-white text-[#2D2218] text-xs font-bold hover:bg-[#F6E9C8] transition-colors cursor-pointer shrink-0"
+              >
+                {dict.finishPlanManualBtn}
+              </button>
+            </div>
+          )}
+
           {/* =================================================================================
-              3. FLEXIBLE EVALUATION & PLAN COMPLETION BAR
-                 (مُثبَّت | مُتردِّد | مُتفلِّت | إنهاء | إلغاء)
+              3. FLEXIBLE EVALUATION & MANUAL-ONLY PLAN COMPLETION BAR
+                 (مُثبَّت | مُتردِّد | مُتفلِّت | إتمام الخطة | إلغاء)
              ================================================================================= */}
           <div className="pt-1.5 border-t border-white/15 flex flex-wrap items-center justify-between gap-2">
-            {/* Evaluation Pills: مثبت | متردد | متفلت */}
+            {/* Evaluation Pills: مثبت | متردد | متفلت (User selects rating calmly without auto-completion!) */}
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-[11px] font-bold text-[#EAB338]">
                 {lang === 'ar' ? 'التقييم:' : 'Rate:'}
@@ -2382,12 +2554,15 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
 
               <button
                 type="button"
-                onClick={() => handleExplicitFinishWithEvaluation('muthabbat')}
+                onClick={() =>
+                  setSelectedEvaluation(selectedEvaluation === 'muthabbat' ? undefined : 'muthabbat')
+                }
                 className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 border ${
                   selectedEvaluation === 'muthabbat'
-                    ? 'bg-[#4A6144] text-white border-[#88B87E]'
-                    : 'bg-[#4A6144]/90 hover:bg-[#4A6144] text-white border-white/20'
+                    ? 'bg-[#4A6144] text-white border-[#88B87E] ring-2 ring-[#88B87E]'
+                    : 'bg-[#4A6144]/80 hover:bg-[#4A6144] text-white border-white/20'
                 }`}
+                title={lang === 'ar' ? 'تحديد التقييم: مُثبَّت' : 'Rate: Mastered'}
               >
                 <CheckCircle2 className="w-3 h-3" />
                 <span>{lang === 'ar' ? 'مُثبَّت' : 'Mastered'}</span>
@@ -2395,38 +2570,57 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
 
               <button
                 type="button"
-                onClick={() => handleExplicitFinishWithEvaluation('mutaraddid')}
+                onClick={() =>
+                  setSelectedEvaluation(selectedEvaluation === 'mutaraddid' ? undefined : 'mutaraddid')
+                }
                 className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer border ${
                   selectedEvaluation === 'mutaraddid'
-                    ? 'bg-[#C88A14] text-white border-[#F6E9C8]'
-                    : 'bg-[#C88A14]/90 hover:bg-[#C88A14] text-white border-white/20'
+                    ? 'bg-[#C88A14] text-white border-[#F6E9C8] ring-2 ring-[#F6E9C8]'
+                    : 'bg-[#C88A14]/80 hover:bg-[#C88A14] text-white border-white/20'
                 }`}
+                title={lang === 'ar' ? 'تحديد التقييم: مُتردِّد' : 'Rate: Hesitant'}
               >
                 <span>{lang === 'ar' ? 'مُتردِّد' : 'Hesitant'}</span>
               </button>
 
               <button
                 type="button"
-                onClick={() => handleExplicitFinishWithEvaluation('mutafallit')}
+                onClick={() =>
+                  setSelectedEvaluation(selectedEvaluation === 'mutafallit' ? undefined : 'mutafallit')
+                }
                 className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer border ${
                   selectedEvaluation === 'mutafallit'
-                    ? 'bg-[#A84A32] text-white border-[#F3B5A4]'
-                    : 'bg-[#A84A32]/90 hover:bg-[#A84A32] text-white border-white/20'
+                    ? 'bg-[#A84A32] text-white border-[#F3B5A4] ring-2 ring-[#F3B5A4]'
+                    : 'bg-[#A84A32]/80 hover:bg-[#A84A32] text-white border-white/20'
                 }`}
+                title={lang === 'ar' ? 'تحديد التقييم: مُتفلِّت' : 'Rate: Slipping'}
               >
                 <span>{lang === 'ar' ? 'مُتفلِّت' : 'Slipping'}</span>
               </button>
             </div>
 
-            {/* Finish Plan & Cancel Buttons */}
-            <div className="flex items-center gap-1.5 ms-auto">
+            {/* Finish Plan & Cancel Buttons + Focus Mode Trigger */}
+            <div className="flex items-center gap-1.5 ms-auto flex-wrap">
+              {/* Prominent Focus Mode Button */}
+              <button
+                type="button"
+                onClick={() => setFocusMode(true)}
+                className="px-3 py-1 rounded-lg bg-[#C88A14]/30 hover:bg-[#C88A14]/50 border border-[#EAB338] text-[#FFFDF9] text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                title={dict.focusModeLabel}
+              >
+                <Eye className="w-3.5 h-3.5 text-[#EAB338]" />
+                <span>{lang === 'ar' ? 'وضع التركيز' : 'Focus Mode'}</span>
+              </button>
+
+              {/* Explicit Finish Plan Button (The ONLY way plan marks completed!) */}
               <button
                 type="button"
                 onClick={() => handleExplicitFinishWithEvaluation(selectedEvaluation)}
-                className="px-3 py-1 rounded-lg bg-[#FFFDF9] hover:bg-[#F6E9C8] text-[#2D2218] text-xs font-bold transition-colors cursor-pointer flex items-center gap-1 shadow-2xs"
+                className="px-3.5 py-1 rounded-lg mustard-gradient-btn hover:brightness-110 text-[#FFFDF9] text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                title={dict.finishPlanManualBtn}
               >
-                <CheckCircle2 className="w-3 h-3 text-[#4A6144]" />
-                <span>{lang === 'ar' ? 'إنهاء' : 'Finish'}</span>
+                <CheckCircle2 className="w-3.5 h-3.5 text-white" />
+                <span>{dict.finishPlanManualBtn}</span>
               </button>
 
               <button
@@ -2451,6 +2645,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
           )}
         </div>
       </div>
+      )}
     </div>
   );
 };

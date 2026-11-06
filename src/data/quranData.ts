@@ -76,6 +76,7 @@ export interface QuranPlanItem {
   estimatedAyahs: number;
   estimatedPages: number;
   notes?: string;
+  repeatWeekly?: boolean;
   mistakesCount?: number;
   createdAt: string;
 }

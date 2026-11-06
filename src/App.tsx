@@ -18,11 +18,20 @@ import {
   HelpCircle,
   ExternalLink,
   BookOpen,
+  Home,
   BarChart3,
   Settings,
   X,
   Volume2,
   VolumeX,
+  ChevronDown,
+  List,
+  Eye,
+  EyeOff,
+  Moon,
+  Sun,
+  Smartphone,
+  Sparkles,
 } from 'lucide-react';
 import {
   Language,
@@ -44,9 +53,13 @@ import { PlanModal } from './components/PlanModal';
 import { AnalyticsSection } from './components/AnalyticsSection';
 import { RemindersSection } from './components/RemindersSection';
 import { SardMushafView } from './components/SardMushafView';
+import { PWAInstallButton } from './components/PWAInstallButton';
+import { DualCalendarModal } from './components/DualCalendarModal';
+import { getDualDate, getCompactDualDate } from './utils/calendar';
 
 const STORAGE_KEY_PLANS = 'mishkat_sard_user_plans_v2';
 const STORAGE_KEY_LANG = 'mishkat_sard_lang_v1';
+const STORAGE_KEY_FOCUS_MODE = 'alutrujjah_focus_mode';
 
 export default function App() {
   const [lang, setLang] = useState<Language>(() => {
@@ -71,7 +84,16 @@ export default function App() {
     'schedule' | 'today' | 'analytics' | 'reminders'
   >('schedule');
   const [expandedSardPlanId, setExpandedSardPlanId] = useState<string | null>(null);
-  const [scheduleViewMode, setScheduleViewMode] = useState<'grid' | 'table'>('table');
+  const [scheduleViewMode, setScheduleViewMode] = useState<'grid' | 'table' | 'list'>('table');
+  const [isViewStyleDropdownOpen, setIsViewStyleDropdownOpen] = useState<boolean>(false);
+  const [isDualCalendarOpen, setIsDualCalendarOpen] = useState<boolean>(false);
+  const [focusModeEnabled, setFocusModeEnabled] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(STORAGE_KEY_FOCUS_MODE) === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [filterType, setFilterType] = useState<'all' | PlanType>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
@@ -421,71 +443,108 @@ export default function App() {
   const todayCompletedCount = plans.filter(
     (p) => p.day === todayId && p.status === 'completed'
   ).length;
+  const todayDual = useMemo(() => getDualDate(new Date(), lang), [lang]);
 
   return (
     <div className="min-h-screen flex flex-col bg-[#F7F3EB] text-[#261C14] islamic-pattern-subtle">
-      {/* Fixed/Sticky Top Header: Row 1 = "الأترجة" Emblem on the Right + Settings Icon on the Left | Row 2 = Full-Width 4-Column Icon-Top Menu Underneath the Logo */}
+      {/* Fixed/Sticky Top Header */}
       <header
         dir="rtl"
         className="sticky top-0 z-30 bg-[#FFFDF9]/95 backdrop-blur-md border-b border-[#DDD2BE] shadow-xs"
       >
-        {/* Row 1: Top Brand Row — Elegant "الأترجة" Logo on the Right & Compact Settings Icon on the Left */}
-        <div className="max-w-[1360px] mx-auto px-3 sm:px-6 lg:px-8 py-2 flex items-center justify-between gap-2">
-          {/* Right (على اليمين): Elegant "الأترجة" Emblem Logo */}
-          <a
-            href="#schedule"
-            onClick={(e) => {
-              e.preventDefault();
-              setActiveSection('schedule');
-            }}
-            className="flex items-center gap-2.5 shrink-0 group cursor-pointer"
-            title="الأترجة"
-          >
-            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-[#2D2218] via-[#3D2E20] to-[#59412A] border border-[#C88A14] shadow-2xs flex items-center justify-center relative overflow-hidden group-hover:border-[#EAB338] transition-colors">
-              <svg
-                className="w-5 h-5 sm:w-6 sm:h-6 text-[#EAB338]"
-                viewBox="0 0 36 36"
-                fill="none"
-                aria-hidden="true"
-              >
-                <rect
-                  x="7"
-                  y="7"
-                  width="22"
-                  height="22"
-                  rx="2.5"
-                  stroke="currentColor"
-                  strokeWidth="1.4"
-                  strokeOpacity="0.55"
-                />
-                <rect
-                  x="7"
-                  y="7"
-                  width="22"
-                  height="22"
-                  rx="2.5"
-                  transform="rotate(45 18 18)"
-                  stroke="currentColor"
-                  strokeWidth="1.4"
-                />
-                <path
-                  d="M18 10.5C21.2 13 22.8 15.8 22.8 18.7C22.8 21.8 20.6 24.3 18 25.5C15.4 24.3 13.2 21.8 13.2 18.7C13.2 15.8 14.8 13 18 10.5Z"
-                  fill="currentColor"
-                  fillOpacity="0.22"
-                  stroke="currentColor"
-                  strokeWidth="1.4"
-                />
-                <circle cx="18" cy="18" r="1.8" fill="currentColor" />
-              </svg>
-            </div>
-            <span className="text-xl sm:text-2xl font-bold font-display-islamic leading-none text-[#2D2218] tracking-tight">
-              الأترجة
-            </span>
-          </a>
+        {/* Row 1: Top Brand Row — "الأترجة" Logo, Dual Calendar & PWA Install, Today Counter, Settings */}
+        <div className="max-w-[1360px] mx-auto px-3 sm:px-6 lg:px-8 py-2 flex items-center justify-between gap-2 flex-wrap sm:flex-nowrap">
+          {/* Right: Elegant "الأترجة" Emblem Logo + Hijri & Gregorian Date */}
+          <div className="flex items-center gap-2.5 shrink-0">
+            <a
+              href="#schedule"
+              onClick={(e) => {
+                e.preventDefault();
+                setActiveSection('schedule');
+              }}
+              className="flex items-center gap-3 shrink-0 group cursor-pointer"
+              title={dict.brandTitle}
+            >
+              {/* Distinctive & Clear Utrujjah Medallion Emblem */}
+              <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-[#1C1610] via-[#2D2218] to-[#4A3828] border-2 border-[#EAB338] shadow-md flex items-center justify-center relative overflow-hidden group-hover:scale-105 group-hover:border-[#F6D365] transition-all shrink-0">
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-[#EAB338]/20 via-transparent to-transparent pointer-events-none" />
+                <svg
+                  className="w-7 h-7 sm:w-8 sm:h-8 text-[#EAB338]"
+                  viewBox="0 0 36 36"
+                  fill="none"
+                  aria-hidden="true"
+                >
+                  {/* Islamic 8-point geometric star (Rub el Hizb) */}
+                  <rect
+                    x="7"
+                    y="7"
+                    width="22"
+                    height="22"
+                    rx="3"
+                    stroke="#EAB338"
+                    strokeWidth="1.6"
+                    strokeOpacity="0.85"
+                  />
+                  <rect
+                    x="7"
+                    y="7"
+                    width="22"
+                    height="22"
+                    rx="3"
+                    transform="rotate(45 18 18)"
+                    stroke="#EAB338"
+                    strokeWidth="1.6"
+                    strokeOpacity="0.85"
+                  />
+                  {/* Inner glowing citrus medallion */}
+                  <path
+                    d="M18 9 C22 12, 23.5 15.5, 23.5 18.8 C23.5 22.3 21 25.2 18 26.5 C15 25.2 12.5 22.3 12.5 18.8 C12.5 15.5 14 12, 18 9 Z"
+                    fill="#EAB338"
+                    fillOpacity="0.35"
+                    stroke="#EAB338"
+                    strokeWidth="1.6"
+                  />
+                  <circle cx="18" cy="18" r="2.2" fill="#EAB338" />
+                </svg>
+              </div>
 
-          {/* Left: Compact All-Settings Control Button */}
-          <div className="flex items-center gap-2 shrink-0">
-            <span className="text-xs font-mono-tabular font-semibold text-[#84715E] bg-[#F7F3EB] px-2.5 py-1 rounded-lg border border-[#E5DEC9]">
+              {/* Bold Brand Name & Clear Subtitle */}
+              <div className="flex flex-col">
+                <span className="text-2xl sm:text-3xl font-extrabold font-display-islamic leading-none text-[#2D2218] tracking-tight">
+                  {dict.brandTitle}
+                </span>
+                <span className="text-[11px] sm:text-xs font-bold text-[#8B6514] tracking-normal mt-0.5">
+                  {dict.brandSubtitle}
+                </span>
+              </div>
+            </a>
+          </div>
+
+          {/* Left Action Strip: Dual Hijri & Gregorian Dates (replaces generic calendar button), PWA Install, Today Stats, Settings */}
+          <div className="flex items-center gap-2 shrink-0 ms-auto">
+            {/* Prominent Dual Hijri & Gregorian Date Badge (Clickable to open full month view) */}
+            <button
+              type="button"
+              onClick={() => setIsDualCalendarOpen(true)}
+              className="flex items-center gap-2 px-2.5 sm:px-3 py-1.5 rounded-xl bg-[#F7F3EB] hover:bg-[#EFE9DC] border border-[#DDD2BE] hover:border-[#C88A14] text-[#2D2218] transition-all cursor-pointer shadow-2xs group"
+              title={lang === 'ar' ? 'استعراض التقويم الهجري والميلادي' : 'View Hijri & Gregorian Calendar'}
+            >
+              <Calendar className="w-4 h-4 text-[#C88A14] group-hover:scale-105 transition-transform shrink-0" />
+              <div className="flex flex-col text-start leading-tight font-mono-tabular">
+                <span className="font-bold text-[#2D2218] text-[11px] sm:text-xs">
+                  {todayDual.hijriDate}
+                </span>
+                <span className="text-[10px] text-[#84715E] font-medium">
+                  {todayDual.gregorianDate}
+                </span>
+              </div>
+            </button>
+
+            {/* PWA Install Button */}
+            <PWAInstallButton lang={lang} variant="header" />
+
+            {/* Today's count badge */}
+            <span className="hidden sm:inline-block text-xs font-mono-tabular font-semibold text-[#84715E] bg-[#F7F3EB] px-2.5 py-1.5 rounded-xl border border-[#E5DEC9]">
               {lang === 'ar' ? todayInfo.nameAr : todayInfo.shortEn} · {todayCompletedCount}/
               {todayPlansCount}
             </span>
@@ -510,7 +569,7 @@ export default function App() {
             <nav className="grid grid-cols-4 gap-1.5 sm:gap-3 w-full">
               {(
                 [
-                  { id: 'schedule', label: dict.navSchedule, Icon: Calendar },
+                  { id: 'schedule', label: dict.navSchedule, Icon: Home },
                   { id: 'today', label: dict.navToday, Icon: BookOpen },
                   { id: 'analytics', label: dict.navAnalytics, Icon: BarChart3 },
                   { id: 'reminders', label: dict.navReminders, Icon: Bell },
@@ -632,32 +691,111 @@ export default function App() {
                   />
                 </div>
 
-                {/* View Mode Toggle on Desktop */}
-                <div className="hidden lg:flex items-center gap-1 p-0.5 bg-[#F7F3EB] rounded-lg border border-[#DDD2BE]">
+                {/* Vertical Dropdown for View Style (قائمة منسدلة عمودياً لنمط العرض) */}
+                <div className="relative">
                   <button
                     type="button"
-                    onClick={() => setScheduleViewMode('table')}
-                    className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                      scheduleViewMode === 'table'
-                        ? 'bg-[#C88A14] text-[#FFFDF9]'
-                        : 'text-[#5C4B3B] hover:text-[#261C14]'
-                    }`}
+                    onClick={() => setIsViewStyleDropdownOpen((prev) => !prev)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#F7F3EB] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-xs font-bold text-[#2D2218] transition-colors cursor-pointer whitespace-nowrap shadow-2xs"
+                    title={dict.viewStyleMenuLabel}
                   >
-                    <TableIcon className="w-3.5 h-3.5" />
-                    <span>{dict.viewModeTable}</span>
+                    {scheduleViewMode === 'table' ? (
+                      <>
+                        <TableIcon className="w-3.5 h-3.5 text-[#C88A14]" />
+                        <span>{dict.viewStyleTableOption}</span>
+                      </>
+                    ) : scheduleViewMode === 'grid' ? (
+                      <>
+                        <LayoutGrid className="w-3.5 h-3.5 text-[#C88A14]" />
+                        <span>{dict.viewStyleGridOption}</span>
+                      </>
+                    ) : (
+                      <>
+                        <List className="w-3.5 h-3.5 text-[#C88A14]" />
+                        <span>{dict.viewStyleListOption}</span>
+                      </>
+                    )}
+                    <ChevronDown
+                      className={`w-3.5 h-3.5 text-[#84715E] transition-transform ${
+                        isViewStyleDropdownOpen ? 'rotate-180' : ''
+                      }`}
+                    />
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setScheduleViewMode('grid')}
-                    className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                      scheduleViewMode === 'grid'
-                        ? 'bg-[#C88A14] text-[#FFFDF9]'
-                        : 'text-[#5C4B3B] hover:text-[#261C14]'
-                    }`}
-                  >
-                    <LayoutGrid className="w-3.5 h-3.5" />
-                    <span>{dict.viewModeGrid}</span>
-                  </button>
+
+                  {/* Vertical Dropdown Menu */}
+                  {isViewStyleDropdownOpen && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-30"
+                        onClick={() => setIsViewStyleDropdownOpen(false)}
+                      />
+                      <div className="absolute top-full end-0 mt-1.5 w-52 bg-[#FFFDF9] rounded-xl border border-[#DDD2BE] shadow-xl p-1.5 z-40 space-y-1 animate-in fade-in zoom-in-95 duration-100">
+                        <span className="block px-2.5 py-1 text-[10px] font-bold text-[#84715E] uppercase tracking-wider">
+                          {dict.viewStyleMenuLabel}
+                        </span>
+
+                        {/* 1. نمط الجدول (Table View) */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setScheduleViewMode('table');
+                            setIsViewStyleDropdownOpen(false);
+                          }}
+                          className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-bold transition-colors cursor-pointer text-start ${
+                            scheduleViewMode === 'table'
+                              ? 'bg-[#C88A14] text-white shadow-2xs'
+                              : 'text-[#2D2218] hover:bg-[#F7F3EB]'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <TableIcon className="w-4 h-4 shrink-0" />
+                            <span>{dict.viewStyleTableOption}</span>
+                          </div>
+                          {scheduleViewMode === 'table' && <Check className="w-3.5 h-3.5 shrink-0" />}
+                        </button>
+
+                        {/* 2. نمط البطاقات (Grid View) */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setScheduleViewMode('grid');
+                            setIsViewStyleDropdownOpen(false);
+                          }}
+                          className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-bold transition-colors cursor-pointer text-start ${
+                            scheduleViewMode === 'grid'
+                              ? 'bg-[#C88A14] text-white shadow-2xs'
+                              : 'text-[#2D2218] hover:bg-[#F7F3EB]'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <LayoutGrid className="w-4 h-4 shrink-0" />
+                            <span>{dict.viewStyleGridOption}</span>
+                          </div>
+                          {scheduleViewMode === 'grid' && <Check className="w-3.5 h-3.5 shrink-0" />}
+                        </button>
+
+                        {/* 3. نمط القائمة (List View) */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setScheduleViewMode('list');
+                            setIsViewStyleDropdownOpen(false);
+                          }}
+                          className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-bold transition-colors cursor-pointer text-start ${
+                            scheduleViewMode === 'list'
+                              ? 'bg-[#C88A14] text-white shadow-2xs'
+                              : 'text-[#2D2218] hover:bg-[#F7F3EB]'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <List className="w-4 h-4 shrink-0" />
+                            <span>{dict.viewStyleListOption}</span>
+                          </div>
+                          {scheduleViewMode === 'list' && <Check className="w-3.5 h-3.5 shrink-0" />}
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 <button
@@ -671,20 +809,22 @@ export default function App() {
               </div>
             </div>
 
-            {/* DESKTOP TABLE VIEW (`hidden lg:block` when table mode is selected) */}
+            {/* TABLE VIEW (`scheduleViewMode === 'table'`) — Fully responsive on all devices */}
             {scheduleViewMode === 'table' && (
-              <div className="hidden lg:block rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] overflow-hidden shadow-2xs">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-start border-collapse">
+              <div className="space-y-4">
+                {/* 1. Desktop & Tablet Table (Spans exactly 100% of container width) */}
+                <div className="hidden md:block rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] overflow-hidden shadow-2xs">
+                  <table className="w-full text-start border-collapse table-fixed">
                     <thead>
                       <tr className="bg-[#EFE9DC]/75 border-b border-[#DDD2BE] text-[11px] font-bold text-[#5C4B3B]">
-                        <th className="py-2 px-3 text-start">{dict.colDay}</th>
-                        <th className="py-2 px-3 text-start">{dict.colType}</th>
-                        <th className="py-2 px-3 text-start">{dict.colCurriculum}</th>
-                        <th className="py-2 px-3 text-end">{dict.colMetrics}</th>
-                        <th className="py-2 px-3 text-center">{dict.colReminder}</th>
-                        <th className="py-2 px-3 text-center">{dict.colStatus}</th>
-                        <th className="py-2 px-3 text-end">{dict.colActions}</th>
+                        <th className="py-2.5 px-3 text-start w-[16%]">{dict.colDay}</th>
+                        <th className="py-2.5 px-3 text-start w-[13%]">{dict.colType}</th>
+                        <th className="py-2.5 px-3 text-start w-[27%]">{dict.colCurriculum}</th>
+                        <th className="py-2.5 px-3 text-end w-[11%]">{dict.colMetrics}</th>
+                        <th className="py-2.5 px-3 text-center w-[9%]">{lang === 'ar' ? 'التكرار' : 'Repeat'}</th>
+                        <th className="py-2.5 px-3 text-center w-[8%]">{dict.colReminder}</th>
+                        <th className="py-2.5 px-3 text-center w-[8%]">{dict.colStatus}</th>
+                        <th className="py-2.5 px-3 text-end w-[8%]">{dict.colActions}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#EFE9DC] text-xs sm:text-sm">
@@ -693,6 +833,7 @@ export default function App() {
                           .filter((p) => p.day === day.id)
                           .sort((a, b) => a.reminderTime.localeCompare(b.reminderTime));
                         const isToday = day.id === todayId;
+                        const dayDual = getCompactDualDate(day.id, lang);
 
                         if (dayPlans.length === 0) {
                           return (
@@ -709,8 +850,11 @@ export default function App() {
                                     </span>
                                   )}
                                 </div>
+                                <div className="text-[10px] text-[#84715E] font-mono-tabular">
+                                  {dayDual.hijri} · {dayDual.greg}
+                                </div>
                               </td>
-                              <td colSpan={5} className="py-2 px-3 text-xs text-[#84715E]">
+                              <td colSpan={6} className="py-2 px-3 text-xs text-[#84715E]">
                                 {dict.noPlansForDay}
                               </td>
                               <td className="py-2 px-3 text-end whitespace-nowrap">
@@ -745,23 +889,28 @@ export default function App() {
                               >
                                 <td className="py-2.5 px-3 align-middle whitespace-nowrap">
                                   {idx === 0 ? (
-                                    <div className="flex items-center gap-2">
-                                      <div className="flex items-center gap-1 font-bold text-[#261C14]">
-                                        <span>{lang === 'ar' ? day.nameAr : day.nameEn}</span>
-                                        {isToday && (
-                                          <span className="text-[11px] font-semibold text-[#C88A14]">
-                                            · {dict.todayBadge}
-                                          </span>
-                                        )}
+                                    <div className="flex flex-col gap-0.5">
+                                      <div className="flex items-center gap-2">
+                                        <div className="flex items-center gap-1 font-bold text-[#261C14]">
+                                          <span>{lang === 'ar' ? day.nameAr : day.nameEn}</span>
+                                          {isToday && (
+                                            <span className="text-[11px] font-semibold text-[#C88A14]">
+                                              · {dict.todayBadge}
+                                            </span>
+                                          )}
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleOpenAddModal(day.id)}
+                                          title={dict.addAnotherForDay}
+                                          className="p-0.5 rounded-md text-[#B87D10] hover:bg-[#EFE9DC] hover:text-[#261C14] transition-colors cursor-pointer"
+                                        >
+                                          <Plus className="w-3.5 h-3.5" />
+                                        </button>
                                       </div>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleOpenAddModal(day.id)}
-                                        title={dict.addAnotherForDay}
-                                        className="p-0.5 rounded-md text-[#B87D10] hover:bg-[#EFE9DC] hover:text-[#261C14] transition-colors cursor-pointer"
-                                      >
-                                        <Plus className="w-3.5 h-3.5" />
-                                      </button>
+                                      <span className="text-[10px] text-[#84715E] font-mono-tabular">
+                                        {getCompactDualDate(day.id, lang).greg} · {getCompactDualDate(day.id, lang).hijri}
+                                      </span>
                                     </div>
                                   ) : (
                                     <span className="text-[11px] text-[#84715E] font-mono-tabular ps-2">
@@ -833,6 +982,20 @@ export default function App() {
                                 </td>
 
                                 <td className="py-2.5 px-3 align-middle text-center whitespace-nowrap">
+                                  {plan.repeatWeekly ? (
+                                    <span
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#FFF5E0] text-[#9E6A0C] border border-[#E8D29F] text-[11px] font-bold"
+                                      title={dict.repeatWeeklyDesc}
+                                    >
+                                      <Repeat className="w-3 h-3 text-[#C88A14]" />
+                                      <span>{dict.repeatWeeklyBadge}</span>
+                                    </span>
+                                  ) : (
+                                    <span className="text-[11px] text-[#84715E]">—</span>
+                                  )}
+                                </td>
+
+                                <td className="py-2.5 px-3 align-middle text-center whitespace-nowrap">
                                   <button
                                     type="button"
                                     onClick={() => handleToggleStatus(plan.id)}
@@ -898,119 +1061,353 @@ export default function App() {
                     </tbody>
                   </table>
                 </div>
+
+                {/* 2. Mobile Table View (Spans 100% of mobile screen width, zero horizontal overflow) */}
+                <div className="block md:hidden space-y-3">
+                  {visibleDays.map((day) => {
+                    const dayPlans = filteredPlans
+                      .filter((p) => p.day === day.id)
+                      .sort((a, b) => a.reminderTime.localeCompare(b.reminderTime));
+                    const isToday = day.id === todayId;
+                    const dayDual = getCompactDualDate(day.id, lang);
+                    const doneCount = dayPlans.filter((p) => p.status === 'completed').length;
+
+                    return (
+                      <div
+                        key={day.id}
+                        className={`rounded-xl bg-[#FFFDF9] border overflow-hidden shadow-2xs ${
+                          isToday ? 'border-[#C88A14]' : 'border-[#DDD2BE]'
+                        }`}
+                      >
+                        {/* Day Header Bar */}
+                        <div
+                          className={`px-3 py-2 border-b flex items-center justify-between ${
+                            isToday
+                              ? 'bg-[#2D2218] text-[#FFFDF9] border-[#2D2218]'
+                              : 'bg-[#F7F3EB] text-[#261C14] border-[#DDD2BE]'
+                          }`}
+                        >
+                          <div className="flex flex-col">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-bold font-display-islamic text-sm">
+                                {lang === 'ar' ? day.nameAr : day.nameEn}
+                              </span>
+                              {isToday && (
+                                <span className="text-[11px] font-semibold text-[#EAB338]">
+                                  · {dict.todayBadge}
+                                </span>
+                              )}
+                            </div>
+                            <span
+                              className={`text-[10px] font-mono-tabular ${
+                                isToday ? 'text-[#E6D7BE]' : 'text-[#84715E]'
+                              }`}
+                            >
+                              {dayDual.hijri} · {dayDual.greg}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`text-xs font-mono-tabular ${
+                                isToday ? 'text-[#E6D7BE]' : 'text-[#84715E]'
+                              }`}
+                            >
+                              {doneCount}/{dayPlans.length}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenAddModal(day.id)}
+                              className={`px-2 py-0.5 rounded-md text-[11px] font-bold flex items-center gap-0.5 cursor-pointer ${
+                                isToday
+                                  ? 'bg-[#C88A14] text-white'
+                                  : 'bg-[#EFE9DC] text-[#9E6A0C] hover:bg-[#E5DEC9]'
+                              }`}
+                            >
+                              <Plus className="w-3 h-3" />
+                              <span>{dict.addAnotherForDay}</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Plan items list */}
+                        <div className="divide-y divide-[#EFE9DC]">
+                          {dayPlans.length === 0 ? (
+                            <div className="py-3 px-3 text-center text-xs text-[#84715E]">
+                              {dict.noPlansForDay}
+                            </div>
+                          ) : (
+                            dayPlans.map((plan) => {
+                              const isCompleted = plan.status === 'completed';
+                              const { label: practiceLabel, Icon: PracticeIcon } =
+                                getPlanPracticeButtonMeta(plan.planType);
+
+                              return (
+                                <div key={plan.id} className="p-3 space-y-2">
+                                  {/* Meta chips row */}
+                                  <div className="flex flex-wrap items-center justify-between gap-1 text-[11px]">
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                      <span
+                                        className={`font-bold ${
+                                          plan.planType === 'new_memorization'
+                                            ? 'text-[#4A6144]'
+                                            : plan.planType === 'sard'
+                                            ? 'text-[#B87D10]'
+                                            : 'text-[#9C4A32]'
+                                        }`}
+                                      >
+                                        {getPlanTypeLabel(plan.planType, lang)}
+                                      </span>
+                                      <span className="text-[#84715E]">·</span>
+                                      <span className="text-[#84715E]">
+                                        {getScopeLabel(plan.scope, lang)}
+                                      </span>
+                                      {plan.repeatWeekly && (
+                                        <>
+                                          <span className="text-[#84715E]">·</span>
+                                          <span className="inline-flex items-center gap-0.5 text-[#9E6A0C] font-semibold bg-[#FFF5E0] px-1.5 py-0.5 rounded border border-[#E8D29F] text-[10px]">
+                                            <Repeat className="w-2.5 h-2.5 text-[#C88A14]" />
+                                            <span>{dict.repeatWeeklyBadge}</span>
+                                          </span>
+                                        </>
+                                      )}
+                                      <span className="text-[#84715E]">·</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleTogglePlanReminder(plan.id)}
+                                        className="inline-flex items-center gap-1 text-[#5C4B3B] font-mono-tabular font-medium cursor-pointer"
+                                      >
+                                        <Clock className="w-3 h-3 text-[#C88A14]" />
+                                        <span>{plan.reminderTime}</span>
+                                      </button>
+                                    </div>
+
+                                    <span className="text-[#84715E] font-mono-tabular">
+                                      {plan.estimatedAyahs} {dict.ayahsUnit} (~{plan.estimatedPages}{' '}
+                                      {dict.pagesUnit})
+                                    </span>
+                                  </div>
+
+                                  {/* Curriculum title */}
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="space-y-0.5">
+                                      <span
+                                        className={`font-bold text-[#261C14] text-sm ${
+                                          isCompleted ? 'line-through opacity-60' : ''
+                                        }`}
+                                      >
+                                        {formatCurriculumTitle(plan, lang)}
+                                      </span>
+                                      {plan.evaluation && (
+                                        <span
+                                          className={`text-xs ms-1.5 ${getEvalColorClass(
+                                            plan.evaluation
+                                          )}`}
+                                        >
+                                          · {getEvaluationLabel(plan.evaluation, lang)}
+                                        </span>
+                                      )}
+                                      {plan.notes && (
+                                        <p className="text-[11px] text-[#84715E]">{plan.notes}</p>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* Action buttons strip */}
+                                  <div className="pt-1 flex items-center justify-between gap-2">
+                                    <div className="flex items-center gap-1.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenPlanScreen(plan.id)}
+                                        className="mustard-gradient-btn text-[#FFFDF9] px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer flex items-center gap-1 shadow-2xs"
+                                      >
+                                        <PracticeIcon className="w-3 h-3" />
+                                        <span>{practiceLabel}</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleToggleStatus(plan.id)}
+                                        className={`px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer ${
+                                          isCompleted
+                                            ? 'bg-[#4A6144] text-white'
+                                            : 'bg-[#EFE9DC] text-[#5C4B3B]'
+                                        }`}
+                                      >
+                                        {isCompleted ? dict.markCompleted : dict.statusPending}
+                                      </button>
+                                    </div>
+
+                                    <div className="flex items-center gap-0.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenEditModal(plan)}
+                                        className="p-1 rounded-md text-[#5C4B3B] hover:bg-[#EFE9DC] cursor-pointer"
+                                        title={dict.editPlan}
+                                      >
+                                        <Edit3 className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDuplicatePlan(plan)}
+                                        className="p-1 rounded-md text-[#5C4B3B] hover:bg-[#EFE9DC] cursor-pointer"
+                                        title={dict.duplicatePlan}
+                                      >
+                                        <Copy className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeletePlan(plan.id)}
+                                        className="p-1 rounded-md text-[#A84A32] hover:bg-[#A84A32]/10 cursor-pointer"
+                                        title={dict.deletePlan}
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
 
-            {/* RESPONSIVE CARDS VIEW (Always active on Mobile/Tablet `< lg`, or when Grid View is selected on Desktop) */}
-            <div
-              className={`${
-                scheduleViewMode === 'table' ? 'block lg:hidden' : 'block'
-              } grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-3`}
-            >
-              {visibleDays.map((day) => {
-                const dayPlans = filteredPlans
-                  .filter((p) => p.day === day.id)
-                  .sort((a, b) => a.reminderTime.localeCompare(b.reminderTime));
-                const isToday = day.id === todayId;
-                const doneCount = dayPlans.filter((p) => p.status === 'completed').length;
+            {/* RESPONSIVE CARDS & LIST VIEW (Active when Grid or List View is selected) */}
+            {scheduleViewMode !== 'table' && (
+              <div
+                className={`grid ${
+                  scheduleViewMode === 'list'
+                    ? 'grid-cols-1 max-w-4xl mx-auto'
+                    : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3'
+                } gap-2.5 sm:gap-3`}
+              >
+                {visibleDays.map((day) => {
+                  const dayPlans = filteredPlans
+                    .filter((p) => p.day === day.id)
+                    .sort((a, b) => a.reminderTime.localeCompare(b.reminderTime));
+                  const isToday = day.id === todayId;
+                  const doneCount = dayPlans.filter((p) => p.status === 'completed').length;
+                  const dayDual = getCompactDualDate(day.id, lang);
 
-                return (
-                  <div
-                    key={day.id}
-                    className={`rounded-xl bg-[#FFFDF9] border flex flex-col justify-between overflow-hidden ${
-                      isToday ? 'border-[#C88A14] shadow-2xs' : 'border-[#DDD2BE]'
-                    }`}
-                  >
-                    <div>
-                      <div
-                        className={`px-3 py-2 border-b flex items-center justify-between ${
-                          isToday
-                            ? 'bg-[#2D2218] text-[#FFFDF9] border-[#2D2218]'
-                            : 'bg-[#F7F3EB] text-[#261C14] border-[#DDD2BE]'
-                        }`}
-                      >
-                        <div className="flex items-center gap-1.5">
-                          <h3 className="text-sm font-bold font-display-islamic">
-                            {lang === 'ar' ? day.nameAr : day.nameEn}
-                          </h3>
-                          {isToday && (
-                            <span className="text-[11px] font-semibold text-[#EAB338]">
-                              · {dict.todayBadge}
+                  return (
+                    <div
+                      key={day.id}
+                      className={`rounded-xl bg-[#FFFDF9] border flex flex-col justify-between overflow-hidden ${
+                        isToday ? 'border-[#C88A14] shadow-2xs' : 'border-[#DDD2BE]'
+                      }`}
+                    >
+                      <div>
+                        <div
+                          className={`px-3 py-2 border-b flex items-center justify-between ${
+                            isToday
+                              ? 'bg-[#2D2218] text-[#FFFDF9] border-[#2D2218]'
+                              : 'bg-[#F7F3EB] text-[#261C14] border-[#DDD2BE]'
+                          }`}
+                        >
+                          <div className="flex flex-col">
+                            <div className="flex items-center gap-1.5">
+                              <h3 className="text-sm font-bold font-display-islamic">
+                                {lang === 'ar' ? day.nameAr : day.nameEn}
+                              </h3>
+                              {isToday && (
+                                <span className="text-[11px] font-semibold text-[#EAB338]">
+                                  · {dict.todayBadge}
+                                </span>
+                              )}
+                            </div>
+                            <span
+                              className={`text-[10px] font-mono-tabular ${
+                                isToday ? 'text-[#E6D7BE]' : 'text-[#84715E]'
+                              }`}
+                            >
+                              {dayDual.greg} · {dayDual.hijri}
                             </span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`text-xs font-mono-tabular ${
-                              isToday ? 'text-[#E6D7BE]' : 'text-[#84715E]'
-                            }`}
-                          >
-                            {doneCount}/{dayPlans.length}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => handleOpenAddModal(day.id)}
-                            title={dict.addAnotherForDay}
-                            className={`px-2 py-0.5 rounded-md text-[11px] font-bold flex items-center gap-0.5 cursor-pointer transition-colors ${
-                              isToday
-                                ? 'bg-[#C88A14] text-[#FFFDF9]'
-                                : 'bg-[#EFE9DC] text-[#9E6A0C] hover:bg-[#E5DEC9]'
-                            }`}
-                          >
-                            <Plus className="w-3 h-3" />
-                            <span>{dict.addAnotherForDay}</span>
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="divide-y divide-[#EFE9DC]">
-                        {dayPlans.length === 0 ? (
-                          <div className="py-3 px-3 text-center">
-                            <p className="text-xs text-[#84715E]">{dict.noPlansForDay}</p>
                           </div>
-                        ) : (
-                          dayPlans.map((plan) => {
-                            const isCompleted = plan.status === 'completed';
-                            const { label: practiceLabel, Icon: PracticeIcon } =
-                              getPlanPracticeButtonMeta(plan.planType);
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`text-xs font-mono-tabular ${
+                                isToday ? 'text-[#E6D7BE]' : 'text-[#84715E]'
+                              }`}
+                            >
+                              {doneCount}/{dayPlans.length}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenAddModal(day.id)}
+                              title={dict.addAnotherForDay}
+                              className={`px-2 py-0.5 rounded-md text-[11px] font-bold flex items-center gap-0.5 cursor-pointer transition-colors ${
+                                isToday
+                                  ? 'bg-[#C88A14] text-[#FFFDF9]'
+                                  : 'bg-[#EFE9DC] text-[#9E6A0C] hover:bg-[#E5DEC9]'
+                              }`}
+                            >
+                              <Plus className="w-3 h-3" />
+                              <span>{dict.addAnotherForDay}</span>
+                            </button>
+                          </div>
+                        </div>
 
-                            return (
-                              <div
-                                key={plan.id}
-                                className="p-2.5 sm:p-3 space-y-1.5 hover:bg-[#F7F3EB]/50 transition-colors"
-                              >
-                                <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] text-[#84715E]">
-                                  <div className="flex items-center gap-1">
-                                    <span
-                                      className={`font-bold ${
-                                        plan.planType === 'new_memorization'
-                                          ? 'text-[#4A6144]'
-                                          : plan.planType === 'sard'
-                                          ? 'text-[#B87D10]'
-                                          : 'text-[#9C4A32]'
-                                      }`}
-                                    >
-                                      {getPlanTypeLabel(plan.planType, lang)}
+                        <div className="divide-y divide-[#EFE9DC]">
+                          {dayPlans.length === 0 ? (
+                            <div className="py-3 px-3 text-center">
+                              <p className="text-xs text-[#84715E]">{dict.noPlansForDay}</p>
+                            </div>
+                          ) : (
+                            dayPlans.map((plan) => {
+                              const isCompleted = plan.status === 'completed';
+                              const { label: practiceLabel, Icon: PracticeIcon } =
+                                getPlanPracticeButtonMeta(plan.planType);
+
+                              return (
+                                <div
+                                  key={plan.id}
+                                  className="p-2.5 sm:p-3 space-y-1.5 hover:bg-[#F7F3EB]/50 transition-colors"
+                                >
+                                  <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] text-[#84715E]">
+                                    <div className="flex flex-wrap items-center gap-1">
+                                      <span
+                                        className={`font-bold ${
+                                          plan.planType === 'new_memorization'
+                                            ? 'text-[#4A6144]'
+                                            : plan.planType === 'sard'
+                                            ? 'text-[#B87D10]'
+                                            : 'text-[#9C4A32]'
+                                        }`}
+                                      >
+                                        {getPlanTypeLabel(plan.planType, lang)}
+                                      </span>
+                                      <span aria-hidden="true">·</span>
+                                      <span>{getScopeLabel(plan.scope, lang)}</span>
+                                      <span aria-hidden="true">·</span>
+                                      <span className="font-mono-tabular">{plan.reminderTime}</span>
+                                      {plan.repeatWeekly && (
+                                        <>
+                                          <span aria-hidden="true">·</span>
+                                          <span className="inline-flex items-center gap-0.5 text-[#9E6A0C] font-semibold">
+                                            <Repeat className="w-2.5 h-2.5 text-[#C88A14]" />
+                                            <span>{dict.repeatWeeklyBadge}</span>
+                                          </span>
+                                        </>
+                                      )}
+                                      {plan.evaluation && (
+                                        <>
+                                          <span aria-hidden="true">·</span>
+                                          <span className={getEvalColorClass(plan.evaluation)}>
+                                            {getEvaluationLabel(plan.evaluation, lang)}
+                                          </span>
+                                        </>
+                                      )}
+                                    </div>
+
+                                    <span className="font-mono-tabular">
+                                      {plan.estimatedAyahs} {dict.ayahsUnit} (~{plan.estimatedPages}{' '}
+                                      {dict.pagesUnit})
                                     </span>
-                                    <span aria-hidden="true">·</span>
-                                    <span>{getScopeLabel(plan.scope, lang)}</span>
-                                    <span aria-hidden="true">·</span>
-                                    <span className="font-mono-tabular">{plan.reminderTime}</span>
-                                    {plan.evaluation && (
-                                      <>
-                                        <span aria-hidden="true">·</span>
-                                        <span className={getEvalColorClass(plan.evaluation)}>
-                                          {getEvaluationLabel(plan.evaluation, lang)}
-                                        </span>
-                                      </>
-                                    )}
                                   </div>
-
-                                  <span className="font-mono-tabular">
-                                    {plan.estimatedAyahs} {dict.ayahsUnit} (~{plan.estimatedPages}{' '}
-                                    {dict.pagesUnit})
-                                  </span>
-                                </div>
 
                                 <div
                                   className={`text-sm font-bold text-[#261C14] ${
@@ -1087,6 +1484,7 @@ export default function App() {
                 );
               })}
             </div>
+            )}
           </section>
         )}
 
@@ -1187,7 +1585,7 @@ export default function App() {
 
                   <div>
                     <div className="text-[11px] text-[#5C4B3B] mb-1 font-semibold">
-                      {lang === 'ar' ? 'نمط الجدول' : 'Layout'}
+                      {dict.viewStyleDropdownLabel}
                     </div>
                     <div className="flex gap-1 p-0.5 rounded-lg bg-[#EFE9DC] border border-[#DDD2BE]">
                       <button
@@ -1200,7 +1598,7 @@ export default function App() {
                         }`}
                       >
                         <TableIcon className="w-3 h-3" />
-                        <span>{lang === 'ar' ? 'جدول' : 'Table'}</span>
+                        <span>{dict.viewStyleTable}</span>
                       </button>
                       <button
                         type="button"
@@ -1212,10 +1610,114 @@ export default function App() {
                         }`}
                       >
                         <LayoutGrid className="w-3 h-3" />
-                        <span>{lang === 'ar' ? 'بطاقات' : 'Cards'}</span>
+                        <span>{dict.viewStyleCards}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setScheduleViewMode('list')}
+                        className={`flex-1 py-1 rounded-md text-xs font-bold cursor-pointer flex items-center justify-center gap-1 ${
+                          scheduleViewMode === 'list'
+                            ? 'bg-[#C88A14] text-[#FFFDF9]'
+                            : 'text-[#5C4B3B]'
+                        }`}
+                      >
+                        <List className="w-3 h-3" />
+                        <span>{dict.viewStyleList}</span>
                       </button>
                     </div>
                   </div>
+                </div>
+              </div>
+
+              {/* Focus Mode & Device Integration */}
+              <div className="p-3 rounded-xl bg-[#F7F3EB] border border-[#DDD2BE] space-y-3">
+                {/* Prominent Focus Mode Setting */}
+                <div className={`p-3 rounded-xl border transition-all ${
+                  focusModeEnabled
+                    ? 'bg-[#F0F6EE] border-[#88B87E]'
+                    : 'bg-[#FFFDF9] border-[#DDD2BE]'
+                }`}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className={`p-1.5 rounded-lg ${
+                          focusModeEnabled ? 'bg-[#4A6144] text-white' : 'bg-[#EFE9DC] text-[#C88A14]'
+                        }`}>
+                          <Eye className="w-4 h-4" />
+                        </span>
+                        <div>
+                          <span className="font-bold text-[#2D2218] text-xs sm:text-sm block">
+                            {dict.focusModeSettingTitle}
+                          </span>
+                          <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded-full inline-block ${
+                            focusModeEnabled
+                              ? 'bg-[#4A6144] text-white'
+                              : 'bg-[#EFE9DC] text-[#84715E]'
+                          }`}>
+                            {focusModeEnabled ? dict.focusModeActive : dict.focusModeDisabled}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-[#5C4B3B] leading-relaxed">
+                        {dict.focusModeSettingDesc}
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = !focusModeEnabled;
+                        setFocusModeEnabled(next);
+                        localStorage.setItem('alutrujjah_focus_mode', String(next));
+                      }}
+                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                        focusModeEnabled ? 'bg-[#4A6144]' : 'bg-[#DDD2BE]'
+                      }`}
+                      role="switch"
+                      aria-checked={focusModeEnabled}
+                      title={dict.focusModeSettingTitle}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                          focusModeEnabled ? (lang === 'ar' ? '-translate-x-5' : 'translate-x-5') : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                </div>
+
+                {/* PWA Install */}
+                <div className="pt-2.5 border-t border-[#DDD2BE] flex items-center justify-between gap-2">
+                  <div className="space-y-0.5">
+                    <span className="font-bold text-[#2D2218] flex items-center gap-1.5 text-xs">
+                      <Smartphone className="w-3.5 h-3.5 text-[#C88A14]" />
+                      <span>{dict.installApp}</span>
+                    </span>
+                    <p className="text-[11px] text-[#5C4B3B]">{dict.installAppDesc}</p>
+                  </div>
+                  <PWAInstallButton lang={lang} variant="settings" />
+                </div>
+
+                {/* Dual Calendar shortcut */}
+                <div className="pt-2.5 border-t border-[#DDD2BE] flex items-center justify-between gap-2">
+                  <div className="space-y-0.5">
+                    <span className="font-bold text-[#2D2218] flex items-center gap-1.5 text-xs">
+                      <Calendar className="w-3.5 h-3.5 text-[#C88A14]" />
+                      <span>{dict.dualCalendarTitle}</span>
+                    </span>
+                    <p className="text-[11px] text-[#5C4B3B]">{dict.dualCalendarSubtitle}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsSettingsOpen(false);
+                      setIsDualCalendarOpen(true);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-[#EFE9DC] hover:bg-[#DDD2BE] text-[#2D2218] text-xs font-bold cursor-pointer flex items-center gap-1"
+                  >
+                    <Calendar className="w-3.5 h-3.5 text-[#C88A14]" />
+                    <span>{dict.openDualCalendar}</span>
+                  </button>
                 </div>
               </div>
 
@@ -1422,6 +1924,7 @@ export default function App() {
             <SardMushafView
               lang={lang}
               plan={activeExecutionPlan}
+              focusModeDefault={focusModeEnabled}
               defaultSyncSpeed={defaultSyncSpeed}
               defaultTargetReps={defaultTargetReps}
               defaultQuizLevel={defaultQuizLevel}
@@ -1430,6 +1933,17 @@ export default function App() {
             />
           );
         })()}
+
+      {/* Dual Gregorian and Hijri Calendar Modal */}
+      <DualCalendarModal
+        isOpen={isDualCalendarOpen}
+        onClose={() => setIsDualCalendarOpen(false)}
+        lang={lang}
+        plans={plans}
+        onSelectDay={() => {
+          setActiveSection('schedule');
+        }}
+      />
     </div>
   );
 }
