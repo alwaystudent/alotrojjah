@@ -18,6 +18,7 @@ import {
   Maximize2,
   Minimize2,
   VolumeX,
+  Calendar,
 } from 'lucide-react';
 import {
   Language,
@@ -30,6 +31,8 @@ import {
   formatCurriculumTitle,
   getPlanTypeLabel,
 } from '@/src/data/quranData';
+import { getDualDate } from '@/src/utils/calendar';
+import { memoryManager } from '@/src/utils/memoryCleanup';
 import { t } from '@/src/data/translations';
 
 export interface MushafWordItem {
@@ -71,7 +74,7 @@ interface SardMushafViewProps {
   onCompletePlanSard: (
     planId: string,
     mistakesCount: number,
-    evaluation?: PlanEvaluation,
+    completedAtDate: string,
     quizLevel?: QuizLevel
   ) => void;
 }
@@ -380,6 +383,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
   const [selectedEvaluation, setSelectedEvaluation] = useState<PlanEvaluation | undefined>(
     plan.evaluation
   );
+  const currentDualDate = useMemo(() => getDualDate(new Date(), lang), [lang]);
   const [showExtraControls, setShowExtraControls] = useState<boolean>(false);
 
   // ============================================================================
@@ -1551,13 +1555,15 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
     }
   };
 
-  // Explicit Evaluation or Finish Handler (The ONLY way the plan finishes!)
-  const handleExplicitFinishWithEvaluation = (evalChoice?: PlanEvaluation) => {
+  // Explicit Finish Handler (The ONLY way the plan finishes: records current completion date!)
+  const handleExplicitFinishPlan = () => {
     stopListeningSession();
-    const finalEval = evalChoice || selectedEvaluation;
+    memoryManager.runFullCleanup();
+    const dual = getDualDate(new Date(), lang);
+    const dateFormatted = `${dual.hijriDate} · ${dual.gregorianDate}`;
     const totalMistakes =
       plan.planType === 'review' ? wrongQuizAttempts : mistakeIndices.length;
-    onCompletePlanSard(plan.id, totalMistakes, finalEval, quizLevel);
+    onCompletePlanSard(plan.id, totalMistakes, dateFormatted, quizLevel);
   };
 
   const totalPlanPages = Math.max(1, actualPageRange.endPage - actualPageRange.startPage + 1);
@@ -2016,60 +2022,21 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
             {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
           </button>
 
-          {/* Evaluation Pills: مثبت | متردد | متفلت (ALWAYS VISIBLE in focus mode, sets selectedEvaluation without auto-completing!) */}
-          <div className="flex items-center gap-1 border-s border-white/20 ps-2">
-            <button
-              type="button"
-              onClick={() =>
-                setSelectedEvaluation(selectedEvaluation === 'muthabbat' ? undefined : 'muthabbat')
-              }
-              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1 border ${
-                selectedEvaluation === 'muthabbat'
-                  ? 'bg-[#4A6144] text-white border-[#88B87E] ring-2 ring-[#88B87E]'
-                  : 'bg-[#4A6144]/80 text-white/90 border-transparent hover:bg-[#4A6144]'
-              }`}
-            >
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>{lang === 'ar' ? 'مُثبَّت' : 'Mastered'}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() =>
-                setSelectedEvaluation(selectedEvaluation === 'mutaraddid' ? undefined : 'mutaraddid')
-              }
-              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
-                selectedEvaluation === 'mutaraddid'
-                  ? 'bg-[#C88A14] text-white border-[#F6E9C8] ring-2 ring-[#F6E9C8]'
-                  : 'bg-[#C88A14]/80 text-white/90 border-transparent hover:bg-[#C88A14]'
-              }`}
-            >
-              <span>{lang === 'ar' ? 'مُتردِّد' : 'Hesitant'}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() =>
-                setSelectedEvaluation(selectedEvaluation === 'mutafallit' ? undefined : 'mutafallit')
-              }
-              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
-                selectedEvaluation === 'mutafallit'
-                  ? 'bg-[#A84A32] text-white border-[#F3B5A4] ring-2 ring-[#F3B5A4]'
-                  : 'bg-[#A84A32]/80 text-white/90 border-transparent hover:bg-[#A84A32]'
-              }`}
-            >
-              <span>{lang === 'ar' ? 'مُتفلِّت' : 'Slipping'}</span>
-            </button>
+          {/* Completion Date Display (Replaces evaluation table) */}
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 text-xs font-mono-tabular text-[#FFFDF9] border border-white/15 shrink-0">
+            <Calendar className="w-3.5 h-3.5 text-[#EAB338]" />
+            <span>{currentDualDate.hijriDate} · {currentDualDate.gregorianDate}</span>
           </div>
 
-          {/* Finish Plan Button (ALWAYS VISIBLE in focus mode, requires user click!) */}
+          {/* Explicit Finish Plan Button (Saves plan with recorded completion date) */}
           <button
             type="button"
-            onClick={() => handleExplicitFinishWithEvaluation(selectedEvaluation)}
-            className="mustard-gradient-btn px-3.5 py-1.5 rounded-xl text-[#FFFDF9] text-xs font-bold shadow-xs hover:brightness-110 transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
+            onClick={handleExplicitFinishPlan}
+            className="mustard-gradient-btn px-4 py-1.5 rounded-xl text-[#FFFDF9] text-xs font-bold shadow-xs hover:brightness-110 transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
+            title={lang === 'ar' ? 'إتمام الخطة واعتماد التاريخ' : 'Complete Plan'}
           >
             <CheckCircle2 className="w-3.5 h-3.5 text-white" />
-            <span>{dict.finishPlanManualBtn}</span>
+            <span>{lang === 'ar' ? 'إتمام وتثبيت التاريخ' : 'Complete Plan'}</span>
           </button>
 
           {/* Cancel Button (ALWAYS VISIBLE in focus mode!) */}
@@ -2533,7 +2500,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
               </div>
               <button
                 type="button"
-                onClick={() => handleExplicitFinishWithEvaluation(selectedEvaluation)}
+                onClick={handleExplicitFinishPlan}
                 className="px-2.5 py-1 rounded-lg bg-white text-[#2D2218] text-xs font-bold hover:bg-[#F6E9C8] transition-colors cursor-pointer shrink-0"
               >
                 {dict.finishPlanManualBtn}
@@ -2542,85 +2509,43 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
           )}
 
           {/* =================================================================================
-              3. FLEXIBLE EVALUATION & MANUAL-ONLY PLAN COMPLETION BAR
-                 (مُثبَّت | مُتردِّد | مُتفلِّت | إتمام الخطة | إلغاء)
+              3. RECORD COMPLETION DATE & MANUAL-ONLY PLAN FINISH BAR
+                 (عرض تاريخ الإنجاز الهجري والميلادي | إتمام الخطة واعتماد التاريخ | إلغاء)
              ================================================================================= */}
-          <div className="pt-1.5 border-t border-white/15 flex flex-wrap items-center justify-between gap-2">
-            {/* Evaluation Pills: مثبت | متردد | متفلت (User selects rating calmly without auto-completion!) */}
-            <div className="flex items-center gap-1.5 flex-wrap">
+          <div className="pt-2 border-t border-white/15 flex flex-wrap items-center justify-between gap-2.5">
+            {/* Completion Date Display (Replaces evaluation table) */}
+            <div className="flex items-center gap-2">
               <span className="text-[11px] font-bold text-[#EAB338]">
-                {lang === 'ar' ? 'التقييم:' : 'Rate:'}
+                {lang === 'ar' ? 'تاريخ الإنجاز:' : 'Completion Date:'}
               </span>
-
-              <button
-                type="button"
-                onClick={() =>
-                  setSelectedEvaluation(selectedEvaluation === 'muthabbat' ? undefined : 'muthabbat')
-                }
-                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 border ${
-                  selectedEvaluation === 'muthabbat'
-                    ? 'bg-[#4A6144] text-white border-[#88B87E] ring-2 ring-[#88B87E]'
-                    : 'bg-[#4A6144]/80 hover:bg-[#4A6144] text-white border-white/20'
-                }`}
-                title={lang === 'ar' ? 'تحديد التقييم: مُثبَّت' : 'Rate: Mastered'}
-              >
-                <CheckCircle2 className="w-3 h-3" />
-                <span>{lang === 'ar' ? 'مُثبَّت' : 'Mastered'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() =>
-                  setSelectedEvaluation(selectedEvaluation === 'mutaraddid' ? undefined : 'mutaraddid')
-                }
-                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer border ${
-                  selectedEvaluation === 'mutaraddid'
-                    ? 'bg-[#C88A14] text-white border-[#F6E9C8] ring-2 ring-[#F6E9C8]'
-                    : 'bg-[#C88A14]/80 hover:bg-[#C88A14] text-white border-white/20'
-                }`}
-                title={lang === 'ar' ? 'تحديد التقييم: مُتردِّد' : 'Rate: Hesitant'}
-              >
-                <span>{lang === 'ar' ? 'مُتردِّد' : 'Hesitant'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() =>
-                  setSelectedEvaluation(selectedEvaluation === 'mutafallit' ? undefined : 'mutafallit')
-                }
-                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer border ${
-                  selectedEvaluation === 'mutafallit'
-                    ? 'bg-[#A84A32] text-white border-[#F3B5A4] ring-2 ring-[#F3B5A4]'
-                    : 'bg-[#A84A32]/80 hover:bg-[#A84A32] text-white border-white/20'
-                }`}
-                title={lang === 'ar' ? 'تحديد التقييم: مُتفلِّت' : 'Rate: Slipping'}
-              >
-                <span>{lang === 'ar' ? 'مُتفلِّت' : 'Slipping'}</span>
-              </button>
+              <div className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-white/10 text-xs font-mono-tabular text-[#FFFDF9] border border-white/15">
+                <Calendar className="w-3.5 h-3.5 text-[#EAB338]" />
+                <span>{currentDualDate.hijriDate} · {currentDualDate.gregorianDate}</span>
+              </div>
             </div>
 
             {/* Finish Plan & Cancel Buttons + Focus Mode Trigger */}
-            <div className="flex items-center gap-1.5 ms-auto flex-wrap">
+            <div className="flex items-center gap-2 ms-auto flex-wrap">
               {/* Prominent Focus Mode Button */}
               <button
                 type="button"
                 onClick={() => setFocusMode(true)}
-                className="px-3 py-1 rounded-lg bg-[#C88A14]/30 hover:bg-[#C88A14]/50 border border-[#EAB338] text-[#FFFDF9] text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                className="px-3 py-1.5 rounded-xl bg-[#C88A14]/30 hover:bg-[#C88A14]/50 border border-[#EAB338] text-[#FFFDF9] text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
                 title={dict.focusModeLabel}
               >
                 <Eye className="w-3.5 h-3.5 text-[#EAB338]" />
                 <span>{lang === 'ar' ? 'وضع التركيز' : 'Focus Mode'}</span>
               </button>
 
-              {/* Explicit Finish Plan Button (The ONLY way plan marks completed!) */}
+              {/* Explicit Finish Plan Button (Saves plan with recorded completion date) */}
               <button
                 type="button"
-                onClick={() => handleExplicitFinishWithEvaluation(selectedEvaluation)}
-                className="px-3.5 py-1 rounded-lg mustard-gradient-btn hover:brightness-110 text-[#FFFDF9] text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
-                title={dict.finishPlanManualBtn}
+                onClick={handleExplicitFinishPlan}
+                className="px-4 py-1.5 rounded-xl mustard-gradient-btn hover:brightness-110 text-[#FFFDF9] text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                title={lang === 'ar' ? 'إتمام الخطة واعتماد التاريخ' : 'Complete Plan'}
               >
                 <CheckCircle2 className="w-3.5 h-3.5 text-white" />
-                <span>{dict.finishPlanManualBtn}</span>
+                <span>{lang === 'ar' ? 'إتمام الخطة واعتماد التاريخ' : 'Complete Plan'}</span>
               </button>
 
               <button
@@ -2629,9 +2554,9 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                   stopListeningSession();
                   onClose();
                 }}
-                className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-[#FFFDF9] text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1"
+                className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-[#FFFDF9] text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1"
               >
-                <X className="w-3 h-3" />
+                <X className="w-3.5 h-3.5" />
                 <span>{dict.cancelBtn}</span>
               </button>
             </div>

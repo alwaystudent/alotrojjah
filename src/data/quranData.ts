@@ -78,6 +78,7 @@ export interface QuranPlanItem {
   notes?: string;
   repeatWeekly?: boolean;
   mistakesCount?: number;
+  completedAt?: string; // التاريخ المسجل عند إتمام الخطة
   createdAt: string;
 }
 

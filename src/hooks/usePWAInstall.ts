@@ -5,10 +5,13 @@ export interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
 }
 
+export type BrowserType = 'ios' | 'samsung' | 'firefox' | 'mac_safari' | 'chromium' | 'other';
+
 export function usePWAInstall() {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstalled, setIsInstalled] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
+  const [browserType, setBrowserType] = useState<BrowserType>('chromium');
 
   useEffect(() => {
     // Detect standalone mode (already installed or running as standalone PWA)
@@ -18,10 +21,22 @@ export function usePWAInstall() {
         (window.navigator as unknown as { standalone?: boolean }).standalone === true);
     setIsInstalled(Boolean(isStandalone));
 
-    // Detect iOS devices
+    // Detect browser environment
     const userAgent = typeof window !== 'undefined' ? window.navigator.userAgent.toLowerCase() : '';
     const isIOSDevice = /iphone|ipad|ipod/.test(userAgent);
     setIsIOS(isIOSDevice);
+
+    if (isIOSDevice) {
+      setBrowserType('ios');
+    } else if (/samsungbrowser/.test(userAgent)) {
+      setBrowserType('samsung');
+    } else if (/firefox/.test(userAgent)) {
+      setBrowserType('firefox');
+    } else if (/macintosh/.test(userAgent) && /safari/.test(userAgent) && !/chrome/.test(userAgent)) {
+      setBrowserType('mac_safari');
+    } else {
+      setBrowserType('chromium');
+    }
 
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
@@ -62,6 +77,7 @@ export function usePWAInstall() {
     isInstallable: !!deferredPrompt,
     isInstalled,
     isIOS,
+    browserType,
     install,
   };
 }
