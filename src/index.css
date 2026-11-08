@@ -1,0 +1,90 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-canvas: #F7F3EB;
+    --bg-surface: #EFE9DC;
+    --bg-elevated: #FFFDF9;
+    --border-earth: #DDD2BE;
+    --text-umber: #261C14;
+    --text-clay: #5C4B3B;
+    --text-muted: #84715E;
+    --accent-mustard: #C88A14;
+    --accent-mustard-hover: #AD750E;
+    --accent-mustard-soft: #F6E9C8;
+    --accent-olive: #4A6144;
+    --accent-terracotta: #A84A32;
+  }
+
+  html, body, #root {
+    width: 100%;
+    min-width: 100%;
+    min-height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow-x: hidden;
+  }
+
+  body {
+    background-color: var(--bg-canvas);
+    color: var(--text-umber);
+    font-family: 'Cairo', 'Plus Jakarta Sans', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    margin: 0;
+  }
+
+  [dir="ltr"] body {
+    font-family: 'Plus Jakarta Sans', 'Cairo', sans-serif;
+  }
+}
+
+@font-face {
+  font-family: 'KFGQPC Uthmanic Script HAFS';
+  src: url('https://cdn.jsdelivr.net/gh/mustafa0x/qpc-fonts@f93bf5f3/mushaf-v2/UthmanicHafs_v2-0.woff2') format('woff2'),
+       url('https://verses.quran.com/fonts/quran/hafs/uthmanic_hafs/UthmanicHafs1Ver18.woff2') format('woff2');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+.font-display-islamic {
+  font-family: 'Amiri', serif;
+}
+
+.font-uthmani {
+  font-family: 'KFGQPC Uthmanic Script HAFS', 'Amiri Quran', 'Scheherazade New', 'Amiri', serif;
+  line-height: 2.35;
+  font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
+}
+
+.font-mono-tabular {
+  font-family: 'JetBrains Mono', monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Subtle Islamic 8-point star geometric background pattern */
+.islamic-pattern-subtle {
+  background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' stroke='%23C88A14' stroke-width='0.6' stroke-opacity='0.14'%3E%3Cpath d='M30 0L37.5 15L52.5 7.5L45 22.5L60 30L45 37.5L52.5 52.5L37.5 45L30 60L22.5 45L7.5 52.5L15 37.5L0 30L15 22.5L7.5 7.5L22.5 15Z'/%3E%3Ccircle cx='30' cy='30' r='8'/%3E%3C/g%3E%3C/svg%3E");
+}
+
+/* Warm earthy gradient with mustard undertones */
+.earthy-gradient-banner {
+  background: linear-gradient(135deg, #2D2218 0%, #463525 48%, #6B4F28 82%, #8F681E 100%);
+}
+
+.earthy-card-gradient {
+  background: linear-gradient(180deg, #FFFDF9 0%, #F6EFE2 100%);
+}
+
+.mustard-gradient-btn {
+  background: linear-gradient(135deg, #D49B1A 0%, #B87D10 100%);
+}
+
+.mustard-gradient-btn:hover {
+  background: linear-gradient(135deg, #C28B14 0%, #9E6A0C 100%);
+}
+

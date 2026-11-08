@@ -1,0 +1,6 @@
+{
+  "name": "Mishkat Al-Sard | مشكاة السرد - خطة القرآن الأسبوعية",
+  "description": "تطبيق متكامل لجدولة ومتابعة سرد وحفظ ومراجعة القرآن الكريم وفق خطة أسبوعية مع المحاذاة الصوتية اللحظية بالرسم العثماني وإحصائيات دقيقة.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
