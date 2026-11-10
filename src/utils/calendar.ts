@@ -110,3 +110,39 @@ export function getCompactDualDate(dayId: DayId, lang: Language): { hijri: strin
     };
   }
 }
+
+export type DateFormatPreference = 'both' | 'hijri' | 'gregorian';
+
+export function formatDateByPreference(
+  dual: DualDateInfo,
+  pref: DateFormatPreference = 'both'
+): { primary: string; secondary?: string; singleLine: string } {
+  if (pref === 'hijri') {
+    return {
+      primary: dual.hijriDate,
+      secondary: undefined,
+      singleLine: dual.hijriDate,
+    };
+  }
+  if (pref === 'gregorian') {
+    return {
+      primary: dual.gregorianDate,
+      secondary: undefined,
+      singleLine: dual.gregorianDate,
+    };
+  }
+  return {
+    primary: dual.hijriDate,
+    secondary: dual.gregorianDate,
+    singleLine: `${dual.hijriDate} · ${dual.gregorianDate}`,
+  };
+}
+
+export function formatCompactDateByPreference(
+  compact: { hijri: string; greg: string },
+  pref: DateFormatPreference = 'both'
+): string {
+  if (pref === 'hijri') return compact.hijri;
+  if (pref === 'gregorian') return compact.greg;
+  return `${compact.hijri} · ${compact.greg}`;
+}

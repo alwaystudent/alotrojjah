@@ -32,6 +32,7 @@ import {
   ChevronUp,
   Star,
   Award,
+  Brain,
 } from 'lucide-react';
 import {
   Language,
@@ -54,6 +55,7 @@ import { PlanModal } from './components/PlanModal';
 import { AnalyticsSection } from './components/AnalyticsSection';
 import { RemindersSection } from './components/RemindersSection';
 import { SardMushafView } from './components/SardMushafView';
+import { SmartMemorizationSystem } from './components/SmartMemorizationSystem';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { getDualDate, getCompactDualDate } from './utils/calendar';
 import { memoryManager } from './utils/memoryCleanup';
@@ -85,6 +87,7 @@ export default function App() {
     'schedule' | 'today' | 'analytics' | 'reminders'
   >('schedule');
   const [expandedSardPlanId, setExpandedSardPlanId] = useState<string | null>(null);
+  const [smartMemorizationPlan, setSmartMemorizationPlan] = useState<QuranPlanItem | null>(null);
   const [focusModeEnabled, setFocusModeEnabled] = useState<boolean>(() => {
     try {
       return localStorage.getItem(STORAGE_KEY_FOCUS_MODE) === 'true';
@@ -200,8 +203,8 @@ export default function App() {
   };
 
   const playGentleChime = () => {
-    // Never play reminder sound if muted OR during an active Sard / plan session
-    if (!soundEnabled || expandedSardPlanId) return;
+    // Never play reminder sound if muted, during active Sard / Smart Memorization session
+    if (!soundEnabled || expandedSardPlanId || smartMemorizationPlan) return;
     try {
       stopChimeAudio();
       const AudioCtx =
@@ -248,8 +251,9 @@ export default function App() {
     customPlan?: QuranPlanItem,
     isPrepAlert: boolean = false
   ) => {
-    // Suppress reminder audio during active Sard / plan sessions
-    if (!expandedSardPlanId) {
+    // Suppress reminder audio for memorization plans ('new_memorization') and during active sessions
+    const isMemorizationPlan = customPlan?.planType === 'new_memorization';
+    if (!expandedSardPlanId && !smartMemorizationPlan && !isMemorizationPlan) {
       playGentleChime();
     }
     const title = isPrepAlert
@@ -360,6 +364,11 @@ export default function App() {
   const handleOpenPlanScreen = (planId: string) => {
     stopChimeAudio();
     setActiveToast(null);
+    const target = plans.find((p) => p.id === planId);
+    if (target && target.planType === 'new_memorization') {
+      setSmartMemorizationPlan(target);
+      return;
+    }
     setExpandedSardPlanId(planId);
     try {
       window.history.pushState({ planId }, '', `#plan-${planId}`);
@@ -368,8 +377,35 @@ export default function App() {
     }
   };
 
+  const handleCompleteSmartMemorization = (
+    planId: string,
+    evaluation: PlanEvaluation,
+    spacedReviews?: QuranPlanItem[]
+  ) => {
+    const todayDual = getDualDate(new Date(), lang);
+    const dateFormatted = `${todayDual.hijriDate} · ${todayDual.gregorianDate}`;
+    setPlans((prev) => {
+      const updated = prev.map((p) =>
+        p.id === planId
+          ? {
+              ...p,
+              status: 'completed' as const,
+              evaluation,
+              completedAt: dateFormatted,
+            }
+          : p
+      );
+      if (spacedReviews && spacedReviews.length > 0) {
+        return [...updated, ...spacedReviews];
+      }
+      return updated;
+    });
+    setSmartMemorizationPlan(null);
+  };
+
   const handleClosePlanScreen = () => {
     setExpandedSardPlanId(null);
+    setSmartMemorizationPlan(null);
     try {
       if (window.location.hash.startsWith('#plan-')) {
         window.history.pushState(null, '', window.location.pathname + window.location.search);
@@ -528,7 +564,10 @@ export default function App() {
       return { label: dict.openSardBtn, Icon: Mic };
     }
     if (type === 'new_memorization') {
-      return { label: dict.openRepeatBtn, Icon: Repeat };
+      return {
+        label: lang === 'ar' ? 'الحفظ الذكي (3 مراحل)' : 'Smart Memorization',
+        Icon: Brain,
+      };
     }
     return { label: dict.openTestBtn, Icon: HelpCircle };
   };
@@ -785,7 +824,7 @@ export default function App() {
               </p>
             </div>
 
-            <div className="relative z-10 shrink-0">
+            <div className="relative z-10 shrink-0 flex items-center gap-2">
               <button
                 type="button"
                 onClick={() => handleOpenAddModal(todayId)}
@@ -1614,9 +1653,23 @@ export default function App() {
               defaultQuizLevel={defaultQuizLevel}
               onClose={handleClosePlanScreen}
               onCompletePlanSard={handleCompletePlanSard}
+              onOpenSmartMemorization={() => {
+                setExpandedSardPlanId(null);
+                setSmartMemorizationPlan(activeExecutionPlan);
+              }}
             />
           );
         })()}
+
+      {/* Dedicated Smart Quran Memorization System (نظام إدارة خطة الحفظ الذكي - 3 مراحل متتالية وصارمة) */}
+      {smartMemorizationPlan && (
+        <SmartMemorizationSystem
+          lang={lang}
+          plan={smartMemorizationPlan}
+          onClose={() => setSmartMemorizationPlan(null)}
+          onCompleteMemorization={handleCompleteSmartMemorization}
+        />
+      )}
     </div>
   );
 }

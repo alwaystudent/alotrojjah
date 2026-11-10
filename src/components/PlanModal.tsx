@@ -485,34 +485,41 @@ export const PlanModal: React.FC<PlanModalProps> = ({
                     <label className="block text-[11px] font-medium text-[#5C4B3B] mb-0.5">
                       {dict.fromAyahLabel}
                     </label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={maxAyahs}
+                    <select
                       value={ayahFrom}
                       onChange={(e) => {
-                        const val = Math.max(1, Math.min(maxAyahs, Number(e.target.value) || 1));
+                        const val = Number(e.target.value);
                         setAyahFrom(val);
                         if (val > ayahTo) setAyahTo(val);
                       }}
-                      className="w-full px-2.5 py-1.5 rounded-lg bg-[#FFFDF9] border border-[#D5C7B2] text-xs font-mono-tabular text-[#261C14] focus:outline-none focus:border-[#C88A14]"
-                    />
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-[#FFFDF9] border border-[#D5C7B2] text-xs font-mono-tabular text-[#261C14] focus:outline-none focus:border-[#C88A14] cursor-pointer"
+                    >
+                      {Array.from({ length: maxAyahs }, (_, i) => i + 1).map((num) => (
+                        <option key={num} value={num}>
+                          {lang === 'ar' ? `الآية ${num}` : `Ayah ${num}`}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className="block text-[11px] font-medium text-[#5C4B3B] mb-0.5">
                       {dict.toAyahLabel}
                     </label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={maxAyahs}
+                    <select
                       value={ayahTo}
                       onChange={(e) => {
-                        const val = Math.max(1, Math.min(maxAyahs, Number(e.target.value) || 1));
+                        const val = Number(e.target.value);
                         setAyahTo(val);
+                        if (val < ayahFrom) setAyahFrom(val);
                       }}
-                      className="w-full px-2.5 py-1.5 rounded-lg bg-[#FFFDF9] border border-[#D5C7B2] text-xs font-mono-tabular text-[#261C14] focus:outline-none focus:border-[#C88A14]"
-                    />
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-[#FFFDF9] border border-[#D5C7B2] text-xs font-mono-tabular text-[#261C14] focus:outline-none focus:border-[#C88A14] cursor-pointer"
+                    >
+                      {Array.from({ length: maxAyahs }, (_, i) => i + 1).map((num) => (
+                        <option key={num} value={num}>
+                          {lang === 'ar' ? `الآية ${num}` : `Ayah ${num}`}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
               </div>
@@ -558,6 +565,11 @@ export const PlanModal: React.FC<PlanModalProps> = ({
                 onChange={(e) => setReminderTime(e.target.value)}
                 className="w-full px-2 py-1 rounded-lg bg-[#FFFDF9] border border-[#D5C7B2] text-xs font-mono-tabular text-[#261C14] focus:outline-none focus:border-[#C88A14]"
               />
+              {planType === 'new_memorization' && (
+                <span className="text-[10px] text-[#84715E] block mt-1 leading-tight">
+                  {lang === 'ar' ? 'تنبيه بصري هادئ (الصوت ملغى للحفظ)' : 'Silent alert (no chime)'}
+                </span>
+              )}
             </div>
 
             <div className="p-2.5 rounded-xl bg-[#F7F3EB] border border-[#DDD2BE]">

@@ -20,6 +20,7 @@ import {
   VolumeX,
   Calendar,
   Star,
+  Brain,
 } from 'lucide-react';
 import {
   Language,
@@ -81,6 +82,7 @@ interface SardMushafViewProps {
     quizLevel?: QuizLevel,
     evaluation?: PlanEvaluation
   ) => void;
+  onOpenSmartMemorization?: () => void;
 }
 
 function toArabicNumerals(n: number): string {
@@ -363,6 +365,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
   focusModeDefault,
   onClose,
   onCompletePlanSard,
+  onOpenSmartMemorization,
 }) => {
   const dict = t(lang);
   const initialRange = useMemo(() => getPlanMushafPageRange(plan), [plan]);
@@ -1760,7 +1763,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
               </div>
             ) : (
               <div dir="rtl" className="text-justify leading-[2.45] sm:leading-[2.6] select-none">
-                {ayahGroups.map((group) => {
+                {ayahGroups.map((group, gIdx) => {
                   // In Sard mode, future verses DO NOT appear at all until the reader reaches them via matched speech
                   if (
                     plan.planType === 'sard' &&
@@ -1782,13 +1785,13 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
 
                   return (
                     <React.Fragment key={`${group.surahNumber}-${group.ayahNumber}`}>
-                      {group.isFirstAyahOfSurah && (
-                        <div className="my-3 text-center space-y-2">
-                          <div className="py-1 px-4 mx-auto max-w-xs rounded-xl bg-[#F6E9C8]/80 border border-[#C88A14] text-base sm:text-lg font-display-islamic font-bold text-[#2D2218]">
+                      {(group.isFirstAyahOfSurah || gIdx === 0) && (
+                        <div className="my-3 sm:my-4 text-center space-y-2 select-none">
+                          <div className="py-1 px-5 mx-auto max-w-xs rounded-xl bg-[#F6E9C8]/90 border border-[#C88A14] text-base sm:text-lg font-display-islamic font-bold text-[#2D2218] shadow-2xs">
                             سُورَةُ {group.surahNameAr}
                           </div>
-                          {group.surahNumber !== 1 && group.surahNumber !== 9 && (
-                            <div className="font-uthmani text-lg sm:text-2xl text-[#2D2218]">
+                          {group.surahNumber !== 9 && (
+                            <div className="font-uthmani text-lg sm:text-2xl text-[#2D2218] font-display-islamic pt-0.5">
                               بِسْمِ ٱللَّهِ ٱلرَّحْمَـٰنِ ٱلرَّحِيمِ
                             </div>
                           )}
@@ -2228,7 +2231,29 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
 
           {/* --- NEW MEMORIZATION CONTROLS (`plan.planType === 'new_memorization'`) --- */}
           {plan.planType === 'new_memorization' && (
-            <div className="space-y-1.5">
+            <div className="space-y-2">
+              {onOpenSmartMemorization && (
+                <div className="p-2 rounded-xl bg-[#C88A14]/20 border border-[#EAB338]/40 flex items-center justify-between gap-2 text-xs">
+                  <div className="flex items-center gap-2">
+                    <Brain className="w-4 h-4 text-[#EAB338] shrink-0" />
+                    <span className="font-bold text-[#FFFDF9]">
+                      {lang === 'ar'
+                        ? 'نظام إدارة خطة الحفظ الذكي (3 مراحل متتالية وصارمة)'
+                        : 'Smart Quran Memorization System (3 Strict Stages)'}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      stopListeningSession();
+                      onOpenSmartMemorization();
+                    }}
+                    className="mustard-gradient-btn px-3 py-1 rounded-lg text-xs font-bold text-white cursor-pointer shadow-xs whitespace-nowrap"
+                  >
+                    {lang === 'ar' ? 'بدء المراحل الثلاث ➔' : 'Start 3 Stages ➔'}
+                  </button>
+                </div>
+              )}
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-1.5 flex-1 min-w-[200px]">
                   <button

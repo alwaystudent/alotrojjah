@@ -159,6 +159,10 @@ export const TRANSLATIONS = {
     prepAlertsTitle: "تنبيهات الاستعداد (قبل الموعد بـ 10 دقائق)",
     prepAlertsDesc: "تذكير لطيف قبل موعد الخطة بـ 10 دقائق لضمان تجهيز المصحف أو التطبيق وتهيئة المكان للاستعداد.",
     prepAlertsTestBtn: "تجربة تنبيه الاستعداد",
+    dateFormatOptionLabel: 'عرض التاريخ',
+    dateFormatBoth: 'معاً (هجري وميلادي)',
+    dateFormatHijri: 'هجري فقط',
+    dateFormatGregorian: 'ميلادي فقط',
   },
   en: {
     brandTitle: 'Al-Utrujjah',
@@ -318,6 +322,10 @@ export const TRANSLATIONS = {
     prepAlertsTitle: 'Readiness Alerts (10 min before)',
     prepAlertsDesc: 'Send a gentle reminder 10 minutes prior to your plan time to prepare your Mushaf or app.',
     prepAlertsTestBtn: 'Test Readiness Alert',
+    dateFormatOptionLabel: 'Date Format',
+    dateFormatBoth: 'Both (Hijri & Greg)',
+    dateFormatHijri: 'Hijri Only',
+    dateFormatGregorian: 'Gregorian Only',
   },
 } as const;
 
