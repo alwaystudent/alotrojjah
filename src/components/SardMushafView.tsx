@@ -708,14 +708,19 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
         const surahNameAr = surahObj ? surahObj.nameAr : `${v.surahNumber}`;
 
         let cleanText = v.textUthmani.trim();
-        if (
-          v.surahNumber !== 1 &&
-          v.surahNumber !== 9 &&
-          v.ayahNumber === 1 &&
-          cleanText.startsWith('بِسْمِ ٱللَّهِ ٱلرَّحْمَـٰنِ ٱلرَّحِيمِ')
-        ) {
+        if (v.surahNumber !== 9 && v.ayahNumber === 1) {
+          const tks = cleanText.split(/\s+/).filter(Boolean);
+          if (tks.length >= 4) {
+            const first4Norm = tks.slice(0, 4).map((w) => normalizeArabicForAlignment(w, false)).join(' ');
+            if (first4Norm === 'بسم الله الرحمن الرحيم' || first4Norm.startsWith('بسم الله الرحمن الرحيم')) {
+              const remaining = tks.slice(4).join(' ').trim();
+              if (remaining.length > 0) {
+                cleanText = remaining;
+              }
+            }
+          }
           cleanText = cleanText
-            .replace('بِسْمِ ٱللَّهِ ٱلرَّحْمَـٰنِ ٱلرَّحِيمِ', '')
+            .replace(/^[\s\u06D6-\u06ED]*بِسْمِ[\s\S]*?[ٱا]لرَّحِيمِ[\s\u06D6-\u06ED]*/u, '')
             .trim();
         }
 

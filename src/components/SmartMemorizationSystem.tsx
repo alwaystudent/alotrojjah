@@ -32,11 +32,20 @@ import {
   Language,
   QuranPlanItem,
   PlanEvaluation,
+  MemorizationReport,
+  QuranRandomQuizItem,
   SURAH_LIST,
   formatCurriculumTitle,
 } from '@/src/data/quranData';
 import { memoryManager } from '@/src/utils/memoryCleanup';
 import { generateSpacedReviews } from '@/src/utils/spacedRepetition';
+import {
+  createMemorizationReportAndQuiz,
+  loadStoredReports,
+  saveStoredReports,
+  loadStoredQuizzes,
+  saveStoredQuizzes,
+} from '@/src/utils/memorizationReports';
 
 export type MemorizationStage = 'stage1_listen' | 'stage2_fadeout' | 'stage3_recitation';
 export type ReciterChoice = 'hudhaify' | 'husary_muallim';
@@ -67,7 +76,9 @@ interface SmartMemorizationSystemProps {
   onCompleteMemorization: (
     planId: string,
     evaluation: PlanEvaluation,
-    spacedReviews?: QuranPlanItem[]
+    spacedReviews?: QuranPlanItem[],
+    report?: MemorizationReport,
+    randomQuiz?: QuranRandomQuizItem
   ) => void;
 }
 
@@ -214,6 +225,9 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
   const recordedAudioChunksRef = useRef<Blob[]>([]);
   const micStreamRef = useRef<MediaStream | null>(null);
   const transitionTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const sheikhStartTimeRef = useRef<number>(0);
+  const sheikhDurationSecRef = useRef<number>(6);
+  const userHasRepeatedRef = useRef<boolean>(false);
 
   // Flattened words list across all verses in the plan
   const flatWords = useMemo(() => {
@@ -303,14 +317,22 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
         let gWordIdx = 0;
         const parsed: VerseData[] = filtered.map((a: any) => {
           let cleanText = (a.text || '').trim();
-          // If Ayah 1 of any Surah except 1 & 9, strip the embedded Basmalah so it's placed cleanly at the top of the Surah
-          if (
-            surahNum !== 1 &&
-            surahNum !== 9 &&
-            a.numberInSurah === 1 &&
-            cleanText.includes('بِسْمِ ٱللَّهِ ٱلرَّحْمَـٰنِ ٱلرَّحِيمِ')
-          ) {
-            cleanText = cleanText.replace('بِسْمِ ٱللَّهِ ٱلرَّحْمَـٰنِ ٱلرَّحِيمِ', '').trim();
+          // Strip Basmalah completely from Ayah 1 of any surah (except Surah 9 which has no Basmalah)
+          // The Basmalah is already placed ornately at the top of the Surah header
+          if (surahNum !== 9 && a.numberInSurah === 1) {
+            const tks = cleanText.split(/\s+/).filter(Boolean);
+            if (tks.length >= 4) {
+              const first4Norm = tks.slice(0, 4).map(normalizeArabicWord).join(' ');
+              if (first4Norm === 'بسم الله الرحمن الرحيم' || first4Norm.startsWith('بسم الله الرحمن الرحيم')) {
+                const remaining = tks.slice(4).join(' ').trim();
+                if (remaining.length > 0) {
+                  cleanText = remaining;
+                }
+              }
+            }
+            cleanText = cleanText
+              .replace(/^[\s\u06D6-\u06ED]*بِسْمِ[\s\S]*?[ٱا]لرَّحِيمِ[\s\u06D6-\u06ED]*/u, '')
+              .trim();
           }
 
           const rawWords = cleanText.split(/\s+/).filter(Boolean);
@@ -463,6 +485,17 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
   const handleCompleteCurrentRepetition = useCallback(() => {
     if (transitionTimerRef.current) clearTimeout(transitionTimerRef.current);
 
+    // STRICT RULE: STOP MICROPHONE IMMEDIATELY BEFORE RETURNING TO SHEIKH
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // ignore
+      }
+      recognitionRef.current = null;
+    }
+    isRecognitionActiveRef.current = false;
+
     setStage1ToastMessage('✓ أحسنت! تم رصد الترديد بنجاح');
 
     // Check if more repetitions for this step are required
@@ -474,7 +507,8 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
         setStage1Phase('shaykh_reciting');
         setStage1MatchedWordIndices(new Set());
         setStage1HeardTranscript('');
-      }, 1200);
+        userHasRepeatedRef.current = false;
+      }, 1000);
     } else {
       // Step repetitions fully completed!
       transitionTimerRef.current = setTimeout(() => {
@@ -482,6 +516,7 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
         setCurrentStepRep(0);
         setStage1MatchedWordIndices(new Set());
         setStage1HeardTranscript('');
+        userHasRepeatedRef.current = false;
 
         // Move to next cumulative step or check passage repetitions
         if (currentStepIndex + 1 < cumulativeSteps.length) {
@@ -499,7 +534,7 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
             setCurrentStage('stage2_fadeout');
           }
         }
-      }, 1200);
+      }, 1000);
     }
   }, [currentStepRep, chunkReps, currentStepIndex, cumulativeSteps.length, currentPassageRep, fullPassageReps]);
 
@@ -510,6 +545,23 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
       const vIdx = currentStep.verseIndices[verseIndexInStep];
       const targetVerse = verses[vIdx];
       if (!targetVerse) return;
+
+      // STRICT RULE: DO NOT ACTIVATE MICROPHONE WHILE SHEIKH IS RECITING
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {
+          // ignore
+        }
+        recognitionRef.current = null;
+      }
+      isRecognitionActiveRef.current = false;
+
+      // When starting the first verse of the cumulative step, record start timestamp
+      if (verseIndexInStep === 0) {
+        sheikhStartTimeRef.current = Date.now();
+        userHasRepeatedRef.current = false;
+      }
 
       setActiveRecitingVerseIdx(vIdx);
       setIsPlayingAudio(true);
@@ -531,13 +583,24 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
         if (verseIndexInStep + 1 < currentStep.verseIndices.length) {
           playStepVerseAudio(verseIndexInStep + 1);
         } else {
-          // Finished Shaykh reciting phase -> Transition to user repeating phase!
+          // Finished Shaykh reciting phase for all verses of this step!
+          // Calculate the exact elapsed time the Shaykh took to recite
+          const elapsedMs = Date.now() - sheikhStartTimeRef.current;
+          const exactDurationSec = Math.max(5, Math.ceil(elapsedMs / 1000));
+          sheikhDurationSecRef.current = exactDurationSec;
+
+          // STRICT RULE: DO NOT ACTIVATE SHEIKH AUDIO WHILE READER IS REPEATING
+          audioRef.current?.pause();
           setIsPlayingAudio(false);
+
+          // Transition to user repeating phase with matching duration!
           setStage1Phase('user_repeating');
           setStage1MatchedWordIndices(new Set());
           setStage1HeardTranscript('');
-          // Start countdown timer for user repeating (approx. 4s per verse)
-          setUserRepeatCountdown(Math.max(6, currentStep.verseIndices.length * 4));
+          userHasRepeatedRef.current = false;
+
+          // Set repetition countdown to the EXACT duration the Sheikh took!
+          setUserRepeatCountdown(exactDurationSec);
         }
       };
     },
@@ -551,34 +614,46 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
     }
   }, [currentStage, currentStepIndex, currentStepRep, currentPassageRep, stage1Phase, currentStep, playStepVerseAudio, verses.length]);
 
-  // Countdown timer for Stage 1 user repeating (fallback/assist)
+  // Countdown timer for Stage 1 user repeating (waiting for full Sheikh duration & user repetition)
   useEffect(() => {
-    if (stage1Phase !== 'user_repeating' || userRepeatCountdown <= 0) return;
+    if (stage1Phase !== 'user_repeating') return;
+
     const t = setInterval(() => {
       setUserRepeatCountdown((prev) => {
         if (prev <= 1) {
-          clearInterval(t);
-          // If countdown ends, complete repetition automatically
-          handleCompleteCurrentRepetition();
-          return 0;
+          // Time is up: verify if user repetition was recognized
+          if (userHasRepeatedRef.current || stage1MatchedWordIndices.size >= 1) {
+            clearInterval(t);
+            handleCompleteCurrentRepetition();
+            return 0;
+          }
+          // If countdown hit 0 but speech wasn't heard yet, grant a 5-second grace period for the user to finish repeating
+          if (prev <= -5) {
+            clearInterval(t);
+            handleCompleteCurrentRepetition();
+            return 0;
+          }
+          return prev - 1;
         }
         return prev - 1;
       });
     }, 1000);
     return () => clearInterval(t);
-  }, [stage1Phase, userRepeatCountdown, handleCompleteCurrentRepetition]);
+  }, [stage1Phase, handleCompleteCurrentRepetition, stage1MatchedWordIndices.size]);
 
-  // SPEECH RECOGNITION FOR STAGE 1 (التعرف على صوت القارئ في مرحلة الترديد)
+  // SPEECH RECOGNITION FOR STAGE 1 (التعرف على صوت القارئ في مرحلة الترديد فقط)
   useEffect(() => {
+    // STRICT RULE: Microphone is ONLY active in user_repeating! NEVER during shaykh_reciting!
     if (currentStage !== 'stage1_listen' || stage1Phase !== 'user_repeating' || activeStepWords.length === 0) {
-      if (recognitionRef.current && isRecognitionActiveRef.current) {
+      if (recognitionRef.current) {
         try {
           recognitionRef.current.stop();
         } catch {
           // ignore
         }
-        isRecognitionActiveRef.current = false;
+        recognitionRef.current = null;
       }
+      isRecognitionActiveRef.current = false;
       return;
     }
 
@@ -618,13 +693,12 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
             }
           }
 
-          // Check if completion threshold is reached (>= 60% of words or last word matched)
-          const matchedCount = nextSet.size;
-          const totalWords = activeStepWords.length;
-          const hasLastWord = nextSet.has(totalWords - 1);
+          if (nextSet.size > 0 || spokenTokens.length >= 2) {
+            userHasRepeatedRef.current = true;
+          }
 
-          if (matchedCount >= Math.ceil(totalWords * 0.6) || (matchedCount >= 2 && hasLastWord)) {
-            // Successfully recognized! Move to next repetition / step!
+          // If the Sheikh duration has already completed and user repeated now, transition!
+          if (userRepeatCountdown <= 0 && (nextSet.size > 0 || spokenTokens.length >= 2)) {
             handleCompleteCurrentRepetition();
           }
 
@@ -638,6 +712,7 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
 
       recognition.onend = () => {
         isRecognitionActiveRef.current = false;
+        // ONLY restart if STILL in user_repeating phase! NEVER if shaykh_reciting!
         if (currentStage === 'stage1_listen' && stage1Phase === 'user_repeating') {
           setTimeout(() => {
             try {
@@ -665,10 +740,11 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
         } catch {
           // ignore
         }
+        recognitionRef.current = null;
       }
       isRecognitionActiveRef.current = false;
     };
-  }, [currentStage, stage1Phase, activeStepWords, handleCompleteCurrentRepetition]);
+  }, [currentStage, stage1Phase, activeStepWords, userRepeatCountdown, handleCompleteCurrentRepetition]);
 
   // Re-listen to current cumulative step
   const handleReplayCurrentStep = () => {
@@ -1009,30 +1085,90 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
   };
 
   // =====================================================================================
-  // FINAL EVALUATION HANDLERS (نظام التقييم النهائي الصارم)
+  // FINAL EVALUATION HANDLERS (نظام التقييم النهائي الصارم وجدولة الاختبارات والتقارير)
   // =====================================================================================
-  // 1. [🟩 متقن]
+  // 1. [🟩 متقن] - اختبار عشوائي مرة في الأسبوع (كل 7 أيام)
   const handleEvaluationMuthabbat = () => {
     cleanupRamAudio();
+    const reciterName =
+      selectedReciter === 'hudhaify'
+        ? 'الشيخ علي بن عبد الرحمن الحذيفي'
+        : 'الشيخ محمود خليل الحصري (المصحف المعلم)';
+    const { report, quiz } = createMemorizationReportAndQuiz(
+      plan,
+      'muthabbat',
+      selectedReciter,
+      reciterName
+    );
+
+    // Save to persistent storage for statistics and scheduled tests
+    const currentReports = loadStoredReports();
+    saveStoredReports([report, ...currentReports]);
+
+    const currentQuizzes = loadStoredQuizzes();
+    saveStoredQuizzes([quiz, ...currentQuizzes]);
+
     const spacedReviews = generateSpacedReviews(plan);
     setScheduledReviewsCount(spacedReviews.length);
-    onCompleteMemorization(plan.id, 'muthabbat', spacedReviews);
+    onCompleteMemorization(plan.id, 'muthabbat', spacedReviews, report, quiz);
   };
 
-  // 2. [🟨 متردد]
+  // 2. [🟨 متردد] - اختبار عشوائي كل 3 أيام
   const handleEvaluationMutaraddid = () => {
     cleanupRamAudio();
     setShowEvaluationModal(false);
+
+    const reciterName =
+      selectedReciter === 'hudhaify'
+        ? 'الشيخ علي بن عبد الرحمن الحذيفي'
+        : 'الشيخ محمود خليل الحصري (المصحف المعلم)';
+    const { report, quiz } = createMemorizationReportAndQuiz(
+      plan,
+      'mutaraddid',
+      selectedReciter,
+      reciterName
+    );
+
+    // Save to persistent storage for statistics and scheduled tests
+    const currentReports = loadStoredReports();
+    saveStoredReports([report, ...currentReports]);
+
+    const currentQuizzes = loadStoredQuizzes();
+    saveStoredQuizzes([quiz, ...currentQuizzes]);
+
+    onCompleteMemorization(plan.id, 'mutaraddid', undefined, report, quiz);
+
     // Redirect directly to Stage 2 with extended text visibility factor!
     setFadeDelayMultiplier(2.0);
     setStage2WordIndex(0);
     setCurrentStage('stage2_fadeout');
   };
 
-  // 3. [🟥 متفلت]
+  // 3. [🟥 متفلت] - اختبار عشوائي اليوم الموالي (غداً)
   const handleEvaluationMutafallit = () => {
     cleanupRamAudio();
     setShowEvaluationModal(false);
+
+    const reciterName =
+      selectedReciter === 'hudhaify'
+        ? 'الشيخ علي بن عبد الرحمن الحذيفي'
+        : 'الشيخ محمود خليل الحصري (المصحف المعلم)';
+    const { report, quiz } = createMemorizationReportAndQuiz(
+      plan,
+      'mutafallit',
+      selectedReciter,
+      reciterName
+    );
+
+    // Save to persistent storage for statistics and scheduled tests
+    const currentReports = loadStoredReports();
+    saveStoredReports([report, ...currentReports]);
+
+    const currentQuizzes = loadStoredQuizzes();
+    saveStoredQuizzes([quiz, ...currentQuizzes]);
+
+    onCompleteMemorization(plan.id, 'mutafallit', undefined, report, quiz);
+
     // Reset progress completely and forcefully return to Stage 1 from the beginning!
     setCompletedStages(new Set());
     setCurrentStepIndex(0);
@@ -1398,12 +1534,13 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
                     <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-[#4A6144]/15 border border-[#4A6144]/30 text-xs font-bold text-[#4A6144]">
                       <Mic className="w-4 h-4 text-[#4A6144] animate-bounce" />
                       <span>
-                        {lang === 'ar'
-                          ? `دورك الآن في الترديد بصوت مسموع (تكرار ${currentStepRep + 1} من ${chunkReps})`
-                          : `Your turn to repeat aloud (Rep ${currentStepRep + 1} of ${chunkReps})`}
-                      </span>
-                      <span className="text-[10px] opacity-80 font-mono-tabular">
-                        ({userRepeatCountdown}s)
+                        {userHasRepeatedRef.current || stage1MatchedWordIndices.size > 0
+                          ? lang === 'ar'
+                            ? `✓ تم رصد ترديدك! جاري إكمال مدة التلاوة (${Math.max(0, userRepeatCountdown)}ث)`
+                            : `✓ Repetition heard! Completing duration (${Math.max(0, userRepeatCountdown)}s)`
+                          : lang === 'ar'
+                          ? `ردد خلف الشيخ بصوت مسموع (${Math.max(0, userRepeatCountdown)}ث متبقية)`
+                          : `Repeat aloud after Shaykh (${Math.max(0, userRepeatCountdown)}s remaining)`}
                       </span>
                     </div>
 

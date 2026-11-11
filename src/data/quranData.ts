@@ -82,6 +82,61 @@ export interface QuranPlanItem {
   createdAt: string;
 }
 
+export interface MemorizationReport {
+  id: string;
+  planId: string;
+  planTitle: string;
+  surahNumber: number;
+  surahNameAr: string;
+  surahNameEn: string;
+  ayahFrom: number;
+  ayahTo: number;
+  ayahCount: number;
+  pagesCount: number;
+  reciterId: string;
+  reciterName: string;
+  evaluation: PlanEvaluation;
+  evaluationLabelAr: string;
+  completedAt: string; // ISO
+  formattedDate: string; // Hijri & Gregorian
+  stagesCompleted: {
+    stage1ListenCumulative: boolean;
+    stage2RealtimeFadeout: boolean;
+    stage3SmartRecitation: boolean;
+  };
+  randomQuizSchedule: {
+    frequency: 'weekly' | 'three_days' | 'next_day';
+    frequencyLabelAr: string;
+    intervalDays: number;
+    scheduledDate: string; // YYYY-MM-DD
+    scheduledDateFormatted: string;
+    reminderTime: string;
+  };
+}
+
+export interface QuranRandomQuizItem {
+  id: string;
+  reportId: string;
+  planId: string;
+  surahNumber: number;
+  surahNameAr: string;
+  surahNameEn: string;
+  ayahFrom: number;
+  ayahTo: number;
+  evaluation: PlanEvaluation;
+  frequency: 'weekly' | 'three_days' | 'next_day';
+  frequencyLabelAr: string;
+  scheduledDate: string; // YYYY-MM-DD
+  scheduledDateFormatted: string;
+  dueDateTimestamp: number;
+  reminderTime: string;
+  reminderEnabled: boolean;
+  status: 'pending' | 'due' | 'completed';
+  lastTakenDate?: string;
+  score?: number; // 0 - 100
+  createdAt: string;
+}
+
 export const WEEK_DAYS: WeekDayInfo[] = [
   { id: 'sunday', jsDay: 0, nameAr: 'الأحد', nameEn: 'Sunday', shortAr: 'أحد', shortEn: 'Sun' },
   { id: 'monday', jsDay: 1, nameAr: 'الإثنين', nameEn: 'Monday', shortAr: 'إثنين', shortEn: 'Mon' },

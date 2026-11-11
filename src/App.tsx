@@ -40,6 +40,8 @@ import {
   DayId,
   QuranPlanItem,
   PlanEvaluation,
+  MemorizationReport,
+  QuranRandomQuizItem,
   EVALUATION_OPTIONS,
   getEvaluationLabel,
   QuizLevel,
@@ -56,9 +58,18 @@ import { AnalyticsSection } from './components/AnalyticsSection';
 import { RemindersSection } from './components/RemindersSection';
 import { SardMushafView } from './components/SardMushafView';
 import { SmartMemorizationSystem } from './components/SmartMemorizationSystem';
+import { RandomQuizModal } from './components/RandomQuizModal';
+import { MemorizationReportModal } from './components/MemorizationReportModal';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { getDualDate, getCompactDualDate } from './utils/calendar';
 import { memoryManager } from './utils/memoryCleanup';
+import {
+  loadStoredReports,
+  saveStoredReports,
+  loadStoredQuizzes,
+  saveStoredQuizzes,
+  formatDualDate,
+} from './utils/memorizationReports';
 
 const STORAGE_KEY_PLANS = 'mishkat_sard_user_plans_v2';
 const STORAGE_KEY_LANG = 'mishkat_sard_lang_v1';
@@ -88,6 +99,17 @@ export default function App() {
   >('schedule');
   const [expandedSardPlanId, setExpandedSardPlanId] = useState<string | null>(null);
   const [smartMemorizationPlan, setSmartMemorizationPlan] = useState<QuranPlanItem | null>(null);
+
+  // Memorization Reports & Scheduled Random Quizzes State (تقارير الحفظ المعتمدة والاختبارات العشوائية)
+  const [memorizationReports, setMemorizationReports] = useState<MemorizationReport[]>(() =>
+    loadStoredReports()
+  );
+  const [randomQuizzes, setRandomQuizzes] = useState<QuranRandomQuizItem[]>(() =>
+    loadStoredQuizzes()
+  );
+  const [activeViewingReport, setActiveViewingReport] = useState<MemorizationReport | null>(null);
+  const [activeRandomQuiz, setActiveRandomQuiz] = useState<QuranRandomQuizItem | null>(null);
+
   const [focusModeEnabled, setFocusModeEnabled] = useState<boolean>(() => {
     try {
       return localStorage.getItem(STORAGE_KEY_FOCUS_MODE) === 'true';
@@ -300,10 +322,51 @@ export default function App() {
     }
   };
 
+  const triggerRandomQuizReminderNotification = (
+    quiz: QuranRandomQuizItem,
+    isPrepAlert: boolean = false
+  ) => {
+    if (!expandedSardPlanId && !smartMemorizationPlan) {
+      playGentleChime();
+    }
+    const title = isPrepAlert
+      ? lang === 'ar'
+        ? 'تنبيه استعداد لاختبار تثبيت الحفظ (قبل 10 دقائق)'
+        : 'Readiness Alert: Retention Quiz (10 mins before)'
+      : lang === 'ar'
+      ? `تذكير بموعد الاختبار العشوائي: سورة ${quiz.surahNameAr}`
+      : `Retention Quiz Reminder: Surah ${quiz.surahNameEn}`;
+
+    const body = isPrepAlert
+      ? lang === 'ar'
+        ? `اقترب موعد الاختبار العشوائي لسورة ${quiz.surahNameAr} (${quiz.frequencyLabelAr}). تهيأ للاختبار.`
+        : `Approaching retention quiz for Surah ${quiz.surahNameEn}. Prepare for testing.`
+      : lang === 'ar'
+      ? `حان الآن موعد الاختبار العشوائي لتثبيت الحفظ: سورة ${quiz.surahNameAr} (الآيات ${quiz.ayahFrom} - ${quiz.ayahTo}) [${quiz.frequencyLabelAr}].`
+      : `It is now time for the retention quiz: Surah ${quiz.surahNameEn} (${quiz.ayahFrom} - ${quiz.ayahTo}).`;
+
+    if (!expandedSardPlanId) {
+      setActiveToast({ title, body, isPrep: isPrepAlert });
+    }
+
+    if (
+      !expandedSardPlanId &&
+      typeof window !== 'undefined' &&
+      'Notification' in window &&
+      Notification.permission === 'granted'
+    ) {
+      try {
+        new Notification(title, { body });
+      } catch {
+        // Ignore browser notification error inside sandboxed iframe
+      }
+    }
+  };
+
   useEffect(() => {
     const interval = setInterval(() => {
-      // Do not trigger reminder sounds or alerts during an active Sard session
-      if (expandedSardPlanId) return;
+      // Do not trigger reminder sounds or alerts during an active Sard or Smart Memorization session
+      if (expandedSardPlanId || smartMemorizationPlan) return;
 
       const now = new Date();
       const hh = String(now.getHours()).padStart(2, '0');
@@ -311,6 +374,9 @@ export default function App() {
       const currentHM = `${hh}:${mm}`;
 
       const currentDayId = getTodayDayId();
+      const todayYMD = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(
+        now.getDate()
+      ).padStart(2, '0')}`;
 
       // 1. Regular Due Plan at exact scheduled time
       if (lastNotifiedMinuteRef.current !== currentHM) {
@@ -325,6 +391,18 @@ export default function App() {
         if (duePlan) {
           lastNotifiedMinuteRef.current = currentHM;
           triggerReminderNotification(duePlan, false);
+        } else {
+          // Check for due random quizzes
+          const dueQuiz = randomQuizzes.find(
+            (q) =>
+              (q.scheduledDate === todayYMD || q.dueDateTimestamp <= now.getTime()) &&
+              q.reminderEnabled &&
+              q.reminderTime === currentHM
+          );
+          if (dueQuiz) {
+            lastNotifiedMinuteRef.current = currentHM;
+            triggerRandomQuizReminderNotification(dueQuiz, false);
+          }
         }
       }
 
@@ -341,12 +419,24 @@ export default function App() {
         if (prepPlan) {
           lastPrepNotifiedMinuteRef.current = currentHM;
           triggerReminderNotification(prepPlan, true);
+        } else {
+          // Check for prep alert on random quizzes
+          const prepQuiz = randomQuizzes.find(
+            (q) =>
+              (q.scheduledDate === todayYMD || q.dueDateTimestamp <= now.getTime()) &&
+              q.reminderEnabled &&
+              getMinutesBefore(q.reminderTime, 10) === currentHM
+          );
+          if (prepQuiz) {
+            lastPrepNotifiedMinuteRef.current = currentHM;
+            triggerRandomQuizReminderNotification(prepQuiz, true);
+          }
         }
       }
     }, 20000);
 
     return () => clearInterval(interval);
-  }, [plans, lang, soundEnabled, prepAlertsEnabled, expandedSardPlanId]);
+  }, [plans, randomQuizzes, lang, soundEnabled, prepAlertsEnabled, expandedSardPlanId, smartMemorizationPlan]);
 
   const handleRequestPermission = async () => {
     if (typeof window === 'undefined' || !('Notification' in window)) return;
@@ -380,7 +470,9 @@ export default function App() {
   const handleCompleteSmartMemorization = (
     planId: string,
     evaluation: PlanEvaluation,
-    spacedReviews?: QuranPlanItem[]
+    spacedReviews?: QuranPlanItem[],
+    report?: MemorizationReport,
+    randomQuiz?: QuranRandomQuizItem
   ) => {
     const todayDual = getDualDate(new Date(), lang);
     const dateFormatted = `${todayDual.hijriDate} · ${todayDual.gregorianDate}`;
@@ -400,7 +492,85 @@ export default function App() {
       }
       return updated;
     });
-    setSmartMemorizationPlan(null);
+
+    if (report) {
+      setMemorizationReports((prev) => {
+        const next = [report, ...prev.filter((r) => r.id !== report.id)];
+        saveStoredReports(next);
+        return next;
+      });
+      // Show report modal for celebration & confirmation
+      if (evaluation === 'muthabbat') {
+        setActiveViewingReport(report);
+      }
+    }
+
+    if (randomQuiz) {
+      setRandomQuizzes((prev) => {
+        const next = [randomQuiz, ...prev.filter((q) => q.id !== randomQuiz.id)];
+        saveStoredQuizzes(next);
+        return next;
+      });
+    }
+
+    if (evaluation === 'muthabbat') {
+      setSmartMemorizationPlan(null);
+    }
+  };
+
+  const handleToggleQuizReminder = (quizId: string) => {
+    setRandomQuizzes((prev) => {
+      const next = prev.map((q) =>
+        q.id === quizId ? { ...q, reminderEnabled: !q.reminderEnabled } : q
+      );
+      saveStoredQuizzes(next);
+      return next;
+    });
+  };
+
+  const handleUpdateQuizReminderTime = (quizId: string, newTime: string) => {
+    setRandomQuizzes((prev) => {
+      const next = prev.map((q) => (q.id === quizId ? { ...q, reminderTime: newTime } : q));
+      saveStoredQuizzes(next);
+      return next;
+    });
+  };
+
+  const handleStartQuiz = (quiz: QuranRandomQuizItem) => {
+    setActiveViewingReport(null);
+    setActiveRandomQuiz(quiz);
+  };
+
+  const handleCompleteQuiz = (quizId: string, score: number) => {
+    setRandomQuizzes((prev) => {
+      const updated = prev.map((q) => {
+        if (q.id === quizId) {
+          const now = new Date();
+          let intervalDays = 7;
+          if (q.frequency === 'three_days') intervalDays = 3;
+          if (q.frequency === 'next_day') intervalDays = 1;
+
+          const nextDate = new Date(now);
+          nextDate.setDate(nextDate.getDate() + intervalDays);
+          const yyyy = nextDate.getFullYear();
+          const mm = String(nextDate.getMonth() + 1).padStart(2, '0');
+          const dd = String(nextDate.getDate()).padStart(2, '0');
+
+          return {
+            ...q,
+            status: 'completed' as const,
+            score,
+            lastTakenDate: now.toISOString(),
+            scheduledDate: `${yyyy}-${mm}-${dd}`,
+            dueDateTimestamp: nextDate.getTime(),
+            scheduledDateFormatted: formatDualDate(nextDate),
+          };
+        }
+        return q;
+      });
+      saveStoredQuizzes(updated);
+      return updated;
+    });
   };
 
   const handleClosePlanScreen = () => {
@@ -1181,12 +1351,22 @@ export default function App() {
         )}
 
         {/* ANALYTICS DEDICATED VIEW */}
-        {activeSection === 'analytics' && <AnalyticsSection plans={plans} lang={lang} />}
+        {activeSection === 'analytics' && (
+          <AnalyticsSection
+            plans={plans}
+            reports={memorizationReports}
+            quizzes={randomQuizzes}
+            lang={lang}
+            onStartQuiz={handleStartQuiz}
+            onViewReport={(rep) => setActiveViewingReport(rep)}
+          />
+        )}
 
         {/* REMINDERS DEDICATED VIEW */}
         {activeSection === 'reminders' && (
           <RemindersSection
             plans={plans}
+            quizzes={randomQuizzes}
             lang={lang}
             notificationPermission={notificationPermission}
             soundEnabled={soundEnabled}
@@ -1197,6 +1377,10 @@ export default function App() {
             onTriggerTestReminder={(plan, isPrep) => triggerReminderNotification(plan, isPrep)}
             onTogglePlanReminder={handleTogglePlanReminder}
             onUpdatePlanReminderTime={handleUpdatePlanReminderTime}
+            onToggleQuizReminder={handleToggleQuizReminder}
+            onUpdateQuizReminderTime={handleUpdateQuizReminderTime}
+            onStartQuiz={handleStartQuiz}
+            onTriggerTestQuizReminder={(q) => triggerRandomQuizReminderNotification(q, false)}
           />
         )}
       </main>
@@ -1668,6 +1852,57 @@ export default function App() {
           plan={smartMemorizationPlan}
           onClose={() => setSmartMemorizationPlan(null)}
           onCompleteMemorization={handleCompleteSmartMemorization}
+        />
+      )}
+
+      {/* Random Retention Quiz Modal (الاختبار العشوائي لتثبيت الحفظ) */}
+      {activeRandomQuiz && (
+        <RandomQuizModal
+          quiz={activeRandomQuiz}
+          lang={lang}
+          onClose={() => setActiveRandomQuiz(null)}
+          onCompleteQuiz={handleCompleteQuiz}
+        />
+      )}
+
+      {/* Certified Memorization Report Modal (تقرير إتمام الحفظ المعتمد) */}
+      {activeViewingReport && (
+        <MemorizationReportModal
+          report={activeViewingReport}
+          lang={lang}
+          onClose={() => setActiveViewingReport(null)}
+          onStartQuizNow={() => {
+            const matchingQuiz = randomQuizzes.find((q) => q.reportId === activeViewingReport.id);
+            if (matchingQuiz) {
+              handleStartQuiz(matchingQuiz);
+            } else {
+              const targetQuiz: QuranRandomQuizItem = {
+                id: `dynamic-${Date.now()}`,
+                reportId: activeViewingReport.id,
+                planId: activeViewingReport.planId,
+                surahNumber: activeViewingReport.surahNumber,
+                surahNameAr: activeViewingReport.surahNameAr,
+                surahNameEn: activeViewingReport.surahNameEn,
+                ayahFrom: activeViewingReport.ayahFrom,
+                ayahTo: activeViewingReport.ayahTo,
+                evaluation: activeViewingReport.evaluation,
+                frequency: activeViewingReport.randomQuizSchedule.frequency,
+                frequencyLabelAr: activeViewingReport.randomQuizSchedule.frequencyLabelAr,
+                scheduledDate: activeViewingReport.randomQuizSchedule.scheduledDate,
+                scheduledDateFormatted: activeViewingReport.randomQuizSchedule.scheduledDateFormatted,
+                dueDateTimestamp: Date.now(),
+                reminderTime: activeViewingReport.randomQuizSchedule.reminderTime,
+                reminderEnabled: true,
+                status: 'pending',
+                createdAt: new Date().toISOString(),
+              };
+              handleStartQuiz(targetQuiz);
+            }
+          }}
+          onViewInAnalytics={() => {
+            setActiveViewingReport(null);
+            setActiveSection('analytics');
+          }}
         />
       )}
     </div>
