@@ -27,6 +27,7 @@ import {
   Repeat,
   Layers,
   ChevronLeft,
+  Gauge,
 } from 'lucide-react';
 import {
   Language,
@@ -188,6 +189,51 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
   const [fullPassageReps, setFullPassageReps] = useState<number>(1); // Default 1 full passage repetition
   const [currentStepRep, setCurrentStepRep] = useState<number>(0); // Current repetition of active step (0 to chunkReps - 1)
   const [currentPassageRep, setCurrentPassageRep] = useState<number>(0); // Current repetition of whole passage (0 to fullPassageReps - 1)
+
+  // Stage 1: Optional User Repetition Feature (خاصية الترديد مع قراءة الشيخ - معطلة افتراضياً)
+  const [enableUserRepeat, setEnableUserRepeat] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem('mishkat_repeat_after_sheikh_enabled');
+      return stored === 'true'; // Defaults to false!
+    } catch {
+      return false; // Disabled by default
+    }
+  });
+
+  const handleToggleUserRepeat = useCallback(() => {
+    setEnableUserRepeat((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('mishkat_repeat_after_sheikh_enabled', String(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }, []);
+
+  // Sheikh Recitation Speed (خاصية تغيير سرعة تلاوة الشيخ: 0.75×, 0.85×, 1.0×, 1.25×, 1.5×)
+  const [recitationSpeed, setRecitationSpeed] = useState<number>(() => {
+    try {
+      const stored = localStorage.getItem('mishkat_sheikh_recitation_speed');
+      const val = parseFloat(stored || '1.0');
+      return [0.75, 0.85, 1.0, 1.25, 1.5].includes(val) ? val : 1.0;
+    } catch {
+      return 1.0;
+    }
+  });
+
+  const handleSetRecitationSpeed = useCallback((speed: number) => {
+    setRecitationSpeed(speed);
+    try {
+      localStorage.setItem('mishkat_sheikh_recitation_speed', String(speed));
+    } catch {
+      // ignore
+    }
+    if (audioRef.current) {
+      audioRef.current.playbackRate = speed;
+    }
+  }, []);
 
   // Stage 1 State: Cumulative Listening & Repetition
   const [cumulativeSteps, setCumulativeSteps] = useState<CumulativeStep[]>([]);
@@ -496,7 +542,11 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
     }
     isRecognitionActiveRef.current = false;
 
-    setStage1ToastMessage('✓ أحسنت! تم رصد الترديد بنجاح');
+    if (enableUserRepeat) {
+      setStage1ToastMessage('✓ أحسنت! تم رصد الترديد بنجاح');
+    }
+
+    const advanceDelay = enableUserRepeat ? 1000 : 700;
 
     // Check if more repetitions for this step are required
     if (currentStepRep + 1 < chunkReps) {
@@ -508,7 +558,7 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
         setStage1MatchedWordIndices(new Set());
         setStage1HeardTranscript('');
         userHasRepeatedRef.current = false;
-      }, 1000);
+      }, advanceDelay);
     } else {
       // Step repetitions fully completed!
       transitionTimerRef.current = setTimeout(() => {
@@ -534,9 +584,9 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
             setCurrentStage('stage2_fadeout');
           }
         }
-      }, 1000);
+      }, advanceDelay);
     }
-  }, [currentStepRep, chunkReps, currentStepIndex, cumulativeSteps.length, currentPassageRep, fullPassageReps]);
+  }, [enableUserRepeat, currentStepRep, chunkReps, currentStepIndex, cumulativeSteps.length, currentPassageRep, fullPassageReps]);
 
   // Play audio for a specific verse index within the active cumulative step
   const playStepVerseAudio = useCallback(
@@ -574,6 +624,12 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
       }
 
       audioRef.current.src = url;
+      audioRef.current.playbackRate = recitationSpeed;
+      audioRef.current.onplay = () => {
+        if (audioRef.current) {
+          audioRef.current.playbackRate = recitationSpeed;
+        }
+      };
       audioRef.current.play().catch(() => {
         setIsPlayingAudio(false);
       });
@@ -584,27 +640,37 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
           playStepVerseAudio(verseIndexInStep + 1);
         } else {
           // Finished Shaykh reciting phase for all verses of this step!
-          // Calculate the exact elapsed time the Shaykh took to recite
-          const elapsedMs = Date.now() - sheikhStartTimeRef.current;
-          const exactDurationSec = Math.max(5, Math.ceil(elapsedMs / 1000));
-          sheikhDurationSecRef.current = exactDurationSec;
-
-          // STRICT RULE: DO NOT ACTIVATE SHEIKH AUDIO WHILE READER IS REPEATING
-          audioRef.current?.pause();
           setIsPlayingAudio(false);
 
-          // Transition to user repeating phase with matching duration!
-          setStage1Phase('user_repeating');
-          setStage1MatchedWordIndices(new Set());
-          setStage1HeardTranscript('');
-          userHasRepeatedRef.current = false;
+          if (!enableUserRepeat) {
+            // USER REPETITION IS DISABLED (DEFAULT):
+            // Sheikh recites continuously across repetition counts and steps without requiring voice input
+            setTimeout(() => {
+              handleCompleteCurrentRepetition();
+            }, 500);
+          } else {
+            // USER REPETITION IS ENABLED:
+            // Calculate the exact elapsed time the Shaykh took to recite
+            const elapsedMs = Date.now() - sheikhStartTimeRef.current;
+            const exactDurationSec = Math.max(5, Math.ceil(elapsedMs / 1000));
+            sheikhDurationSecRef.current = exactDurationSec;
 
-          // Set repetition countdown to the EXACT duration the Sheikh took!
-          setUserRepeatCountdown(exactDurationSec);
+            // STRICT RULE: DO NOT ACTIVATE SHEIKH AUDIO WHILE READER IS REPEATING
+            audioRef.current?.pause();
+
+            // Transition to user repeating phase with matching duration!
+            setStage1Phase('user_repeating');
+            setStage1MatchedWordIndices(new Set());
+            setStage1HeardTranscript('');
+            userHasRepeatedRef.current = false;
+
+            // Set repetition countdown to the EXACT duration the Sheikh took!
+            setUserRepeatCountdown(exactDurationSec);
+          }
         }
       };
     },
-    [currentStep, verses, selectedReciter]
+    [currentStep, verses, selectedReciter, enableUserRepeat, recitationSpeed, handleCompleteCurrentRepetition]
   );
 
   // Auto-play when step starts, step repetition changes, or when entering Stage 1
@@ -643,8 +709,8 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
 
   // SPEECH RECOGNITION FOR STAGE 1 (التعرف على صوت القارئ في مرحلة الترديد فقط)
   useEffect(() => {
-    // STRICT RULE: Microphone is ONLY active in user_repeating! NEVER during shaykh_reciting!
-    if (currentStage !== 'stage1_listen' || stage1Phase !== 'user_repeating' || activeStepWords.length === 0) {
+    // STRICT RULE: Microphone is ONLY active in user_repeating when repetition is ENABLED! NEVER during shaykh_reciting or when repetition is disabled!
+    if (!enableUserRepeat || currentStage !== 'stage1_listen' || stage1Phase !== 'user_repeating' || activeStepWords.length === 0) {
       if (recognitionRef.current) {
         try {
           recognitionRef.current.stop();
@@ -744,7 +810,7 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
       }
       isRecognitionActiveRef.current = false;
     };
-  }, [currentStage, stage1Phase, activeStepWords, userRepeatCountdown, handleCompleteCurrentRepetition]);
+  }, [enableUserRepeat, currentStage, stage1Phase, activeStepWords, userRepeatCountdown, handleCompleteCurrentRepetition]);
 
   // Re-listen to current cumulative step
   const handleReplayCurrentStep = () => {
@@ -1142,9 +1208,10 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
     setFadeDelayMultiplier(2.0);
     setStage2WordIndex(0);
     setCurrentStage('stage2_fadeout');
+    setStage1ToastMessage('✓ تم اعتماد التقييم: متردد · تمت جدولة اختبار عشوائي كل 3 أيام وتفعيل التذكير به بنجاح');
   };
 
-  // 3. [🟥 متفلت] - اختبار عشوائي اليوم الموالي (غداً)
+  // 3. [🟥 متفلت] - اختبار عشوائي يومياً (اليوم الموالي)
   const handleEvaluationMutafallit = () => {
     cleanupRamAudio();
     setShowEvaluationModal(false);
@@ -1178,6 +1245,7 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
     setRevealedWordIndices(new Set());
     setStage3CurrentTargetIdx(0);
     setCurrentStage('stage1_listen');
+    setStage1ToastMessage('✓ تم اعتماد التقييم: متفلت · تمت جدولة اختبار عشوائي يومياً (بدءاً من الغد) وتفعيل التذكير به');
   };
 
   return (
@@ -1362,45 +1430,88 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
           <div className="space-y-4 animate-in fade-in duration-200">
             {/* Reciter & Repetitions Settings Bar */}
             <div className="p-3.5 rounded-2xl bg-[#FFFDF9] border border-[#DDD2BE] space-y-3 shadow-2xs">
-              {/* Row 1: Reciter Selection */}
+              {/* Row 1: Reciter Selection & Sheikh Recitation Speed */}
               <div className="flex flex-wrap items-center justify-between gap-2.5">
-                <div className="flex items-center gap-2 text-xs">
-                  <Headphones className="w-4 h-4 text-[#C88A14]" />
-                  <span className="font-bold text-[#2D2218]">
-                    {lang === 'ar' ? 'اختيار القارئ للتلقين:' : 'Select Reciter:'}
-                  </span>
+                {/* Reciter Choice */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <Headphones className="w-4 h-4 text-[#C88A14]" />
+                    <span className="font-bold text-[#2D2218]">
+                      {lang === 'ar' ? 'القارئ للتلقين:' : 'Reciter:'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-1 p-0.5 rounded-xl bg-[#F7F3EB] border border-[#E5DEC9]">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedReciter('husary_muallim');
+                        playStepVerseAudio(0);
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                        selectedReciter === 'husary_muallim'
+                          ? 'bg-[#2D2218] text-[#EAB338] shadow-2xs'
+                          : 'text-[#5C4B3B] hover:text-[#261C14]'
+                      }`}
+                    >
+                      <span>{lang === 'ar' ? 'الحصري (المعلم)' : 'Al-Husary'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedReciter('hudhaify');
+                        playStepVerseAudio(0);
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                        selectedReciter === 'hudhaify'
+                          ? 'bg-[#2D2218] text-[#EAB338] shadow-2xs'
+                          : 'text-[#5C4B3B] hover:text-[#261C14]'
+                      }`}
+                    >
+                      <span>{lang === 'ar' ? 'علي الحذيفي' : 'Al-Hudhaify'}</span>
+                    </button>
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-[#F7F3EB] border border-[#E5DEC9]">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedReciter('husary_muallim');
-                      playStepVerseAudio(0);
-                    }}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                      selectedReciter === 'husary_muallim'
-                        ? 'bg-[#2D2218] text-[#EAB338] shadow-2xs'
-                        : 'text-[#5C4B3B] hover:text-[#261C14]'
-                    }`}
-                  >
-                    <span>{lang === 'ar' ? 'الشيخ الحصري (المصحف المعلم)' : 'Al-Husary (Muallim)'}</span>
-                  </button>
+                {/* Recitation Speed Selector (خاصية تغيير سرعة تلاوة الشيخ) */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <Gauge className="w-3.5 h-3.5 text-[#C88A14]" />
+                    <span className="font-bold text-[#2D2218]">
+                      {lang === 'ar' ? 'سرعة التلاوة:' : 'Speed:'}
+                    </span>
+                  </div>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedReciter('hudhaify');
-                      playStepVerseAudio(0);
-                    }}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                      selectedReciter === 'hudhaify'
-                        ? 'bg-[#2D2218] text-[#EAB338] shadow-2xs'
-                        : 'text-[#5C4B3B] hover:text-[#261C14]'
-                    }`}
-                  >
-                    <span>{lang === 'ar' ? 'الشيخ علي الحذيفي' : 'Ali Al-Hudhaify'}</span>
-                  </button>
+                  <div className="flex items-center gap-1 bg-[#F7F3EB] p-0.5 rounded-lg border border-[#E5DEC9]">
+                    {[0.75, 0.85, 1.0, 1.25, 1.5].map((speed) => (
+                      <button
+                        key={speed}
+                        type="button"
+                        onClick={() => handleSetRecitationSpeed(speed)}
+                        className={`px-2 py-0.5 rounded-md font-bold text-[11px] font-mono-tabular transition-all cursor-pointer ${
+                          recitationSpeed === speed
+                            ? 'bg-[#C88A14] text-white shadow-2xs'
+                            : 'text-[#5C4B3B] hover:bg-[#E5DEC9]'
+                        }`}
+                        title={
+                          speed < 1.0
+                            ? lang === 'ar'
+                              ? 'تلاوة بطيئة لضبط مخارج الحروف والتأني'
+                              : 'Slow speed'
+                            : speed === 1.0
+                            ? lang === 'ar'
+                              ? 'السرعة الطبيعية'
+                              : 'Normal speed'
+                            : lang === 'ar'
+                            ? 'تلاوة سريعة للمراجعة'
+                            : 'Fast speed'
+                        }
+                      >
+                        {speed === 1.0 ? '1.0×' : `${speed}×`}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 
@@ -1472,6 +1583,56 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
                   )}
                 </div>
               </div>
+
+              {/* Row 3: Optional User Repetition after Sheikh (خاصية الترديد مع قراءة الشيخ - معطلة افتراضياً) */}
+              <div className="pt-2.5 border-t border-[#EFE9DC] flex flex-wrap items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-[#5C4B3B] flex items-center gap-1.5">
+                    {enableUserRepeat ? (
+                      <Mic className="w-3.5 h-3.5 text-[#4A6144]" />
+                    ) : (
+                      <MicOff className="w-3.5 h-3.5 text-[#84715E]" />
+                    )}
+                    {lang === 'ar' ? 'الترديد الصوتي خلف الشيخ:' : 'Voice repetition after Sheikh:'}
+                  </span>
+                  <span className="text-[11px] text-[#84715E] hidden sm:inline">
+                    {lang === 'ar'
+                      ? enableUserRepeat
+                        ? '(مفعّل: يطلب الترديد الصوتي بعد كل تلاوة)'
+                        : '(معطّل افتراضياً: استماع متواصل وتكرار تلقائي)'
+                      : enableUserRepeat
+                      ? '(Enabled: repeat after Sheikh)'
+                      : '(Disabled by default: continuous recitation)'}
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleToggleUserRepeat}
+                  className={`px-3 py-1.5 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5 border ${
+                    enableUserRepeat
+                      ? 'bg-[#4A6144] text-white border-[#3F543A] shadow-xs'
+                      : 'bg-[#F7F3EB] text-[#5C4B3B] border-[#DDD2BE] hover:bg-[#EFE9DC]'
+                  }`}
+                  title={
+                    lang === 'ar'
+                      ? 'التبديل بين الترديد الصوتي خلف الشيخ أو الاستماع المتواصل'
+                      : 'Toggle voice repetition'
+                  }
+                >
+                  {enableUserRepeat ? (
+                    <>
+                      <Mic className="w-3.5 h-3.5" />
+                      <span>{lang === 'ar' ? 'مفعّل' : 'Enabled'}</span>
+                    </>
+                  ) : (
+                    <>
+                      <MicOff className="w-3.5 h-3.5 text-[#84715E]" />
+                      <span>{lang === 'ar' ? 'معطّل (افتراضي)' : 'Disabled (Default)'}</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
 
             {/* Current Cumulative Step Banner */}
@@ -1497,8 +1658,12 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
                           ? 'ربط تراكمي للمقاطع السابقة لترسيخ الاتصال بين الآيات'
                           : 'Cumulative link of previous verses to solidify memory flow'
                         : lang === 'ar'
-                        ? 'الاستماع للآية الجديدة ثم تكرارها ومحاكاتها'
-                        : 'Listen to the new verse then repeat after the Shaykh'}
+                        ? enableUserRepeat
+                          ? 'الاستماع للآية الجديدة ثم تكرارها ومحاكاتها خلف الشيخ'
+                          : 'الاستماع للآية وتكرار التلاوة تلقائياً'
+                        : enableUserRepeat
+                        ? 'Listen to the new verse then repeat after the Shaykh'
+                        : 'Listen to the verse with continuous repetition'}
                     </p>
                   </div>
                 </div>
@@ -1525,8 +1690,8 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
                     <Volume2 className="w-4 h-4 text-[#C88A14]" />
                     <span>
                       {lang === 'ar'
-                        ? `الشيخ يتلو الآن (تكرار ${currentStepRep + 1} من ${chunkReps})... استمع بإنصات`
-                        : `Shaykh is reciting (Rep ${currentStepRep + 1} of ${chunkReps})... Listen attentively`}
+                        ? `الشيخ يتلو الآن (تكرار ${currentStepRep + 1} من ${chunkReps})${!enableUserRepeat ? ' • استماع وتكرار متواصل' : ''}... استمع بإنصات`
+                        : `Shaykh is reciting (Rep ${currentStepRep + 1} of ${chunkReps})${!enableUserRepeat ? ' • Continuous Listening' : ''}... Listen attentively`}
                     </span>
                   </div>
                 ) : (

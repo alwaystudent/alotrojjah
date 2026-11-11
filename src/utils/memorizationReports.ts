@@ -26,7 +26,7 @@ export function getEvaluationRules(evaluation: PlanEvaluation) {
       return {
         intervalDays: 7,
         frequency: 'weekly' as const,
-        frequencyLabelAr: 'مرة أسبوعياً (متقن - كل 7 أيام)',
+        frequencyLabelAr: 'مرة في الأسبوع (متقن - كل 7 أيام)',
         frequencyLabelEn: 'Once a week (Mastered - Every 7 days)',
         color: '#4A6144',
         badgeBg: 'bg-[#4A6144]',
@@ -38,7 +38,7 @@ export function getEvaluationRules(evaluation: PlanEvaluation) {
       return {
         intervalDays: 3,
         frequency: 'three_days' as const,
-        frequencyLabelAr: 'دوري كل 3 أيام (متردد)',
+        frequencyLabelAr: 'كل 3 أيام (متردد)',
         frequencyLabelEn: 'Every 3 days (Hesitant)',
         color: '#C88A14',
         badgeBg: 'bg-[#C88A14]',
@@ -50,13 +50,13 @@ export function getEvaluationRules(evaluation: PlanEvaluation) {
       return {
         intervalDays: 1,
         frequency: 'next_day' as const,
-        frequencyLabelAr: 'مكثف غداً (متفلت - اليوم الموالي)',
-        frequencyLabelEn: 'Next day (Slipping - Tomorrow)',
+        frequencyLabelAr: 'يومياً (متفلت - كل يوم)',
+        frequencyLabelEn: 'Daily (Slipping - Every day)',
         color: '#A84A32',
         badgeBg: 'bg-[#A84A32]',
         badgeText: 'text-white',
-        descriptionAr: 'اختبار عشوائي استدراكي في اليوم الموالي فوراً لإنقاذ المحفوظ وإعادة ضبطه.',
-        descriptionEn: 'Immediate catch-up quiz the following day to restore accuracy.',
+        descriptionAr: 'اختبار عشوائي يومياً لإنقاذ المحفوظ وإعادة ضبطه وترسيخه من جديد.',
+        descriptionEn: 'Daily catch-up quiz to restore accuracy and prevent slippage.',
       };
   }
 }
