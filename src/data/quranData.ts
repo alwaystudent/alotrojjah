@@ -488,3 +488,33 @@ export function getEvaluationLabel(evaluation?: PlanEvaluation, lang: Language =
 
 // Empty initial plans as requested ("احذف الخطط المقترحة")
 export const INITIAL_PLANS: QuranPlanItem[] = [];
+
+/**
+ * Check if a plan is overdue:
+ * Not completed AND scheduled for a previous day (yesterday or earlier).
+ */
+export function isPlanOverdue(plan: QuranPlanItem, todayDayId: DayId): boolean {
+  if (plan.status === 'completed') return false;
+
+  const todayIndex = WEEK_DAYS.findIndex((d) => d.id === todayDayId);
+  const planDayIndex = WEEK_DAYS.findIndex((d) => d.id === plan.day);
+
+  if (planDayIndex === -1 || todayIndex === -1) return false;
+
+  // If the plan's day in the weekly cycle is strictly before today (yesterday or earlier)
+  if (planDayIndex < todayIndex) {
+    return true;
+  }
+
+  // If plan was created prior to today and its day is from an earlier week cycle
+  if (plan.createdAt) {
+    const createdTime = new Date(plan.createdAt).getTime();
+    const nowTime = Date.now();
+    const oneDayMs = 24 * 60 * 60 * 1000;
+    if (plan.day !== todayDayId && nowTime - createdTime > oneDayMs && planDayIndex > todayIndex) {
+      return true;
+    }
+  }
+
+  return false;
+}

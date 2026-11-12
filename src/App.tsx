@@ -33,6 +33,7 @@ import {
   Star,
   Award,
   Brain,
+  AlertCircle,
 } from 'lucide-react';
 import {
   Language,
@@ -51,6 +52,7 @@ import {
   formatCurriculumTitle,
   getPlanTypeLabel,
   getScopeLabel,
+  isPlanOverdue,
 } from './data/quranData';
 import { t } from './data/translations';
 import { PlanModal } from './components/PlanModal';
@@ -196,6 +198,10 @@ export default function App() {
 
   const dict = t(lang);
   const todayId = getTodayDayId();
+  const totalOverdueCount = useMemo(
+    () => plans.filter((p) => isPlanOverdue(p, todayId)).length,
+    [plans, todayId]
+  );
 
   useEffect(() => {
     document.documentElement.lang = lang;
@@ -638,6 +644,18 @@ export default function App() {
     );
   };
 
+  const handleToggleLanguage = () => {
+    setLang((prev) => {
+      const next = prev === 'ar' ? 'en' : 'ar';
+      try {
+        localStorage.setItem(STORAGE_KEY_LANG, next);
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
+
   const handleOpenAddModal = (day?: DayId) => {
     setEditingPlan(null);
     setModalInitialDay(day || todayId);
@@ -667,12 +685,14 @@ export default function App() {
         )
       );
     } else {
+      const baseNow = Date.now();
       const createdItems: QuranPlanItem[] = newPlansData.map((data, index) => ({
         ...data,
-        id: `plan-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 6)}`,
-        createdAt: new Date().toISOString(),
+        id: `plan-${baseNow}-${index}-${Math.random().toString(36).slice(2, 6)}`,
+        createdAt: new Date(baseNow + index * 10).toISOString(),
       }));
-      setPlans((prev) => [...prev, ...createdItems]);
+      // Put newly added plans at the top
+      setPlans((prev) => [...createdItems, ...prev]);
     }
   };
 
@@ -692,7 +712,8 @@ export default function App() {
       evaluation: undefined,
       createdAt: new Date().toISOString(),
     };
-    setPlans((prev) => [...prev, copy]);
+    // Put duplicated plan at the top
+    setPlans((prev) => [copy, ...prev]);
   };
 
   const handleToggleStatus = (id: string) => {
@@ -782,15 +803,15 @@ export default function App() {
   const todayDual = useMemo(() => getDualDate(new Date(), lang), [lang]);
 
   return (
-    <div className="w-full min-w-full min-h-screen flex flex-col bg-[#F7F3EB] text-[#261C14] islamic-pattern-subtle overflow-x-hidden">
+    <div
+      dir={lang === 'ar' ? 'rtl' : 'ltr'}
+      className="w-full min-w-full min-h-screen flex flex-col bg-[#F7F3EB] text-[#261C14] islamic-pattern-subtle overflow-x-hidden"
+    >
       {/* Fixed/Sticky Top Header */}
-      <header
-        dir="rtl"
-        className="w-full sticky top-0 z-30 bg-[#FFFDF9]/95 backdrop-blur-md border-b border-[#DDD2BE] shadow-xs"
-      >
-        {/* Row 1: Top Brand Row — "الأترجة" Logo, Pure Date, PWA Install, Settings — strictly on the same level across all devices */}
+      <header className="w-full sticky top-0 z-30 bg-[#FFFDF9]/95 backdrop-blur-md border-b border-[#DDD2BE] shadow-xs">
+        {/* Row 1: Top Brand Row — Logo, Language Toggle, Pure Date, Settings — strictly on the same level across all devices */}
         <div className="w-full px-2.5 sm:px-6 lg:px-8 py-2 sm:py-2.5 flex items-center justify-between gap-1.5 sm:gap-3 flex-nowrap">
-          {/* Right: Elegant "الأترجة" Emblem Logo & Title */}
+          {/* Brand Emblem Logo & Title */}
           <div className="flex items-center gap-2 sm:gap-3 shrink-0 min-w-0">
             <a
               href="#schedule"
@@ -856,31 +877,28 @@ export default function App() {
             </a>
           </div>
 
-          {/* Left Action Strip: Pure Date Badge, Settings Icon in its place */}
-          <div className="flex items-center gap-2 sm:gap-3 shrink-0 ms-auto flex-nowrap">
-            {/* Pure Date Display (التاريخ الهجري والميلادي فقط بدون تقويم) */}
-            <div
-              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-[#F7F3EB] border border-[#DDD2BE] text-[#2D2218] shadow-2xs font-mono-tabular shrink-0 select-none"
-              title={dict.todayDateLabel}
-            >
-              <Calendar className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#C88A14] shrink-0" />
-              <div className="flex flex-col text-start leading-tight">
-                <span className="font-bold text-[#2D2218] text-[10px] sm:text-xs whitespace-nowrap">
-                  {todayDual.hijriDate}
-                </span>
-                <span className="text-[9px] sm:text-[10px] text-[#84715E] font-medium whitespace-nowrap">
-                  {todayDual.gregorianDate}
-                </span>
-              </div>
-            </div>
-
+          {/* Action Strip: Today's Count, Language Switcher directly on the right of Settings, Settings Icon */}
+          <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0 ms-auto flex-nowrap">
             {/* Today's count badge */}
-            <span className="hidden sm:inline-block text-xs font-mono-tabular font-semibold text-[#84715E] bg-[#F7F3EB] px-2.5 py-1.5 rounded-xl border border-[#E5DEC9] shrink-0">
+            <span className="text-[11px] sm:text-xs font-mono-tabular font-semibold text-[#84715E] bg-[#F7F3EB] px-2.5 py-1.5 rounded-xl border border-[#E5DEC9] shrink-0">
               {lang === 'ar' ? todayInfo.nameAr : todayInfo.shortEn} · {todayCompletedCount}/
               {todayPlansCount}
             </span>
 
-            {/* Settings Button (رمز الإعدادات في مكانه المعتمد) */}
+            {/* Language Switcher Button directly on the right of Settings (على يمين رمز الإعدادات مباشرة) */}
+            <button
+              type="button"
+              onClick={handleToggleLanguage}
+              title={lang === 'ar' ? 'Switch to English' : 'التحويل إلى اللغة العربية'}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl bg-[#F7F3EB] hover:bg-[#EFE9DC] border border-[#DDD2BE] hover:border-[#C88A14] text-[#2D2218] transition-all cursor-pointer shadow-2xs shrink-0 select-none group"
+            >
+              <Globe className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#C88A14] transition-transform group-hover:rotate-45 shrink-0" />
+              <span className="text-[11px] sm:text-xs font-bold text-[#2D2218]">
+                {lang === 'ar' ? 'EN' : 'عربي'}
+              </span>
+            </button>
+
+            {/* Settings Button (رمز الإعدادات) */}
             <button
               type="button"
               onClick={() => {
@@ -895,9 +913,30 @@ export default function App() {
           </div>
         </div>
 
-        {/* Row 2: Fixed Horizontal Navigation Menu Underneath the Logo — 4 Equal Columns, Zero Horizontal Scroll, Labels Underneath Icons */}
+        {/* Row 2: Fixed Horizontal Navigation Menu with Centered Single-Line Date Above It */}
         <div className="bg-[#F7F3EB]/95 border-t border-[#E5DEC9]">
-          <div className="w-full px-2 sm:px-6 lg:px-8 py-1">
+          {/* Centered Single-Line Harmonious Date Badge (التاريخ في سطر واحد بتناسق مناسب في الوسط أعلى القائمة الرئيسية) */}
+          <div className="w-full flex items-center justify-center pt-2 pb-1 px-2.5 sm:px-6">
+            <div
+              className="inline-flex items-center justify-center gap-1.5 sm:gap-2.5 px-3 sm:px-4 py-1 rounded-full bg-[#FFFDF9] border border-[#DDD2BE] text-[#2D2218] shadow-2xs font-mono-tabular select-none max-w-full overflow-hidden text-center"
+              title={dict.todayDateLabel}
+            >
+              <Calendar className="w-3.5 h-3.5 text-[#C88A14] shrink-0" />
+              <span className="font-bold text-[#C88A14] whitespace-nowrap text-[11px] sm:text-xs">
+                {lang === 'ar' ? todayInfo.nameAr : todayInfo.nameEn}
+              </span>
+              <span className="text-[#DDD2BE] shrink-0">|</span>
+              <span className="font-bold text-[#2D2218] whitespace-nowrap text-[11px] sm:text-xs">
+                {todayDual.hijriDate}
+              </span>
+              <span className="text-[#C88A14] font-bold shrink-0">·</span>
+              <span className="text-[#5C4B3B] font-medium whitespace-nowrap text-[11px] sm:text-xs">
+                {todayDual.gregorianDate}
+              </span>
+            </div>
+          </div>
+
+          <div className="w-full px-2 sm:px-6 lg:px-8 pb-1 pt-0.5">
             <nav className="grid grid-cols-4 gap-1.5 sm:gap-3 w-full">
               {(
                 [
@@ -914,12 +953,20 @@ export default function App() {
                     key={nav.id}
                     type="button"
                     onClick={() => setActiveSection(nav.id)}
-                    className={`flex flex-col items-center justify-center gap-1 py-1.5 px-1 rounded-xl text-[11px] sm:text-xs font-bold transition-all cursor-pointer ${
+                    className={`relative flex flex-col items-center justify-center gap-1 py-1.5 px-1 rounded-xl text-[11px] sm:text-xs font-bold transition-all cursor-pointer ${
                       isActive
                         ? 'bg-[#2D2218] text-[#EAB338] shadow-2xs'
                         : 'text-[#5C4B3B] hover:text-[#261C14] hover:bg-[#EFE9DC]/80'
                     }`}
                   >
+                    {nav.id === 'reminders' && totalOverdueCount > 0 && (
+                      <span
+                        className="absolute top-1 end-1.5 sm:end-3 px-1.5 py-0.2 rounded-full bg-[#C53030] text-white text-[9.5px] font-bold ring-1 ring-white shadow-xs animate-pulse"
+                        title={lang === 'ar' ? `${totalOverdueCount} خطة متأخرة` : `${totalOverdueCount} overdue tasks`}
+                      >
+                        {totalOverdueCount}
+                      </span>
+                    )}
                     <NavIcon
                       className={`w-4 h-4 shrink-0 ${
                         isActive ? 'text-[#EAB338]' : 'text-[#C88A14]'
@@ -1037,6 +1084,19 @@ export default function App() {
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
+                {totalOverdueCount > 0 && (
+                  <div
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#C53030] text-white text-xs font-bold shadow-xs ring-2 ring-[#C53030]/25 animate-pulse shrink-0"
+                    title={
+                      lang === 'ar'
+                        ? `يوجد ${totalOverdueCount} خطة متأخرة لم تكتمل في موعدها`
+                        : `${totalOverdueCount} overdue task(s)`
+                    }
+                  >
+                    <AlertCircle className="w-3.5 h-3.5 text-white" />
+                    <span>{totalOverdueCount} {lang === 'ar' ? 'متأخرة' : 'overdue'}</span>
+                  </div>
+                )}
                 <div className="relative flex-1 min-w-[150px] sm:w-56">
                   <Search className="w-3.5 h-3.5 text-[#84715E] absolute top-1/2 -translate-y-1/2 start-2.5 pointer-events-none" />
                   <input
@@ -1082,9 +1142,15 @@ export default function App() {
                 {visibleDays.map((day) => {
                   const dayPlans = filteredPlans
                     .filter((p) => p.day === day.id)
-                    .sort((a, b) => a.reminderTime.localeCompare(b.reminderTime));
-                  const isToday = day.id === todayId;
+                    .sort((a, b) => {
+                      const timeA = new Date(a.createdAt || 0).getTime();
+                      const timeB = new Date(b.createdAt || 0).getTime();
+                      if (timeB !== timeA) return timeB - timeA;
+                      return b.id.localeCompare(a.id);
+                    });
+                    const isToday = day.id === todayId;
                   const doneCount = dayPlans.filter((p) => p.status === 'completed').length;
+                  const overdueCount = dayPlans.filter((p) => isPlanOverdue(p, todayId)).length;
                   const dayDual = getCompactDualDate(day.id, lang);
                   const isCollapsed = !!collapsedDayIds[day.id];
 
@@ -1092,7 +1158,11 @@ export default function App() {
                     <div
                       key={day.id}
                       className={`rounded-2xl bg-[#FFFDF9] border overflow-hidden shadow-2xs transition-all ${
-                        isToday ? 'border-[#C88A14] ring-1 ring-[#C88A14]/30' : 'border-[#DDD2BE]'
+                        isToday
+                          ? 'border-[#C88A14] ring-1 ring-[#C88A14]/30'
+                          : overdueCount > 0
+                          ? 'border-[#C53030]/60 ring-2 ring-[#C53030]/15'
+                          : 'border-[#DDD2BE]'
                       }`}
                     >
                       {/* Day Header Bar (Collapsible Dropdown Trigger) */}
@@ -1101,15 +1171,17 @@ export default function App() {
                         className={`px-3.5 py-2.5 border-b flex items-center justify-between gap-2 cursor-pointer select-none transition-colors ${
                           isToday
                             ? 'bg-[#2D2218] text-[#FFFDF9] border-[#2D2218] hover:bg-[#3D2F22]'
+                            : overdueCount > 0
+                            ? 'bg-[#FFF2EF] text-[#261C14] border-[#F2B8AF] hover:bg-[#FFE9E4]'
                             : 'bg-[#F7F3EB] text-[#261C14] border-[#DDD2BE] hover:bg-[#EFE9DC]'
                         }`}
                         title={lang === 'ar' ? 'اضغط لفتح أو طي القائمة المنسدلة للخطط' : 'Click to toggle dropdown schedule'}
                       >
                         <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
                           {isCollapsed ? (
-                            <ChevronDown className={`w-4 h-4 shrink-0 transition-transform ${isToday ? 'text-[#EAB338]' : 'text-[#C88A14]'}`} />
+                            <ChevronDown className={`w-4 h-4 shrink-0 transition-transform ${isToday ? 'text-[#EAB338]' : overdueCount > 0 ? 'text-[#C53030]' : 'text-[#C88A14]'}`} />
                           ) : (
-                            <ChevronUp className={`w-4 h-4 shrink-0 transition-transform ${isToday ? 'text-[#EAB338]' : 'text-[#C88A14]'}`} />
+                            <ChevronUp className={`w-4 h-4 shrink-0 transition-transform ${isToday ? 'text-[#EAB338]' : overdueCount > 0 ? 'text-[#C53030]' : 'text-[#C88A14]'}`} />
                           )}
                           <span className="font-bold font-display-islamic text-sm sm:text-base">
                             {lang === 'ar' ? day.nameAr : day.nameEn}
@@ -1117,6 +1189,19 @@ export default function App() {
                           {isToday && (
                             <span className="text-[11px] font-semibold text-[#EAB338] bg-[#EAB338]/20 px-2 py-0.5 rounded-md border border-[#EAB338]/30">
                               {dict.todayBadge}
+                            </span>
+                          )}
+                          {overdueCount > 0 && (
+                            <span
+                              className="text-[11px] font-bold text-white bg-[#C53030] px-2.5 py-0.5 rounded-full shadow-xs ring-2 ring-[#C53030]/25 inline-flex items-center gap-1.5 shrink-0 animate-pulse"
+                              title={
+                                lang === 'ar'
+                                  ? `${overdueCount} خطة متأخرة لم تكتمل في موعدها`
+                                  : `${overdueCount} overdue task(s)`
+                              }
+                            >
+                              <AlertCircle className="w-3.5 h-3.5 text-white" />
+                              <span>{overdueCount} {lang === 'ar' ? 'متأخرة' : 'overdue'}</span>
                             </span>
                           )}
                           <span
@@ -1161,17 +1246,34 @@ export default function App() {
                           ) : (
                             dayPlans.map((plan) => {
                               const isCompleted = plan.status === 'completed';
+                              const isOverdue = isPlanOverdue(plan, todayId);
                               const { label: practiceLabel, Icon: PracticeIcon } =
                                 getPlanPracticeButtonMeta(plan.planType);
 
                               return (
                                 <div
                                   key={plan.id}
-                                  className="p-3 sm:p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-[#F7F3EB]/40 transition-colors"
+                                  className={`p-3 sm:p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 transition-colors ${
+                                    isOverdue ? 'bg-[#FFF2EF] border-s-4 border-s-[#C53030] hover:bg-[#FFE9E4]' : 'hover:bg-[#F7F3EB]/40'
+                                  }`}
                                 >
                                   {/* Left/Start: Type badge, scope, timing, curriculum, volume, completion date */}
                                   <div className="flex-1 space-y-1.5">
                                     <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                                      {/* Overdue alert indicator badge */}
+                                      {isOverdue && (
+                                        <span
+                                          className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-[#C53030] text-white text-[11px] font-bold shrink-0 shadow-xs ring-2 ring-[#C53030]/25 animate-pulse"
+                                          title={
+                                            lang === 'ar'
+                                              ? 'خطة متأخرة: لم تكتمل في موعدها المحدد لليوم السابق أو قبله'
+                                              : 'Overdue: Plan was not completed on its scheduled day'
+                                          }
+                                        >
+                                          <AlertCircle className="w-3.5 h-3.5 text-white" />
+                                          <span>{lang === 'ar' ? 'متأخرة' : 'Overdue'}</span>
+                                        </span>
+                                      )}
                                       <span
                                         className={`font-bold px-2 py-0.5 rounded-md ${
                                           plan.planType === 'new_memorization'
@@ -1199,9 +1301,22 @@ export default function App() {
                                     </div>
 
                                     <div className="flex flex-wrap items-center gap-2">
+                                      {/* Alert Icon beside plan title for overdue tasks */}
+                                      {isOverdue && (
+                                        <span
+                                          className="inline-flex items-center justify-center p-1 rounded-md bg-[#C53030] text-white shadow-xs shrink-0 ring-2 ring-[#C53030]/20 animate-pulse"
+                                          title={
+                                            lang === 'ar'
+                                              ? 'تنبيه: خطة متأخرة لم تكتمل في موعدها المحدد لليوم السابق أو قبله'
+                                              : 'Alert: Overdue task not completed on schedule'
+                                          }
+                                        >
+                                          <AlertCircle className="w-4 h-4 text-white" />
+                                        </span>
+                                      )}
                                       <h4
-                                        className={`text-base font-bold text-[#261C14] font-display-islamic ${
-                                          isCompleted ? 'line-through opacity-60' : ''
+                                        className={`text-base font-bold font-display-islamic ${
+                                          isCompleted ? 'line-through opacity-60 text-[#84715E]' : isOverdue ? 'text-[#9B1C1C]' : 'text-[#261C14]'
                                         }`}
                                       >
                                         {formatCurriculumTitle(plan, lang)}
