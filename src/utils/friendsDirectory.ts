@@ -5,6 +5,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  onSnapshot,
   query,
   serverTimestamp,
   setDoc,
@@ -85,6 +86,12 @@ export function getDisplayNameForUser(user: User): string {
   ).slice(0, 80);
 }
 
+export function formatFriendShortCode(uid: string): string {
+  const clean = (uid || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+  const suffix = (clean.slice(0, 6) || 'USER01').padEnd(6, 'X');
+  return `SRD-${suffix}`;
+}
+
 export async function syncVerifiedUserProfileAndDirectory(user: User): Promise<void> {
   if (!user.emailVerified) return;
 
@@ -104,18 +111,56 @@ export async function syncVerifiedUserProfileAndDirectory(user: User): Promise<v
     handleFirestoreError(err, OperationType.WRITE, privatePath);
   }
 
-  // 2. Zero-PII UID Directory entry (enables verifying user display name & UID existence)
+  // 2. Zero-PII UID Directory entry (enables verifying user display name & online heartbeat)
   const uidDirPath = `userDirectory/${user.uid}`;
   try {
     await setDoc(doc(db, 'userDirectory', user.uid), {
       lookupId: user.uid,
       uid: user.uid,
       displayName: safeName,
+      lastSeen: Date.now(),
       updatedAt: serverTimestamp(),
     });
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, uidDirPath);
   }
+}
+
+export async function updateUserPresenceHeartbeat(user: User): Promise<void> {
+  if (!user.emailVerified) return;
+  const uidDirPath = `userDirectory/${user.uid}`;
+  try {
+    await updateDoc(doc(db, 'userDirectory', user.uid), {
+      displayName: getDisplayNameForUser(user),
+      lastSeen: Date.now(),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, uidDirPath);
+  }
+}
+
+export function subscribeFriendPresence(
+  friendUid: string,
+  onPresence: (uid: string, online: boolean, lastSeen?: number) => void
+): () => void {
+  const dirPath = `userDirectory/${friendUid}`;
+  return onSnapshot(
+    doc(db, 'userDirectory', friendUid),
+    (snap) => {
+      if (!snap.exists()) {
+        onPresence(friendUid, false);
+        return;
+      }
+      const data = snap.data() as { lastSeen?: number };
+      const lastSeen = typeof data.lastSeen === 'number' ? data.lastSeen : 0;
+      const isOnline = lastSeen > 0 && Date.now() - lastSeen < 120_000;
+      onPresence(friendUid, isOnline, lastSeen);
+    },
+    (err) => {
+      handleFirestoreError(err, OperationType.GET, dirPath);
+    }
+  );
 }
 
 export async function getOrCreateMyFriendInvite(user: User): Promise<FriendInviteDoc | null> {
@@ -206,13 +251,16 @@ export async function fetchFriendInviteDetails(
   let clean = tokenOrUrl.trim();
   if (!clean) return null;
 
-  // Allow pasting a full invite URL or raw token
-  if (clean.includes('friendInvite=')) {
+  // Allow pasting a full invite URL (?invite=... or ?friendInvite=...) or raw token
+  if (clean.includes('friendInvite=') || clean.includes('invite=')) {
     try {
       const parsed = new URL(clean);
-      clean = parsed.searchParams.get('friendInvite') || clean;
+      clean =
+        parsed.searchParams.get('friendInvite') ||
+        parsed.searchParams.get('invite') ||
+        clean;
     } catch {
-      const m = clean.match(/friendInvite=([a-zA-Z0-9_\-]+)/);
+      const m = clean.match(/(?:friendInvite|invite)=([a-zA-Z0-9_\-]+)/);
       if (m?.[1]) clean = m[1];
     }
   }

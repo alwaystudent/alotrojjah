@@ -42,7 +42,6 @@ import {
   RefreshCw,
   Link2,
   UserCheck,
-  Headphones,
   Sparkles,
   Eye,
   EyeOff,
@@ -58,6 +57,9 @@ import {
   Touchpad,
   ListFilter,
   UserX,
+  Award,
+  Radio,
+  X,
 } from 'lucide-react';
 import { auth, db, googleProvider, OperationType, handleFirestoreError } from '../firebase';
 import {
@@ -73,6 +75,9 @@ import {
   FriendInviteDoc,
   FriendRequestDoc,
   syncVerifiedUserProfileAndDirectory,
+  updateUserPresenceHeartbeat,
+  subscribeFriendPresence,
+  formatFriendShortCode,
   getOrCreateMyFriendInvite,
   regenerateMyFriendInvite,
   fetchFriendInviteDetails,
@@ -80,6 +85,7 @@ import {
   approveIncomingFriendRequest,
   declineIncomingFriendRequest,
   syncAcceptedOutgoingRequest,
+  getDisplayNameForUser,
 } from '../utils/friendsDirectory';
 import {
   callRingtone,
@@ -100,6 +106,23 @@ export const TURN_SERVER_URL = '';
 export const TURN_USERNAME = '';
 export const TURN_CREDENTIAL = '';
 
+export type SessionEvaluationRating =
+  | 'excellent'
+  | 'very_good'
+  | 'good_practice'
+  | 'needs_review';
+
+const EVALUATION_CHOICES: {
+  id: SessionEvaluationRating;
+  labelAr: string;
+  labelEn: string;
+}[] = [
+  { id: 'excellent', labelAr: 'ممتاز — متقن', labelEn: 'Excellent — Mastered' },
+  { id: 'very_good', labelAr: 'جيد جداً', labelEn: 'Very Good' },
+  { id: 'good_practice', labelAr: 'جيد — يحتاج تثبيتاً', labelEn: 'Good — Needs Reinforcement' },
+  { id: 'needs_review', labelAr: 'يحتاج مراجعة مركزة', labelEn: 'Needs Focused Review' },
+];
+
 interface DuoRecitationSectionProps {
   lang: Language;
   defaultRiwayah?: QuranRiwayah;
@@ -107,6 +130,7 @@ interface DuoRecitationSectionProps {
   onClearFriendInvite?: () => void;
   pendingAcceptCallId?: string | null;
   onClearPendingCall?: () => void;
+  onOpenPrivacyTerms?: () => void;
 }
 
 interface DuoSessionDoc {
@@ -130,11 +154,49 @@ interface DuoSessionDoc {
   activeAyah?: number;
   reciterSide?: 'host' | 'guest';
   mistakesCount?: number;
+  markedErrors?: string[];
+  endedByUid?: string | null;
+  sessionEvaluation?: SessionEvaluationRating | null;
+  callDurationSeconds?: number | null;
+  accuracyPct?: number | null;
   offerType: string;
   offerSdp: string;
   answerType?: string | null;
   answerSdp?: string | null;
   status: 'ringing' | 'active' | 'declined' | 'ended';
+}
+
+interface CallSummaryBanner {
+  partnerName: string;
+  evaluation: SessionEvaluationRating;
+  durationSeconds: number;
+  mistakesCount: number;
+  accuracyPct: number;
+}
+
+function toArabicDigits(value: string | number): string {
+  const map = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
+  return String(value).replace(/\d/g, (d) => map[Number(d)] ?? d);
+}
+
+function formatCallDuration(totalSeconds: number, isAr: boolean): string {
+  const safe = Math.max(0, Math.floor(totalSeconds));
+  const mins = String(Math.floor(safe / 60)).padStart(2, '0');
+  const secs = String(safe % 60).padStart(2, '0');
+  const formatted = `${mins}:${secs}`;
+  return isAr ? toArabicDigits(formatted) : formatted;
+}
+
+function parseMarkedErrorToken(token: string): {
+  verseKey: string;
+  word: string;
+  wordIndex: number;
+} {
+  const parts = token.split('|');
+  const verseKey = parts[0] || '';
+  const word = parts[1] || token;
+  const wordIndex = Number(parts[2] ?? -1);
+  return { verseKey, word, wordIndex };
 }
 
 function buildRtcConfiguration(highPrivacyRelay: boolean): RTCConfiguration {
@@ -291,6 +353,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   onClearFriendInvite,
   pendingAcceptCallId = null,
   onClearPendingCall,
+  onOpenPrivacyTerms,
 }) => {
   const isAr = lang === 'ar';
 
@@ -313,8 +376,11 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       : 'unsupported'
   );
 
-  // Consent-Based Link-Only Friends & Invites State
+  // Consent-Based Link-Only Friends, Live Presence & Invites State
   const [friends, setFriends] = useState<FriendContactItem[]>([]);
+  const [friendPresenceMap, setFriendPresenceMap] = useState<
+    Record<string, { online: boolean; lastSeen?: number }>
+  >({});
   const [myInvite, setMyInvite] = useState<FriendInviteDoc | null>(null);
   const [inviteBusy, setInviteBusy] = useState(false);
   const [incomingRequests, setIncomingRequests] = useState<FriendRequestDoc[]>([]);
@@ -328,18 +394,19 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   } | null>(null);
   const [confirmRemoveFriendUid, setConfirmRemoveFriendUid] = useState<string | null>(null);
 
-  // Simplified 3-Mode Curriculum & Riwayah Setup State
+  // Curriculum & Riwayah Setup State (Editable in Lobby Modal AND Live Inside Call)
   const [selectedRiwayah, setSelectedRiwayah] = useState<QuranRiwayah>(defaultRiwayah);
-  const [curriculumMode, setCurriculumMode] = useState<'surah' | 'ayah' | 'page'>('surah');
+  const [curriculumMode, setCurriculumMode] = useState<'surah' | 'ayah' | 'page'>('ayah');
   const [surahPickStyle, setSurahPickStyle] = useState<'touch' | 'dropdown'>('touch');
   const [surahSearchQuery, setSurahSearchQuery] = useState<string>('');
-  const [selectedSurah, setSelectedSurah] = useState<number>(1);
-  const [selectedSurahEnd, setSelectedSurahEnd] = useState<number>(1);
+  const [selectedSurah, setSelectedSurah] = useState<number>(78);
+  const [selectedSurahEnd, setSelectedSurahEnd] = useState<number>(78);
   const [multiSurahRange, setMultiSurahRange] = useState<boolean>(false);
   const [ayahFrom, setAyahFrom] = useState<number>(1);
-  const [ayahTo, setAyahTo] = useState<number>(7);
+  const [ayahTo, setAyahTo] = useState<number>(10);
   const [pageFrom, setPageFrom] = useState<number>(1);
   const [pageTo, setPageTo] = useState<number>(2);
+  const [showCurriculumModal, setShowCurriculumModal] = useState<boolean>(false);
   const [lobbyBusy, setLobbyBusy] = useState<boolean>(false);
   const [lobbyError, setLobbyError] = useState<string | null>(null);
 
@@ -352,7 +419,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   const [textScale, setTextScale] = useState<'normal' | 'large' | 'xlarge'>('large');
   const [trustedSourceId] = useState<TrustedQuranSourceId>('kfgqpc_hafs');
   const [activeUsedSource, setActiveUsedSource] = useState<TrustedQuranSourceId>('kfgqpc_hafs');
-  const [optionsExpanded, setOptionsExpanded] = useState<boolean>(false);
 
   // Privacy & Encryption Settings (Default ON for High Privacy IP Masking via TURN relay)
   const [highPrivacyIpMask, setHighPrivacyIpMask] = useState<boolean>(true);
@@ -362,7 +428,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     highPrivacyRef.current = highPrivacyIpMask;
   }, [highPrivacyIpMask]);
 
-  // Active Direct Voice Call Session State (Direct Friend Call ONLY)
+  // Active Direct Voice Call Session State
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [myRoleInCall, setMyRoleInCall] = useState<'host' | 'guest'>('host');
   const [sessionMeta, setSessionMeta] = useState<DuoSessionDoc | null>(null);
@@ -373,13 +439,21 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   const [isMicMuted, setIsMicMuted] = useState<boolean>(false);
   const [micLevel, setMicLevel] = useState<number>(0);
   const [copiedInvite, setCopiedInvite] = useState<boolean>(false);
+  const [callElapsedSeconds, setCallElapsedSeconds] = useState<number>(0);
 
-  // Synchronized Quran Reading State
+  // End-Call Evaluation Modal State
+  const [showEvalModal, setShowEvalModal] = useState<boolean>(false);
+  const [selectedEvaluation, setSelectedEvaluation] =
+    useState<SessionEvaluationRating>('excellent');
+  const [lastCallSummary, setLastCallSummary] = useState<CallSummaryBanner | null>(null);
+
+  // Synchronized Quran Reading & Marked Errors State
   const [verses, setVerses] = useState<TrustedVerseItem[]>([]);
   const [versesLoading, setVersesLoading] = useState<boolean>(false);
   const [activeAyah, setActiveAyah] = useState<number>(1);
   const [reciterSide, setReciterSide] = useState<'host' | 'guest'>('host');
   const [mistakesCount, setMistakesCount] = useState<number>(0);
+  const [markedErrors, setMarkedErrors] = useState<string[]>([]);
 
   // Refs for WebRTC / Streams / Listeners (Strict Audio-Only — zero RTCDataChannel)
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -392,14 +466,38 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   const sessionIdRef = useRef<string | null>(null);
   const myRoleRef = useRef<'host' | 'guest'>('host');
   const handledAutoCallRef = useRef<string | null>(null);
+  const sessionStatusRef = useRef<DuoSessionDoc['status'] | undefined>(undefined);
 
   useEffect(() => {
     sessionIdRef.current = sessionId;
+    if (typeof window !== 'undefined') {
+      const win = window as unknown as { __alutrujjahActiveVoiceCall?: boolean };
+      win.__alutrujjahActiveVoiceCall = Boolean(sessionId);
+      if (!sessionId) {
+        window.dispatchEvent(new Event('alutrujjah:call-ended'));
+      }
+    }
   }, [sessionId]);
 
   useEffect(() => {
     myRoleRef.current = myRoleInCall;
   }, [myRoleInCall]);
+
+  useEffect(() => {
+    sessionStatusRef.current = sessionMeta?.status;
+  }, [sessionMeta?.status]);
+
+  // Call duration timer while session is open
+  useEffect(() => {
+    if (!sessionId) {
+      setCallElapsedSeconds(0);
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setCallElapsedSeconds((prev) => prev + 1);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [sessionId]);
 
   const currentSurahInfo = useMemo(
     () => SURAH_LIST.find((s) => s.number === selectedSurah) || SURAH_LIST[0],
@@ -417,11 +515,16 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     );
   }, [surahSearchQuery]);
 
+  // Adjust ayah bounds if selectedSurah changes (keep 1..10 default on Surah 78)
+  const prevSurahRef = useRef<number>(selectedSurah);
   useEffect(() => {
-    setAyahFrom(1);
-    setAyahTo(Math.min(currentSurahInfo.ayahCount, 15));
-    if (!multiSurahRange || selectedSurahEnd < selectedSurah) {
-      setSelectedSurahEnd(selectedSurah);
+    if (prevSurahRef.current !== selectedSurah) {
+      prevSurahRef.current = selectedSurah;
+      setAyahFrom(1);
+      setAyahTo(Math.min(currentSurahInfo.ayahCount, 10));
+      if (!multiSurahRange || selectedSurahEnd < selectedSurah) {
+        setSelectedSurahEnd(selectedSurah);
+      }
     }
   }, [currentSurahInfo, multiSurahRange, selectedSurah, selectedSurahEnd]);
 
@@ -441,7 +544,63 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     return () => unsub();
   }, []);
 
-  // Auto-resolve URL ?friendInvite= token when verified user opens link
+  // Live online presence heartbeat (every 45s while tab visible)
+  useEffect(() => {
+    if (!user || !user.emailVerified) return;
+    const beat = () => {
+      if (document.visibilityState === 'visible') {
+        updateUserPresenceHeartbeat(user).catch(() => {});
+      }
+    };
+    const intervalId = window.setInterval(beat, 45_000);
+    document.addEventListener('visibilitychange', beat);
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', beat);
+    };
+  }, [user]);
+
+  // Subscribe to approved friends' online presence
+  useEffect(() => {
+    if (!user || !user.emailVerified || friends.length === 0) {
+      setFriendPresenceMap({});
+      return;
+    }
+
+    const unsubs = friends.map((fr) =>
+      subscribeFriendPresence(fr.friendUid, (uid, online, lastSeen) => {
+        setFriendPresenceMap((prev) => ({
+          ...prev,
+          [uid]: { online, lastSeen },
+        }));
+      })
+    );
+
+    // Re-evaluate staleness every 30s locally without extra Firestore reads
+    const staleTicker = window.setInterval(() => {
+      setFriendPresenceMap((prev) => {
+        const next: Record<string, { online: boolean; lastSeen?: number }> = {};
+        let changed = false;
+        const now = Date.now();
+        for (const [uid, info] of Object.entries(prev) as [
+          string,
+          { online: boolean; lastSeen?: number },
+        ][]) {
+          const stillOnline = Boolean(info.lastSeen && now - info.lastSeen < 120_000);
+          if (stillOnline !== info.online) changed = true;
+          next[uid] = { ...info, online: stillOnline };
+        }
+        return changed ? next : prev;
+      });
+    }, 30_000);
+
+    return () => {
+      unsubs.forEach((u) => u());
+      window.clearInterval(staleTicker);
+    };
+  }, [user, friends]);
+
+  // Auto-resolve URL ?invite= / ?friendInvite= token when verified user opens link
   useEffect(() => {
     if (!initialFriendInviteToken || !user || !user.emailVerified) return;
     setPasteInviteInput(initialFriendInviteToken);
@@ -456,7 +615,9 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         } else if (found && found.ownerUid === user.uid) {
           setFriendFeedback({
             type: 'err',
-            msg: isAr ? 'هذا رابط دعوتك الشخصي — شاركه مع صديقك ليطلب إضافتك.' : 'This is your own invite link — share it with a friend.',
+            msg: isAr
+              ? 'هذا رابط دعوتك الشخصي — شاركه مع صديقك ليطلب إضافتك.'
+              : 'This is your own invite link — share it with a friend.',
           });
         } else {
           setFriendFeedback({
@@ -524,7 +685,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       async (snap) => {
         const allOut = snap.docs.map((d) => d.data() as FriendRequestDoc);
         setOutgoingPendingRequests(allOut.filter((r) => r.status === 'pending'));
-        // Automatically add approved friends once recipient clicks Approve
         for (const req of allOut) {
           if (req.status === 'accepted' && !req.syncedBySender) {
             await syncAcceptedOutgoingRequest(user, req);
@@ -805,10 +965,10 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     }
   };
 
-  // Invite Link Builders & Sharing
+  // Invite Link Builders & Sharing (Clean ?invite=... format + accepts both ?invite= & ?friendInvite=)
   const personalInviteUrl = useMemo(() => {
     if (!myInvite?.inviteToken || typeof window === 'undefined') return '';
-    return `${window.location.origin}${window.location.pathname}?friendInvite=${encodeURIComponent(
+    return `${window.location.origin}${window.location.pathname}?invite=${encodeURIComponent(
       myInvite.inviteToken
     )}`;
   }, [myInvite?.inviteToken]);
@@ -817,7 +977,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     if (!personalInviteUrl) return;
     const shareTitle = isAr ? 'دعوة صداقة للسرد الثنائي — منصة السرد' : 'Duo Sard Friend Invite';
     const shareText = isAr
-      ? 'اضغط على رابط الصداقة الآمن لإرسال طلب إضافة في منصة السرد (لن تتم الإضافة إلا بعد الموافقة):'
+      ? 'اضغط على رابط الصداقة لإرسال طلب إضافة في منصة السرد (تتم الإضافة بعد الموافقة):'
       : 'Open this invite link to send a friend request in Assard (requires approval):';
 
     if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
@@ -857,7 +1017,9 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         setMyInvite(fresh);
         setFriendFeedback({
           type: 'ok',
-          msg: isAr ? 'تم إصدار رابط دعوة جديد وإلغاء الرابط السابق بنجاح.' : 'New invite link generated and previous link revoked.',
+          msg: isAr
+            ? 'تم إصدار رابط دعوة جديد وإلغاء الرابط السابق بنجاح.'
+            : 'New invite link generated and previous link revoked.',
         });
       }
     } finally {
@@ -876,7 +1038,9 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       if (!found) {
         setFriendFeedback({
           type: 'err',
-          msg: isAr ? 'لم يتم العثور على رابط دعوة صالح أو تم إلغاؤه.' : 'Invite link not found or revoked.',
+          msg: isAr
+            ? 'لم يتم العثور على رابط دعوة صالح أو تم إلغاؤه.'
+            : 'Invite link not found or revoked.',
         });
         return;
       }
@@ -890,7 +1054,9 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       if (friends.some((f) => f.friendUid === found.ownerUid)) {
         setFriendFeedback({
           type: 'ok',
-          msg: isAr ? `«${found.ownerName}» موجود بالفعل في قائمة أصدقائك.` : `"${found.ownerName}" is already in your friends list.`,
+          msg: isAr
+            ? `«${found.ownerName}» موجود بالفعل في قائمة أصدقائك.`
+            : `"${found.ownerName}" is already in your friends list.`,
         });
         return;
       }
@@ -933,8 +1099,9 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       onClearFriendInvite?.();
       try {
         const u = new URL(window.location.href);
-        if (u.searchParams.has('friendInvite')) {
+        if (u.searchParams.has('friendInvite') || u.searchParams.has('invite')) {
           u.searchParams.delete('friendInvite');
+          u.searchParams.delete('invite');
           window.history.replaceState(null, '', u.toString());
         }
       } catch {
@@ -1024,20 +1191,28 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     return stream;
   };
 
-  // Sync bounded recitation metadata via Firestore signaling (strictly NO RTCDataChannel)
+  // Sync bounded recitation metadata & live curriculum via Firestore signaling (strictly NO RTCDataChannel)
   const syncCallControlState = async (
     patch: Partial<{
       activeAyah: number;
       reciterSide: 'host' | 'guest';
       mistakesCount: number;
+      markedErrors: string[];
       hideVersesForReciter: boolean;
       hideVersesForListener: boolean;
       riwayah: QuranRiwayah;
+      curriculumMode: 'surah' | 'ayah' | 'page';
+      surahNumber: number;
+      surahEnd: number;
+      ayahFrom: number;
+      ayahTo: number;
+      pageFrom: number;
+      pageTo: number;
     }>
   ) => {
     const activeCallId = sessionIdRef.current;
     if (!activeCallId || !auth.currentUser?.emailVerified) return;
-    if (sessionMeta?.status !== 'active') return;
+    if (sessionStatusRef.current !== 'active') return;
     const sessionPath = `duoSessions/${activeCallId}`;
     try {
       await updateDoc(doc(db, 'duoSessions', activeCallId), {
@@ -1055,6 +1230,9 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       setReciterSide(data.reciterSide);
     }
     if (typeof data.mistakesCount === 'number') setMistakesCount(data.mistakesCount);
+    if (Array.isArray(data.markedErrors)) {
+      setMarkedErrors(data.markedErrors.slice(0, 80));
+    }
     if (typeof data.hideVersesForReciter === 'boolean') {
       setHideVersesForReciter(data.hideVersesForReciter);
     }
@@ -1064,6 +1242,19 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     if (data.riwayah === 'hafs' || data.riwayah === 'qalun' || data.riwayah === 'warsh') {
       setSelectedRiwayah(data.riwayah);
     }
+    if (
+      data.curriculumMode === 'surah' ||
+      data.curriculumMode === 'ayah' ||
+      data.curriculumMode === 'page'
+    ) {
+      setCurriculumMode(data.curriculumMode);
+    }
+    if (typeof data.surahNumber === 'number') setSelectedSurah(data.surahNumber);
+    if (typeof data.surahEnd === 'number') setSelectedSurahEnd(data.surahEnd);
+    if (typeof data.ayahFrom === 'number') setAyahFrom(data.ayahFrom);
+    if (typeof data.ayahTo === 'number') setAyahTo(data.ayahTo);
+    if (typeof data.pageFrom === 'number') setPageFrom(data.pageFrom);
+    if (typeof data.pageTo === 'number') setPageTo(data.pageTo);
   };
 
   const setupPeerConnection = (stream: MediaStream): RTCPeerConnection => {
@@ -1110,11 +1301,41 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     return pc;
   };
 
+  // Helper to get current curriculum bounds
+  const buildCurriculumPayloadFields = () => {
+    const surahInfo = SURAH_LIST.find((s) => s.number === selectedSurah) || SURAH_LIST[0];
+    const boundedFrom =
+      curriculumMode === 'surah'
+        ? 1
+        : Math.max(1, Math.min(ayahFrom, surahInfo.ayahCount));
+    const boundedTo =
+      curriculumMode === 'surah'
+        ? surahInfo.ayahCount
+        : Math.max(boundedFrom, Math.min(ayahTo, surahInfo.ayahCount));
+    const sEnd =
+      curriculumMode === 'surah' && multiSurahRange
+        ? Math.max(selectedSurah, Math.min(114, selectedSurahEnd, selectedSurah + 4))
+        : selectedSurah;
+    const p1 = Math.max(1, Math.min(604, pageFrom));
+    const p2 = Math.max(p1, Math.min(604, pageTo, p1 + 9));
+    return {
+      riwayah: selectedRiwayah,
+      curriculumMode,
+      surahNumber: selectedSurah,
+      surahEnd: sEnd,
+      ayahFrom: boundedFrom,
+      ayahTo: boundedTo,
+      pageFrom: p1,
+      pageTo: p2,
+    };
+  };
+
   // Start Direct Encrypted Friend Audio Call ONLY (Voice rooms completely disabled)
   const startDirectFriendCall = async (targetFriend: FriendContactItem) => {
     if (!user || !user.emailVerified) return;
     callRingtone.unlockAudio();
     setLobbyError(null);
+    setLastCallSummary(null);
     setLobbyBusy(true);
     remoteAnswerAppliedRef.current = false;
 
@@ -1136,28 +1357,8 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         );
       }
 
-      const hostDisplayName = (
-        user.displayName ||
-        user.email?.split('@')[0] ||
-        (isAr ? 'المتصل' : 'Caller')
-      ).slice(0, 80);
-
-      const boundedFrom =
-        curriculumMode === 'surah'
-          ? 1
-          : Math.max(1, Math.min(ayahFrom, currentSurahInfo.ayahCount));
-      const boundedTo =
-        curriculumMode === 'surah'
-          ? currentSurahInfo.ayahCount
-          : Math.max(boundedFrom, Math.min(ayahTo, currentSurahInfo.ayahCount));
-
-      const sEnd =
-        curriculumMode === 'surah' && multiSurahRange
-          ? Math.max(selectedSurah, Math.min(114, selectedSurahEnd, selectedSurah + 4))
-          : selectedSurah;
-
-      const p1 = Math.max(1, Math.min(604, pageFrom));
-      const p2 = Math.max(p1, Math.min(604, pageTo, p1 + 9));
+      const hostDisplayName = getDisplayNameForUser(user);
+      const currFields = buildCurriculumPayloadFields();
 
       const callPayload: Record<string, unknown> = {
         sessionId: newSessionId,
@@ -1165,21 +1366,15 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         hostName: hostDisplayName,
         calleeUid: targetFriend.friendUid,
         callMode: 'friend_call',
-        riwayah: selectedRiwayah,
-        curriculumMode,
-        surahNumber: selectedSurah,
-        surahEnd: sEnd,
-        ayahFrom: boundedFrom,
-        ayahTo: boundedTo,
-        pageFrom: p1,
-        pageTo: p2,
+        ...currFields,
         offerType: finalDesc.type || 'offer',
         offerSdp: finalDesc.sdp,
         hideVersesForReciter,
         hideVersesForListener,
-        activeAyah: boundedFrom,
+        activeAyah: currFields.ayahFrom,
         reciterSide: 'host',
         mistakesCount: 0,
+        markedErrors: [],
         status: 'ringing',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -1192,7 +1387,8 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       setSessionMeta(callPayload as unknown as DuoSessionDoc);
       setReciterSide('host');
       setMistakesCount(0);
-      setActiveAyah(boundedFrom);
+      setMarkedErrors([]);
+      setActiveAyah(currFields.ayahFrom);
       setOutgoingCallTargetName(targetFriend.friendName);
       setPeerConnState('ringing');
       callRingtone.start('outgoing');
@@ -1221,6 +1417,19 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
             setOutgoingCallTargetName(null);
             setPeerConnState('ended');
             teardownWebRtcResources();
+            if (data.sessionEvaluation) {
+              setLastCallSummary({
+                partnerName: data.guestName || targetFriend.friendName,
+                evaluation: data.sessionEvaluation,
+                durationSeconds: data.callDurationSeconds ?? 0,
+                mistakesCount: data.mistakesCount ?? 0,
+                accuracyPct: data.accuracyPct ?? 100,
+              });
+              setShowEvalModal(false);
+              setSessionId(null);
+              setSessionMeta(null);
+              setPeerConnState('idle');
+            }
             return;
           }
 
@@ -1287,6 +1496,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
 
     const cleanId = targetSessionId.trim().toUpperCase();
     setLobbyError(null);
+    setLastCallSummary(null);
     setLobbyBusy(true);
     const sessionPath = `duoSessions/${cleanId}`;
 
@@ -1335,11 +1545,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         );
       }
 
-      const guestDisplayName = (
-        user.displayName ||
-        user.email?.split('@')[0] ||
-        (isAr ? 'المُشارِك' : 'Partner')
-      ).slice(0, 80);
+      const guestDisplayName = getDisplayNameForUser(user);
 
       await updateDoc(doc(db, 'duoSessions', cleanId), {
         guestUid: user.uid,
@@ -1361,18 +1567,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         guestName: guestDisplayName,
         status: 'active',
       });
-      if (callData.riwayah) {
-        setSelectedRiwayah(callData.riwayah);
-      }
-      if (typeof callData.hideVersesForReciter === 'boolean') {
-        setHideVersesForReciter(callData.hideVersesForReciter);
-      }
-      if (typeof callData.hideVersesForListener === 'boolean') {
-        setHideVersesForListener(callData.hideVersesForListener);
-      }
-      setReciterSide(callData.reciterSide || 'host');
-      setMistakesCount(typeof callData.mistakesCount === 'number' ? callData.mistakesCount : 0);
-      setActiveAyah(typeof callData.activeAyah === 'number' ? callData.activeAyah : callData.ayahFrom);
+      applySyncedSessionSnapshot(callData);
       setPeerConnState('connecting');
 
       unsubSessionRef.current = onSnapshot(
@@ -1388,6 +1583,19 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
           if (updated.status === 'ended' || updated.status === 'declined') {
             setPeerConnState(updated.status);
             teardownWebRtcResources();
+            if (updated.status === 'ended' && updated.sessionEvaluation) {
+              setLastCallSummary({
+                partnerName: updated.hostName,
+                evaluation: updated.sessionEvaluation,
+                durationSeconds: updated.callDurationSeconds ?? 0,
+                mistakesCount: updated.mistakesCount ?? 0,
+                accuracyPct: updated.accuracyPct ?? 100,
+              });
+              setShowEvalModal(false);
+              setSessionId(null);
+              setSessionMeta(null);
+              setPeerConnState('idle');
+            }
             return;
           }
           if (updated.status === 'active') {
@@ -1411,7 +1619,11 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         );
       } else {
         setLobbyError(
-          err instanceof Error ? err.message : isAr ? 'تعذر الرد على المكالمة.' : 'Failed to answer call.'
+          err instanceof Error
+            ? err.message
+            : isAr
+            ? 'تعذر الرد على المكالمة.'
+            : 'Failed to answer call.'
         );
       }
     } finally {
@@ -1434,20 +1646,53 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     }
   }, [pendingAcceptCallId, user]);
 
-  const handleEndCall = async (resetToLobby = true) => {
+  // Compute accuracy percentage based on errors vs verse words in current curriculum
+  const totalWordsInVerses = useMemo(() => {
+    if (verses.length === 0) return 50;
+    return Math.max(
+      10,
+      verses.reduce((sum, v) => sum + v.text.trim().split(/\s+/).filter(Boolean).length, 0)
+    );
+  }, [verses]);
+
+  const computedAccuracyPct = useMemo(() => {
+    if (mistakesCount <= 0) return 100;
+    return Math.max(
+      0,
+      Math.min(100, Math.round(((totalWordsInVerses - mistakesCount) / totalWordsInVerses) * 100))
+    );
+  }, [mistakesCount, totalWordsInVerses]);
+
+  const handleEndCall = async (
+    resetToLobby = true,
+    evalPayload?: {
+      evaluation: SessionEvaluationRating;
+      durationSeconds: number;
+      accuracyPct: number;
+    }
+  ) => {
     const activeCallId = sessionIdRef.current;
     const currentMeta = sessionMeta;
 
     callRingtone.stop();
     teardownWebRtcResources();
+    setShowEvalModal(false);
+    setShowCurriculumModal(false);
 
     if (activeCallId && auth.currentUser?.emailVerified) {
       try {
         if (currentMeta?.status !== 'ended' && currentMeta?.status !== 'declined') {
-          await updateDoc(doc(db, 'duoSessions', activeCallId), {
+          const endDocPatch: Record<string, unknown> = {
             status: 'ended',
             updatedAt: serverTimestamp(),
-          });
+          };
+          if (evalPayload) {
+            endDocPatch.endedByUid = auth.currentUser.uid;
+            endDocPatch.sessionEvaluation = evalPayload.evaluation;
+            endDocPatch.callDurationSeconds = Math.max(0, Math.min(86400, evalPayload.durationSeconds));
+            endDocPatch.accuracyPct = Math.max(0, Math.min(100, evalPayload.accuracyPct));
+          }
+          await updateDoc(doc(db, 'duoSessions', activeCallId), endDocPatch);
         }
       } catch (err) {
         if (auth.currentUser) {
@@ -1457,11 +1702,27 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       dismissBackgroundCallNotification(activeCallId);
     }
 
+    if (evalPayload && currentMeta) {
+      const pName =
+        myRoleRef.current === 'host'
+          ? currentMeta.guestName || outgoingCallTargetName || (isAr ? 'صديقك' : 'Partner')
+          : currentMeta.hostName;
+      setLastCallSummary({
+        partnerName: pName,
+        evaluation: evalPayload.evaluation,
+        durationSeconds: evalPayload.durationSeconds,
+        mistakesCount,
+        accuracyPct: evalPayload.accuracyPct,
+      });
+    }
+
     if (resetToLobby) {
       setSessionId(null);
       setSessionMeta(null);
       setPeerConnState('idle');
       setVerses([]);
+      setMarkedErrors([]);
+      setMistakesCount(0);
       handledAutoCallRef.current = null;
     }
   };
@@ -1494,6 +1755,28 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     syncCallControlState({ mistakesCount: next });
   };
 
+  // Interactive tap on individual word for Listener -> syncs highlighted error token to Reciter!
+  const handleToggleWordError = (verseKey: string, word: string, wordIdx: number) => {
+    const cleanWord = word.trim().slice(0, 28);
+    if (!cleanWord) return;
+    const token = `${verseKey}|${cleanWord}|${wordIdx}`.slice(0, 80);
+
+    let nextList: string[];
+    let nextCount: number;
+
+    if (markedErrors.includes(token)) {
+      nextList = markedErrors.filter((t) => t !== token);
+      nextCount = Math.max(0, mistakesCount - 1);
+    } else {
+      nextList = [token, ...markedErrors].slice(0, 80);
+      nextCount = Math.min(999, Math.max(mistakesCount + 1, nextList.length));
+    }
+
+    setMarkedErrors(nextList);
+    setMistakesCount(nextCount);
+    syncCallControlState({ markedErrors: nextList, mistakesCount: nextCount });
+  };
+
   const handleToggleSyncedHideReciter = () => {
     const next = !hideVersesForReciter;
     setHideVersesForReciter(next);
@@ -1508,9 +1791,16 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     syncCallControlState({ hideVersesForListener: next });
   };
 
-  const handleSwitchSessionRiwayah = (nextRw: QuranRiwayah) => {
-    setSelectedRiwayah(nextRw);
-    syncCallControlState({ riwayah: nextRw });
+  const handleApplyCurriculumSettings = () => {
+    if (sessionId && sessionStatusRef.current === 'active') {
+      const payload = buildCurriculumPayloadFields();
+      syncCallControlState({
+        ...payload,
+        hideVersesForReciter,
+        hideVersesForListener,
+      });
+    }
+    setShowCurriculumModal(false);
   };
 
   const handleStepVerse = (delta: number) => {
@@ -1530,23 +1820,23 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       const p1 = Math.min(pageFrom, pageTo);
       const p2 = Math.max(pageFrom, pageTo);
       return isAr
-        ? `${p1 === p2 ? `صفحة ${p1}` : `الصفحات ${p1} – ${p2}`} · برواية ${rwLabel}`
+        ? `${p1 === p2 ? `صفحة ${toArabicDigits(p1)}` : `الصفحات ${toArabicDigits(p1)} – ${toArabicDigits(p2)}`} · رواية ${rwLabel}`
         : `${p1 === p2 ? `Page ${p1}` : `Pages ${p1}–${p2}`} · ${rwLabel}`;
     }
     if (curriculumMode === 'surah') {
       const s2Obj = SURAH_LIST.find((s) => s.number === selectedSurahEnd) || currentSurahInfo;
       if (multiSurahRange && selectedSurahEnd !== selectedSurah) {
         return isAr
-          ? `من سورة ${currentSurahInfo.nameAr} إلى ${s2Obj.nameAr} · برواية ${rwLabel}`
+          ? `من سورة ${currentSurahInfo.nameAr} إلى ${s2Obj.nameAr} · رواية ${rwLabel}`
           : `Surah ${currentSurahInfo.nameEn} – ${s2Obj.nameEn} · ${rwLabel}`;
       }
       return isAr
-        ? `سورة ${currentSurahInfo.nameAr} كاملة (${currentSurahInfo.ayahCount} آية) · برواية ${rwLabel}`
+        ? `سورة ${currentSurahInfo.nameAr} كاملة · رواية ${rwLabel}`
         : `Surah ${currentSurahInfo.nameEn} (Full) · ${rwLabel}`;
     }
     return isAr
-      ? `سورة ${currentSurahInfo.nameAr} (الآيات ${ayahFrom} – ${ayahTo}) · برواية ${rwLabel}`
-      : `Surah ${currentSurahInfo.nameEn} (Ayahs ${ayahFrom}–${ayahTo}) · ${rwLabel}`;
+      ? `سورة ${currentSurahInfo.nameAr} (${toArabicDigits(ayahFrom)} - ${toArabicDigits(ayahTo)}) · رواية ${rwLabel}`
+      : `Surah ${currentSurahInfo.nameEn} (${ayahFrom}–${ayahTo}) · ${rwLabel}`;
   }, [
     curriculumMode,
     pageFrom,
@@ -1567,20 +1857,35 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     return SURAH_LIST.find((s) => s.number === sessionMeta.surahNumber) || currentSurahInfo;
   }, [sessionMeta, currentSurahInfo]);
 
-  const activeSessionTitle = useMemo(() => {
-    if (!sessionMeta) return lobbyCurriculumSummary;
-    const rw = getRiwayahLabel(sessionMeta.riwayah || selectedRiwayah, lang);
+  const activeCurriculumTextOnly = useMemo(() => {
+    if (!sessionMeta) return '';
     if (sessionMeta.curriculumMode === 'page') {
       const p1 = sessionMeta.pageFrom || 1;
       const p2 = sessionMeta.pageTo || p1;
       return isAr
-        ? `${p1 === p2 ? `صفحة ${p1}` : `الصفحات ${p1} – ${p2}`} · برواية ${rw}`
-        : `${p1 === p2 ? `Page ${p1}` : `Pages ${p1}–${p2}`} · ${rw}`;
+        ? p1 === p2
+          ? `صفحة ${toArabicDigits(p1)}`
+          : `الصفحات ${toArabicDigits(p1)} - ${toArabicDigits(p2)}`
+        : p1 === p2
+        ? `Page ${p1}`
+        : `Pages ${p1}-${p2}`;
     }
     return isAr
-      ? `سورة ${sessionSurahInfo.nameAr} (${sessionMeta.ayahFrom} - ${sessionMeta.ayahTo}) · برواية ${rw}`
-      : `Surah ${sessionSurahInfo.nameEn} (${sessionMeta.ayahFrom}-${sessionMeta.ayahTo}) · ${rw}`;
-  }, [sessionMeta, sessionSurahInfo, selectedRiwayah, lang, isAr, lobbyCurriculumSummary]);
+      ? `سُورَةُ ${sessionSurahInfo.nameAr} (${toArabicDigits(sessionMeta.ayahFrom)} - ${toArabicDigits(
+          sessionMeta.ayahTo
+        )})`
+      : `Surah ${sessionSurahInfo.nameEn} (${sessionMeta.ayahFrom} - ${sessionMeta.ayahTo})`;
+  }, [sessionMeta, sessionSurahInfo, isAr]);
+
+  const activeRiwayahLabel = getRiwayahLabel(sessionMeta?.riwayah || selectedRiwayah, lang);
+
+  const partnerName = useMemo(() => {
+    if (!sessionMeta) return outgoingCallTargetName || (isAr ? 'صديقك' : 'Partner');
+    if (myRoleInCall === 'host') {
+      return sessionMeta.guestName || outgoingCallTargetName || (isAr ? 'صديقك' : 'Partner');
+    }
+    return sessionMeta.hostName || (isAr ? 'صديقك' : 'Partner');
+  }, [sessionMeta, myRoleInCall, outgoingCallTargetName, isAr]);
 
   const amICurrentReciter = myRoleInCall === reciterSide;
   const shouldHideVersesForMe =
@@ -1589,6 +1894,11 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
 
   const activeSourceMeta =
     TRUSTED_QURAN_SOURCES.find((s) => s.id === activeUsedSource) || TRUSTED_QURAN_SOURCES[0];
+
+  const onlineFriendsCount = useMemo(
+    () => friends.filter((f) => friendPresenceMap[f.friendUid]?.online).length,
+    [friends, friendPresenceMap]
+  );
 
   if (!authReady) {
     return (
@@ -1602,274 +1912,252 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   }
 
   return (
-    <section className="max-w-5xl mx-auto space-y-5">
-      {/* Compact Header Banner */}
-      <div className="gold-card-surface rounded-[24px] border border-[#E6D19E] border-t-[3px] border-t-[#C88A14] p-4 sm:p-5 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-        <div className="flex items-start gap-3">
-          <div className="w-11 h-11 rounded-2xl bg-[#F6E9C8] border border-[#E5C983] flex items-center justify-center text-[#9E650C] shrink-0">
-            <PhoneCall className="w-5 h-5" />
-          </div>
-          <div className="space-y-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-lg sm:text-2xl font-extrabold font-display-islamic text-[#261C14]">
-                {isAr ? 'السرد الثنائي — اتصال مباشر بالأصدقاء' : 'Duo Recitation — Direct Friend Audio'}
-              </h1>
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-[#ECFDF3] border border-[#86EFAC] text-[#15803D] text-[11px] font-bold">
-                <Lock className="w-3 h-3" />
-                <span>{isAr ? 'صوت مشفّر ومؤمّن (E2EE)' : 'Encrypted Audio (E2EE)'}</span>
-              </span>
-            </div>
-            <p className="text-xs sm:text-sm text-[#5C4B3B] leading-relaxed">
-              {isAr
-                ? 'اختر المقرر (بالصفحة أو السورة أو الآيات) والرواية (حفص، قالون، ورش) واتصل بصديقك المعتمد صوتياً بضغطة زر.'
-                : 'Select pages, surahs, or ayahs with Hafs, Qalun, or Warsh and place an encrypted direct voice call to an approved friend.'}
-            </p>
-          </div>
-        </div>
-
-        {user && (
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
-            {notifPerm !== 'granted' && notifPerm !== 'unsupported' && (
-              <button
-                type="button"
-                onClick={handleEnableBackgroundCallAlerts}
-                className="px-3 py-2 rounded-xl bg-[#4A6144] hover:bg-[#3B4F36] text-[#FFFDF9] text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-2xs"
-              >
-                <BellRing className="w-3.5 h-3.5" />
-                <span>{isAr ? 'تفعيل رنين المكالمات' : 'Enable Ring Alerts'}</span>
-              </button>
-            )}
-            <div className="flex items-center gap-2 bg-[#FFFDF9] border border-[#DDD2BE] rounded-xl px-3 py-1.5">
-              <div className="min-w-0 text-start">
-                <div className="text-xs font-bold text-[#261C14] truncate max-w-[140px]">
-                  {user.displayName || user.email}
-                </div>
-                <div className="text-[10.5px] text-[#84715E] truncate max-w-[140px]">
-                  {user.email}
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={handleSignOut}
-                title={isAr ? 'تسجيل الخروج' : 'Sign Out'}
-                className="p-1.5 rounded-lg bg-[#F7F3EB] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-[#9C4A32] cursor-pointer transition-colors"
-              >
-                <LogOut className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
+    <section className="max-w-4xl mx-auto space-y-4">
       {/* STEP 1: NOT SIGNED IN -> AUTH GATE */}
       {!user && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          <div className="rounded-2xl bg-[#FFFDF9] border border-[#DDD2BE] p-5 sm:p-6 shadow-xs space-y-4">
-            <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-[#F6E9C8] text-[#9E650C] flex items-center justify-center">
-                <Mail className="w-5 h-5" />
+        <div className="space-y-4">
+          <div className="gold-card-surface rounded-[24px] border border-[#E6D19E] border-t-[3px] border-t-[#C88A14] p-4 sm:p-5 shadow-xs flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-[#F6E9C8] border border-[#E5C983] flex items-center justify-center text-[#9E650C] shrink-0">
+                <PhoneCall className="w-5 h-5" />
               </div>
               <div>
-                <h2 className="text-base sm:text-lg font-extrabold text-[#261C14]">
-                  {isAr ? 'تسجيل الدخول بالبريد الإلكتروني' : 'Sign In with Email'}
-                </h2>
+                <h1 className="text-base sm:text-xl font-extrabold font-display-islamic text-[#261C14]">
+                  {isAr ? 'السرد الثنائي — اتصال مباشر بالأصدقاء' : 'Duo Recitation — Direct Friend Audio'}
+                </h1>
                 <p className="text-xs text-[#5C4B3B]">
                   {isAr
-                    ? 'سجّل دخولك لمشاركة رابط الصداقة والاتصال الصوتي المباشر المحمي'
-                    : 'Sign in to share your friend invite link and make protected direct audio calls'}
+                    ? 'سجّل دخولك لمشاركة رابط الدعوة والبدء في التسميع المباشر المشفر'
+                    : 'Sign in to share your friend invite link and place encrypted voice calls'}
                 </p>
               </div>
             </div>
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#ECFDF3] border border-[#86EFAC] text-[#15803D] text-[11px] font-bold shrink-0">
+              <Lock className="w-3 h-3" />
+              <span>E2EE</span>
+            </span>
+          </div>
 
-            {authError && (
-              <div className="rounded-xl bg-[#FBF3DF] border border-[#C88A14] p-3 text-xs text-[#261C14] flex items-start gap-2.5">
-                <AlertCircle className="w-4 h-4 text-[#C88A14] shrink-0 mt-0.5" />
-                <div className="space-y-1 leading-relaxed">
-                  <p className="font-semibold">{authError}</p>
-                  {providerHelpOpen && (
-                    <p className="text-[11px] text-[#5C4B3B]">
-                      {isAr
-                        ? 'لتفعيل البريد وكلمة المرور: افتح Firebase Console ← Authentication ← Sign-in method ← Email/Password ← Enable.'
-                        : 'Enable Email/Password in Firebase Console → Authentication → Sign-in method.'}
-                    </p>
-                  )}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="rounded-2xl bg-[#FFFDF9] border border-[#DDD2BE] p-5 shadow-xs space-y-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-[#F6E9C8] text-[#9E650C] flex items-center justify-center">
+                  <Mail className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-base font-extrabold text-[#261C14]">
+                    {isAr ? 'تسجيل الدخول بالبريد الإلكتروني' : 'Sign In with Email'}
+                  </h2>
+                  <p className="text-xs text-[#5C4B3B]">
+                    {isAr
+                      ? 'اتصال مباشر محمي بين الأصدقاء عبر المتصفح'
+                      : 'Protected direct browser-to-browser calls'}
+                  </p>
                 </div>
               </div>
-            )}
 
-            {verificationMsg && (
-              <div className="rounded-xl bg-[#4A6144]/10 border border-[#4A6144]/30 p-3 text-xs text-[#261C14] font-semibold">
-                {verificationMsg}
-              </div>
-            )}
-
-            <button
-              type="button"
-              disabled={authLoading}
-              onClick={handleGoogleSignIn}
-              className="w-full mustard-gradient-btn text-[#FFFDF9] py-3 px-4 rounded-xl text-sm font-bold flex items-center justify-center gap-2.5 shadow-xs cursor-pointer disabled:opacity-60"
-            >
-              <LogIn className="w-4 h-4" />
-              <span>
-                {isAr
-                  ? 'الدخول السريع عبر بريد Google (موثّق فوراً)'
-                  : 'Sign In Instantly with Google Email'}
-              </span>
-            </button>
-
-            <div className="flex items-center gap-3 text-xs text-[#84715E]">
-              <div className="flex-1 h-px bg-[#E5DEC9]" />
-              <span>{isAr ? 'أو بالبريد وكلمة المرور' : 'Or with Email & Password'}</span>
-              <div className="flex-1 h-px bg-[#E5DEC9]" />
-            </div>
-
-            <div className="grid grid-cols-2 gap-1 p-1 bg-[#F7F3EB] rounded-xl border border-[#DDD2BE]">
-              <button
-                type="button"
-                onClick={() => {
-                  setAuthMode('login');
-                  setAuthError(null);
-                }}
-                className={`py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-                  authMode === 'login'
-                    ? 'bg-[#2D2218] text-[#EAB338]'
-                    : 'text-[#5C4B3B] hover:text-[#261C14]'
-                }`}
-              >
-                {isAr ? 'تسجيل الدخول' : 'Sign In'}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setAuthMode('register');
-                  setAuthError(null);
-                }}
-                className={`py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-                  authMode === 'register'
-                    ? 'bg-[#2D2218] text-[#EAB338]'
-                    : 'text-[#5C4B3B] hover:text-[#261C14]'
-                }`}
-              >
-                {isAr ? 'حساب بريد جديد' : 'Create Account'}
-              </button>
-            </div>
-
-            <form onSubmit={handleEmailAuthSubmit} className="space-y-3">
-              {authMode === 'register' && (
-                <div>
-                  <label className="block text-xs font-bold text-[#5C4B3B] mb-1">
-                    {isAr ? 'الاسم الظاهر للأصدقاء' : 'Display Name'}
-                  </label>
-                  <input
-                    type="text"
-                    value={nameInput}
-                    onChange={(e) => setNameInput(e.target.value)}
-                    placeholder={isAr ? 'مثال: عبد الله' : 'e.g. Abdullah'}
-                    className="w-full px-3 py-2 rounded-xl bg-[#F7F3EB] border border-[#DDD2BE] text-sm text-[#261C14] focus:outline-none focus:border-[#C88A14]"
-                  />
+              {authError && (
+                <div className="rounded-xl bg-[#FBF3DF] border border-[#C88A14] p-3 text-xs text-[#261C14] flex items-start gap-2.5">
+                  <AlertCircle className="w-4 h-4 text-[#C88A14] shrink-0 mt-0.5" />
+                  <div className="space-y-1 leading-relaxed">
+                    <p className="font-semibold">{authError}</p>
+                    {providerHelpOpen && (
+                      <p className="text-[11px] text-[#5C4B3B]">
+                        {isAr
+                          ? 'لتفعيل البريد وكلمة المرور: افتح Firebase Console ← Authentication ← Sign-in method ← Email/Password ← Enable.'
+                          : 'Enable Email/Password in Firebase Console → Authentication → Sign-in method.'}
+                      </p>
+                    )}
+                  </div>
                 </div>
               )}
 
-              <div>
-                <label className="block text-xs font-bold text-[#5C4B3B] mb-1">
-                  {isAr ? 'البريد الإلكتروني' : 'Email Address'}
-                </label>
-                <div className="relative">
-                  <Mail className="w-4 h-4 text-[#84715E] absolute top-1/2 -translate-y-1/2 start-3 pointer-events-none" />
-                  <input
-                    type="email"
-                    required
-                    value={emailInput}
-                    onChange={(e) => setEmailInput(e.target.value)}
-                    placeholder="name@example.com"
-                    dir="ltr"
-                    className="w-full ps-9 pe-3 py-2 rounded-xl bg-[#F7F3EB] border border-[#DDD2BE] text-sm text-[#261C14] focus:outline-none focus:border-[#C88A14]"
-                  />
+              {verificationMsg && (
+                <div className="rounded-xl bg-[#4A6144]/10 border border-[#4A6144]/30 p-3 text-xs text-[#261C14] font-semibold">
+                  {verificationMsg}
                 </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-[#5C4B3B] mb-1">
-                  {isAr ? 'كلمة المرور' : 'Password'}
-                </label>
-                <div className="relative">
-                  <Lock className="w-4 h-4 text-[#84715E] absolute top-1/2 -translate-y-1/2 start-3 pointer-events-none" />
-                  <input
-                    type="password"
-                    required
-                    minLength={6}
-                    value={passwordInput}
-                    onChange={(e) => setPasswordInput(e.target.value)}
-                    placeholder="••••••"
-                    dir="ltr"
-                    className="w-full ps-9 pe-3 py-2 rounded-xl bg-[#F7F3EB] border border-[#DDD2BE] text-sm text-[#261C14] focus:outline-none focus:border-[#C88A14]"
-                  />
-                </div>
-              </div>
+              )}
 
               <button
-                type="submit"
+                type="button"
                 disabled={authLoading}
-                className="w-full py-2.5 px-4 rounded-xl bg-[#2D2218] hover:bg-[#3D2F22] text-[#EAB338] text-sm font-bold cursor-pointer transition-colors disabled:opacity-60"
+                onClick={handleGoogleSignIn}
+                className="w-full mustard-gradient-btn text-[#FFFDF9] py-3 px-4 rounded-xl text-sm font-bold flex items-center justify-center gap-2.5 shadow-xs cursor-pointer disabled:opacity-60"
               >
-                {authLoading
-                  ? isAr
-                    ? 'جاري المعالجة...'
-                    : 'Please wait...'
-                  : authMode === 'register'
-                  ? isAr
-                    ? 'إنشاء الحساب وإرسال رابط التفعيل'
-                    : 'Create Account & Send Verification'
-                  : isAr
-                  ? 'دخول بالبريد الإلكتروني'
-                  : 'Sign In with Email'}
+                <LogIn className="w-4 h-4" />
+                <span>
+                  {isAr
+                    ? 'الدخول السريع عبر بريد Google (موثّق فوراً)'
+                    : 'Sign In Instantly with Google Email'}
+                </span>
               </button>
-            </form>
-          </div>
 
-          <div className="olive-card-surface rounded-2xl border border-[#C8D4C2] p-5 sm:p-6 shadow-xs flex flex-col justify-between gap-4">
-            <div className="space-y-4">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-[#4A6144]/15 text-[#4A6144] flex items-center justify-center">
-                  <ShieldCheck className="w-5 h-5" />
-                </div>
-                <h3 className="text-base sm:text-lg font-extrabold text-[#261C14]">
-                  {isAr ? 'حماية وخصوصية السرد الثنائي' : 'Protected Direct Duo Recitation'}
-                </h3>
+              <div className="flex items-center gap-3 text-xs text-[#84715E]">
+                <div className="flex-1 h-px bg-[#E5DEC9]" />
+                <span>{isAr ? 'أو بالبريد وكلمة المرور' : 'Or with Email & Password'}</span>
+                <div className="flex-1 h-px bg-[#E5DEC9]" />
               </div>
 
-              <ul className="space-y-3 text-xs sm:text-sm text-[#2D2218]">
-                <li className="flex items-start gap-2.5">
-                  <Link2 className="w-4 h-4 text-[#4A6144] shrink-0 mt-0.5" />
-                  <span>
-                    {isAr
-                      ? 'إضافة الأصدقاء عبر مشاركة رابط دعوة خاص بك ولا تتم الإضافة إلا بعد موافقتك لحماية خصوصيتك.'
-                      : 'Add friends exclusively via shareable invite links requiring explicit approval.'}
-                  </span>
-                </li>
-                <li className="flex items-start gap-2.5">
-                  <Lock className="w-4 h-4 text-[#15803D] shrink-0 mt-0.5" />
-                  <span>
-                    {isAr
-                      ? 'اتصال صوتي مباشر مشفّر (WebRTC E2EE) مع إخفاء الـ IP ومنع تبادل أي ملفات.'
-                      : 'Encrypted direct audio-only calling with TURN IP masking and blocked data channels.'}
-                  </span>
-                </li>
-                <li className="flex items-start gap-2.5">
-                  <BookOpen className="w-4 h-4 text-[#C88A14] shrink-0 mt-0.5" />
-                  <span>
-                    {isAr
-                      ? 'دعم كامل للروايات الثلاث (حفص، قالون، ورش) وتحديد المقرر بالصفحات أو السور أو الآيات.'
-                      : 'Supports Hafs, Qalun, and Warsh narrations with Page, Surah, or Ayah curriculum selection.'}
-                  </span>
-                </li>
-              </ul>
+              <div className="grid grid-cols-2 gap-1 p-1 bg-[#F7F3EB] rounded-xl border border-[#DDD2BE]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode('login');
+                    setAuthError(null);
+                  }}
+                  className={`py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                    authMode === 'login'
+                      ? 'bg-[#2D2218] text-[#EAB338]'
+                      : 'text-[#5C4B3B] hover:text-[#261C14]'
+                  }`}
+                >
+                  {isAr ? 'تسجيل الدخول' : 'Sign In'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode('register');
+                    setAuthError(null);
+                  }}
+                  className={`py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                    authMode === 'register'
+                      ? 'bg-[#2D2218] text-[#EAB338]'
+                      : 'text-[#5C4B3B] hover:text-[#261C14]'
+                  }`}
+                >
+                  {isAr ? 'حساب بريد جديد' : 'Create Account'}
+                </button>
+              </div>
+
+              <form onSubmit={handleEmailAuthSubmit} className="space-y-3">
+                {authMode === 'register' && (
+                  <div>
+                    <label className="block text-xs font-bold text-[#5C4B3B] mb-1">
+                      {isAr ? 'الاسم الظاهر للأصدقاء' : 'Display Name'}
+                    </label>
+                    <input
+                      type="text"
+                      value={nameInput}
+                      onChange={(e) => setNameInput(e.target.value)}
+                      placeholder={isAr ? 'مثال: نور' : 'e.g. Noor'}
+                      className="w-full px-3 py-2 rounded-xl bg-[#F7F3EB] border border-[#DDD2BE] text-sm text-[#261C14] focus:outline-none focus:border-[#C88A14]"
+                    />
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-bold text-[#5C4B3B] mb-1">
+                    {isAr ? 'البريد الإلكتروني' : 'Email Address'}
+                  </label>
+                  <div className="relative">
+                    <Mail className="w-4 h-4 text-[#84715E] absolute top-1/2 -translate-y-1/2 start-3 pointer-events-none" />
+                    <input
+                      type="email"
+                      required
+                      value={emailInput}
+                      onChange={(e) => setEmailInput(e.target.value)}
+                      placeholder="name@example.com"
+                      dir="ltr"
+                      className="w-full ps-9 pe-3 py-2 rounded-xl bg-[#F7F3EB] border border-[#DDD2BE] text-sm text-[#261C14] focus:outline-none focus:border-[#C88A14]"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-[#5C4B3B] mb-1">
+                    {isAr ? 'كلمة المرور' : 'Password'}
+                  </label>
+                  <div className="relative">
+                    <Lock className="w-4 h-4 text-[#84715E] absolute top-1/2 -translate-y-1/2 start-3 pointer-events-none" />
+                    <input
+                      type="password"
+                      required
+                      minLength={6}
+                      value={passwordInput}
+                      onChange={(e) => setPasswordInput(e.target.value)}
+                      placeholder="••••••"
+                      dir="ltr"
+                      className="w-full ps-9 pe-3 py-2 rounded-xl bg-[#F7F3EB] border border-[#DDD2BE] text-sm text-[#261C14] focus:outline-none focus:border-[#C88A14]"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={authLoading}
+                  className="w-full py-2.5 px-4 rounded-xl bg-[#2D2218] hover:bg-[#3D2F22] text-[#EAB338] text-sm font-bold cursor-pointer transition-colors disabled:opacity-60"
+                >
+                  {authLoading
+                    ? isAr
+                      ? 'جاري المعالجة...'
+                      : 'Please wait...'
+                    : authMode === 'register'
+                    ? isAr
+                      ? 'إنشاء الحساب وإرسال رابط التفعيل'
+                      : 'Create Account & Send Verification'
+                    : isAr
+                    ? 'دخول بالبريد الإلكتروني'
+                    : 'Sign In with Email'}
+                </button>
+              </form>
             </div>
 
-            <div className="rounded-xl bg-[#FFFDF9]/80 border border-[#DDD2BE] p-3 text-xs text-[#5C4B3B]">
-              {isAr
-                ? 'تم إلغاء الغرف العامة؛ الاتصال الصوتي يقتصر على أصدقائك المعتمدين فقط.'
-                : 'Public rooms are disabled; calling is strictly between approved friends.'}
+            <div className="olive-card-surface rounded-2xl border border-[#C8D4C2] p-5 shadow-xs flex flex-col justify-between gap-4">
+              <div className="space-y-3.5">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-[#4A6144]/15 text-[#4A6144] flex items-center justify-center">
+                    <ShieldCheck className="w-5 h-5" />
+                  </div>
+                  <h3 className="text-base font-extrabold text-[#261C14]">
+                    {isAr ? 'حماية وخصوصية السرد الثنائي' : 'Protected Direct Duo Recitation'}
+                  </h3>
+                </div>
+
+                <ul className="space-y-3 text-xs sm:text-sm text-[#2D2218]">
+                  <li className="flex items-start gap-2.5">
+                    <Link2 className="w-4 h-4 text-[#4A6144] shrink-0 mt-0.5" />
+                    <span>
+                      {isAr
+                        ? 'إضافة الأصدقاء عبر مشاركة رابط دعوة خاص بك ولا تتم الإضافة إلا بعد موافقتك لحماية خصوصيتك.'
+                        : 'Add friends exclusively via shareable invite links requiring explicit approval.'}
+                    </span>
+                  </li>
+                  <li className="flex items-start gap-2.5">
+                    <Lock className="w-4 h-4 text-[#15803D] shrink-0 mt-0.5" />
+                    <span>
+                      {isAr
+                        ? 'اتصال صوتي مباشر مشفّر (WebRTC E2EE) مع إخفاء الـ IP ومنع تبادل أي ملفات.'
+                        : 'Encrypted direct audio-only calling with TURN IP masking and blocked data channels.'}
+                    </span>
+                  </li>
+                  <li className="flex items-start gap-2.5">
+                    <BookOpen className="w-4 h-4 text-[#C88A14] shrink-0 mt-0.5" />
+                    <span>
+                      {isAr
+                        ? 'دعم كامل للروايات الثلاث (حفص، قالون، ورش) وتنبيه لحظي بالكلمات المعلّم عليها.'
+                        : 'Supports Hafs, Qalun, and Warsh narrations with real-time word error alerts.'}
+                    </span>
+                  </li>
+                </ul>
+              </div>
+
+              <div className="space-y-2">
+                <div className="rounded-xl bg-[#FFFDF9]/85 border border-[#DDD2BE] p-3 text-xs text-[#5C4B3B]">
+                  {isAr
+                    ? 'تم إلغاء الغرف العامة؛ الاتصال الصوتي يقتصر على أصدقائك المعتمدين فقط.'
+                    : 'Public rooms are disabled; calling is strictly between approved friends.'}
+                </div>
+                {onOpenPrivacyTerms && (
+                  <button
+                    type="button"
+                    onClick={onOpenPrivacyTerms}
+                    className="text-xs font-bold text-[#15803D] hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <ShieldCheck className="w-3.5 h-3.5" />
+                    <span>{isAr ? 'سياسة الخصوصية وشروط الاستخدام' : 'Privacy Policy & Terms'}</span>
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -1916,9 +2204,16 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         </div>
       )}
 
-      {/* STEP 3: VERIFIED USER LOBBY — 3 CLEAN STEPS */}
+      {/* STEP 3: VERIFIED USER LOBBY (MATCHING SCREENSHOT 3 CLEANLY) */}
       {user && user.emailVerified && !sessionId && (
         <div className="space-y-4">
+          {/* Top Soft Green Guidance Banner */}
+          <div className="rounded-2xl bg-[#ECFDF3] border border-[#BBF7D0] px-4 py-3 text-xs sm:text-sm font-bold text-[#15803D] leading-relaxed">
+            {isAr
+              ? 'التوجيه: شارك رابط دعوتك الخاص مع صديقك، وعند موافقته على الطلب سيُضاف وتبدأ مكالمة السرد الثنائي.'
+              : 'Tip: Share your personal invite link with a friend; once approved, start your encrypted Duo voice call.'}
+          </div>
+
           {lobbyError && (
             <div className="rounded-xl bg-[#FBF3DF] border border-[#C88A14] p-3.5 text-xs sm:text-sm text-[#261C14] flex items-start gap-2.5">
               <AlertCircle className="w-4 h-4 text-[#C88A14] shrink-0 mt-0.5" />
@@ -1926,9 +2221,55 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
             </div>
           )}
 
-          {/* Incoming Friend Link Invite Preview Card (Consent Gate) */}
+          {/* Post-Call Evaluation Summary Toast Card */}
+          {lastCallSummary && (
+            <div className="rounded-2xl bg-[#FFFDF9] border-2 border-[#15803D]/40 p-4 shadow-xs flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-[#ECFDF3] text-[#15803D] flex items-center justify-center shrink-0">
+                  <Award className="w-5 h-5" />
+                </div>
+                <div className="space-y-0.5">
+                  <div className="text-sm font-extrabold text-[#261C14]">
+                    {isAr
+                      ? `نتيجة جلسة السرد مع ${lastCallSummary.partnerName}`
+                      : `Session Summary with ${lastCallSummary.partnerName}`}
+                  </div>
+                  <div className="text-xs text-[#5C4B3B] flex flex-wrap items-center gap-2">
+                    <span className="font-bold text-[#15803D]">
+                      {
+                        EVALUATION_CHOICES.find((c) => c.id === lastCallSummary.evaluation)?.[
+                          isAr ? 'labelAr' : 'labelEn'
+                        ]
+                      }
+                    </span>
+                    <span>·</span>
+                    <span>
+                      {isAr ? 'المدة' : 'Duration'}:{' '}
+                      {formatCallDuration(lastCallSummary.durationSeconds, isAr)}
+                    </span>
+                    <span>·</span>
+                    <span>
+                      {isAr ? 'الإتقان' : 'Accuracy'}:{' '}
+                      {isAr
+                        ? `${toArabicDigits(lastCallSummary.accuracyPct)}٪`
+                        : `${lastCallSummary.accuracyPct}%`}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setLastCallSummary(null)}
+                className="p-1.5 rounded-lg bg-[#F7F3EB] text-[#5C4B3B] hover:bg-[#EFE9DC] cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
+          {/* Incoming Friend Link Invite Preview Banner (Explicit Approval Required) */}
           {previewedInvite && (
-            <div className="rounded-2xl bg-[#FBF3DF] border-2 border-[#C88A14] p-4 sm:p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="rounded-2xl bg-[#FBF3DF] border-2 border-[#C88A14] p-4 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="flex items-start gap-3">
                 <div className="w-10 h-10 rounded-xl bg-[#2D2218] text-[#EAB338] flex items-center justify-center shrink-0">
                   <UserPlus className="w-5 h-5" />
@@ -1951,7 +2292,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                   type="button"
                   disabled={inviteBusy}
                   onClick={handleConfirmSendFriendRequest}
-                  className="px-4 py-2 rounded-xl bg-[#4A6144] hover:bg-[#3B4F36] text-[#FFFDF9] text-xs font-bold cursor-pointer disabled:opacity-60"
+                  className="px-4 py-2 rounded-xl bg-[#166534] hover:bg-[#14532D] text-[#FFFDF9] text-xs font-bold cursor-pointer disabled:opacity-60"
                 >
                   {isAr ? 'إرسال طلب الصداقة' : 'Send Friend Request'}
                 </button>
@@ -1969,532 +2310,128 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
             </div>
           )}
 
-          {/* STEP 1 CARD: Riwayah & Simple Curriculum Selection */}
-          <div className="rounded-2xl bg-[#FFFDF9] border border-[#DDD2BE] p-4 sm:p-5 shadow-xs space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-[#EFE9DC]">
-              <div className="flex items-center gap-2">
-                <span className="w-6 h-6 rounded-full bg-[#2D2218] text-[#EAB338] text-xs font-extrabold flex items-center justify-center">
-                  1
-                </span>
-                <h2 className="text-sm sm:text-base font-extrabold text-[#261C14]">
-                  {isAr ? 'الرواية ومقرر السرد' : 'Narration & Curriculum'}
+          {/* LOBBY CARD 1: Welcome + Personal Invite Link + Copy / Share / Sign Out */}
+          <div className="rounded-[24px] bg-[#FFFDF9] border border-[#DDD2BE] p-4 sm:p-5 shadow-xs space-y-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="space-y-1">
+                <h2 className="text-xl sm:text-2xl font-extrabold text-[#261C14]">
+                  {isAr
+                    ? `مرحباً، ${getDisplayNameForUser(user)}`
+                    : `Welcome, ${getDisplayNameForUser(user)}`}
                 </h2>
-              </div>
-              <span className="text-xs font-bold text-[#4A6144] bg-[#4A6144]/10 border border-[#4A6144]/25 px-3 py-1 rounded-lg">
-                {lobbyCurriculumSummary}
-              </span>
-            </div>
-
-            {/* Riwayah Selector: Hafs / Qalun / Warsh */}
-            <div className="space-y-1.5">
-              <label className="block text-xs font-bold text-[#5C4B3B]">
-                {isAr ? 'اختيار الرواية القرآنية:' : 'Quran Narration (Riwayah):'}
-              </label>
-              <div className="grid grid-cols-3 gap-2">
-                {RIWAYAH_OPTIONS.map((rw) => {
-                  const active = selectedRiwayah === rw.id;
-                  return (
-                    <button
-                      key={rw.id}
-                      type="button"
-                      onClick={() => setSelectedRiwayah(rw.id)}
-                      className={`py-2.5 px-3 rounded-xl border text-center transition-all cursor-pointer ${
-                        active
-                          ? 'bg-[#2D2218] border-[#C88A14] text-[#EAB338] shadow-xs'
-                          : 'bg-[#F7F3EB] border-[#DDD2BE] text-[#261C14] hover:bg-[#EFE9DC]'
-                      }`}
-                    >
-                      <div className="text-xs sm:text-sm font-extrabold">
-                        {isAr ? rw.labelAr : rw.labelEn}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* 3 Clear Curriculum Modes: Surah / Ayah Numbers / Pages */}
-            <div className="space-y-3">
-              <div className="grid grid-cols-3 gap-1.5 p-1 bg-[#F7F3EB] rounded-xl border border-[#DDD2BE]">
-                {(
-                  [
-                    {
-                      id: 'surah',
-                      label: isAr ? 'بالسور' : 'By Surah',
-                      icon: BookOpen,
-                    },
-                    {
-                      id: 'ayah',
-                      label: isAr ? 'بأرقام الآيات' : 'By Ayahs',
-                      icon: Hash,
-                    },
-                    {
-                      id: 'page',
-                      label: isAr ? 'بالصفحات' : 'By Pages',
-                      icon: FileText,
-                    },
-                  ] as const
-                ).map((tab) => {
-                  const Icon = tab.icon;
-                  const active = curriculumMode === tab.id;
-                  return (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      onClick={() => setCurriculumMode(tab.id)}
-                      className={`py-2 px-2 rounded-lg text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
-                        active
-                          ? 'bg-[#4A6144] text-[#FFFDF9] shadow-2xs'
-                          : 'text-[#5C4B3B] hover:text-[#261C14]'
-                      }`}
-                    >
-                      <Icon className="w-3.5 h-3.5 shrink-0" />
-                      <span>{tab.label}</span>
-                    </button>
-                  );
-                })}
+                <p className="text-xs sm:text-sm font-semibold text-[#5C4B3B]">
+                  {isAr ? 'رابط دعوتك الخاص للأصدقاء:' : 'Your personal friend invite link:'}
+                </p>
               </div>
 
-              {/* MODE A: BY SURAH (Touch Grid OR Dropdown) */}
-              {curriculumMode === 'surah' && (
-                <div className="rounded-xl bg-[#F7F3EB]/70 border border-[#DDD2BE] p-3 space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-1 p-0.5 bg-[#EFE9DC] rounded-lg border border-[#DDD2BE]">
-                      <button
-                        type="button"
-                        onClick={() => setSurahPickStyle('touch')}
-                        className={`px-2.5 py-1 rounded-md text-xs font-bold flex items-center gap-1 cursor-pointer ${
-                          surahPickStyle === 'touch'
-                            ? 'bg-[#2D2218] text-[#EAB338]'
-                            : 'text-[#5C4B3B]'
-                        }`}
-                      >
-                        <Touchpad className="w-3.5 h-3.5" />
-                        <span>{isAr ? 'اختيار باللمس' : 'Touch Grid'}</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setSurahPickStyle('dropdown')}
-                        className={`px-2.5 py-1 rounded-md text-xs font-bold flex items-center gap-1 cursor-pointer ${
-                          surahPickStyle === 'dropdown'
-                            ? 'bg-[#2D2218] text-[#EAB338]'
-                            : 'text-[#5C4B3B]'
-                        }`}
-                      >
-                        <ListFilter className="w-3.5 h-3.5" />
-                        <span>{isAr ? 'قائمة منسدلة' : 'Dropdown'}</span>
-                      </button>
-                    </div>
-
-                    <label className="inline-flex items-center gap-1.5 text-xs font-bold text-[#5C4B3B] cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={multiSurahRange}
-                        onChange={(e) => {
-                          setMultiSurahRange(e.target.checked);
-                          if (!e.target.checked) setSelectedSurahEnd(selectedSurah);
-                        }}
-                        className="rounded border-[#C88A14] text-[#C88A14] focus:ring-[#C88A14]"
-                      />
-                      <span>{isAr ? 'تحديد عدة سور متتالية' : 'Select Surah Range'}</span>
-                    </label>
-                  </div>
-
-                  {surahPickStyle === 'dropdown' ? (
-                    <div className={`grid gap-2.5 ${multiSurahRange ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'}`}>
-                      <div>
-                        <label className="block text-[11px] font-bold text-[#5C4B3B] mb-1">
-                          {multiSurahRange
-                            ? isAr
-                              ? 'من السورة'
-                              : 'From Surah'
-                            : isAr
-                            ? 'السورة'
-                            : 'Surah'}
-                        </label>
-                        <select
-                          value={selectedSurah}
-                          onChange={(e) => setSelectedSurah(Number(e.target.value))}
-                          className="w-full px-3 py-2 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] text-sm font-bold text-[#261C14] focus:outline-none focus:border-[#4A6144]"
-                        >
-                          {SURAH_LIST.map((s) => (
-                            <option key={s.number} value={s.number}>
-                              {s.number}. {isAr ? `سورة ${s.nameAr}` : s.nameEn} ({s.ayahCount})
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {multiSurahRange && (
-                        <div>
-                          <label className="block text-[11px] font-bold text-[#5C4B3B] mb-1">
-                            {isAr ? 'إلى السورة (حد أقصى 5 سور)' : 'To Surah (max 5)'}
-                          </label>
-                          <select
-                            value={selectedSurahEnd}
-                            onChange={(e) => setSelectedSurahEnd(Number(e.target.value))}
-                            className="w-full px-3 py-2 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] text-sm font-bold text-[#261C14] focus:outline-none focus:border-[#4A6144]"
-                          >
-                            {SURAH_LIST.filter(
-                              (s) => s.number >= selectedSurah && s.number <= selectedSurah + 4
-                            ).map((s) => (
-                              <option key={s.number} value={s.number}>
-                                {s.number}. {isAr ? `سورة ${s.nameAr}` : s.nameEn}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <div className="relative">
-                        <Search className="w-3.5 h-3.5 text-[#84715E] absolute top-1/2 -translate-y-1/2 start-3 pointer-events-none" />
-                        <input
-                          type="text"
-                          value={surahSearchQuery}
-                          onChange={(e) => setSurahSearchQuery(e.target.value)}
-                          placeholder={isAr ? 'ابحث باسم السورة أو رقمها للمسها...' : 'Search Surah by name or number...'}
-                          className="w-full ps-8 pe-3 py-1.5 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] text-xs text-[#261C14] focus:outline-none focus:border-[#4A6144]"
-                        />
-                      </div>
-                      <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 max-h-44 overflow-y-auto p-1">
-                        {filteredSurahs.map((s) => {
-                          const isStart = s.number === selectedSurah;
-                          const isInRange =
-                            multiSurahRange &&
-                            s.number >= selectedSurah &&
-                            s.number <= selectedSurahEnd;
-                          return (
-                            <button
-                              key={s.number}
-                              type="button"
-                              onClick={() => {
-                                if (!multiSurahRange) {
-                                  setSelectedSurah(s.number);
-                                  setSelectedSurahEnd(s.number);
-                                } else if (s.number < selectedSurah || selectedSurahEnd !== selectedSurah) {
-                                  setSelectedSurah(s.number);
-                                  setSelectedSurahEnd(s.number);
-                                } else {
-                                  setSelectedSurahEnd(Math.min(s.number, selectedSurah + 4));
-                                }
-                              }}
-                              className={`px-2 py-2 rounded-xl border text-center transition-all cursor-pointer ${
-                                isStart
-                                  ? 'bg-[#2D2218] border-[#C88A14] text-[#EAB338] shadow-2xs'
-                                  : isInRange
-                                  ? 'bg-[#4A6144]/15 border-[#4A6144] text-[#261C14]'
-                                  : 'bg-[#FFFDF9] border-[#DDD2BE] text-[#261C14] hover:border-[#C88A14]'
-                              }`}
-                            >
-                              <div className="text-[10px] opacity-75 font-mono-tabular">
-                                {s.number}
-                              </div>
-                              <div className="text-xs font-extrabold truncate">
-                                {isAr ? s.nameAr : s.nameEn}
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* MODE B: BY AYAH NUMBERS */}
-              {curriculumMode === 'ayah' && (
-                <div className="rounded-xl bg-[#F7F3EB]/70 border border-[#DDD2BE] p-3 space-y-3">
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                    <div>
-                      <label className="block text-[11px] font-bold text-[#5C4B3B] mb-1">
-                        {isAr ? 'السورة' : 'Surah'}
-                      </label>
-                      <select
-                        value={selectedSurah}
-                        onChange={(e) => setSelectedSurah(Number(e.target.value))}
-                        className="w-full px-3 py-2 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] text-sm font-bold text-[#261C14] focus:outline-none focus:border-[#4A6144]"
-                      >
-                        {SURAH_LIST.map((s) => (
-                          <option key={s.number} value={s.number}>
-                            {s.number}. {isAr ? s.nameAr : s.nameEn} ({s.ayahCount})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-bold text-[#5C4B3B] mb-1">
-                        {isAr ? 'من الآية' : 'From Ayah'}
-                      </label>
-                      <input
-                        type="number"
-                        min={1}
-                        max={currentSurahInfo.ayahCount}
-                        value={ayahFrom}
-                        onChange={(e) =>
-                          setAyahFrom(
-                            Math.max(1, Math.min(Number(e.target.value) || 1, currentSurahInfo.ayahCount))
-                          )
-                        }
-                        className="w-full px-3 py-2 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] text-sm font-mono-tabular font-bold text-[#261C14]"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-bold text-[#5C4B3B] mb-1">
-                        {isAr ? 'إلى الآية' : 'To Ayah'}
-                      </label>
-                      <input
-                        type="number"
-                        min={ayahFrom}
-                        max={currentSurahInfo.ayahCount}
-                        value={ayahTo}
-                        onChange={(e) =>
-                          setAyahTo(
-                            Math.max(
-                              ayahFrom,
-                              Math.min(Number(e.target.value) || ayahFrom, currentSurahInfo.ayahCount)
-                            )
-                          )
-                        }
-                        className="w-full px-3 py-2 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] text-sm font-mono-tabular font-bold text-[#261C14]"
-                      />
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-[11px] text-[#84715E] font-bold">
-                      {isAr ? 'اختيار سريع باللمس:' : 'Quick Touch:'}
-                    </span>
-                    {[
-                      { label: isAr ? '١–٥' : '1–5', from: 1, to: Math.min(5, currentSurahInfo.ayahCount) },
-                      { label: isAr ? '١–١٠' : '1–10', from: 1, to: Math.min(10, currentSurahInfo.ayahCount) },
-                      { label: isAr ? '١–٢٠' : '1–20', from: 1, to: Math.min(20, currentSurahInfo.ayahCount) },
-                      { label: isAr ? 'كل السورة' : 'All', from: 1, to: currentSurahInfo.ayahCount },
-                    ].map((preset) => (
-                      <button
-                        key={preset.label}
-                        type="button"
-                        onClick={() => {
-                          setAyahFrom(preset.from);
-                          setAyahTo(preset.to);
-                        }}
-                        className="px-2.5 py-1 rounded-lg bg-[#FFFDF9] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-xs font-bold text-[#261C14] cursor-pointer"
-                      >
-                        {preset.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* MODE C: BY MUSHAF PAGES */}
-              {curriculumMode === 'page' && (
-                <div className="rounded-xl bg-[#F7F3EB]/70 border border-[#DDD2BE] p-3 space-y-3">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[11px] font-bold text-[#5C4B3B] mb-1">
-                        {isAr ? 'من الصفحة (١ – ٦٠٤)' : 'From Page (1–604)'}
-                      </label>
-                      <input
-                        type="number"
-                        min={1}
-                        max={604}
-                        value={pageFrom}
-                        onChange={(e) => {
-                          const v = Math.max(1, Math.min(604, Number(e.target.value) || 1));
-                          setPageFrom(v);
-                          if (pageTo < v) setPageTo(v);
-                        }}
-                        className="w-full px-3 py-2 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] text-sm font-mono-tabular font-bold text-[#261C14]"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-bold text-[#5C4B3B] mb-1">
-                        {isAr ? 'إلى الصفحة (حد أقصى ١٠ صفحات)' : 'To Page (max 10)'}
-                      </label>
-                      <input
-                        type="number"
-                        min={pageFrom}
-                        max={Math.min(604, pageFrom + 9)}
-                        value={pageTo}
-                        onChange={(e) =>
-                          setPageTo(
-                            Math.max(
-                              pageFrom,
-                              Math.min(604, pageFrom + 9, Number(e.target.value) || pageFrom)
-                            )
-                          )
-                        }
-                        className="w-full px-3 py-2 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] text-sm font-mono-tabular font-bold text-[#261C14]"
-                      />
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-[11px] text-[#84715E] font-bold">
-                      {isAr ? 'عدد الصفحات باللمس:' : 'Page Count:'}
-                    </span>
-                    {[
-                      { label: isAr ? 'صفحة واحدة' : '1 Page', span: 0 },
-                      { label: isAr ? 'صفحتان' : '2 Pages', span: 1 },
-                      { label: isAr ? '٣ صفحات' : '3 Pages', span: 2 },
-                      { label: isAr ? '٥ صفحات' : '5 Pages', span: 4 },
-                    ].map((preset) => (
-                      <button
-                        key={preset.label}
-                        type="button"
-                        onClick={() => setPageTo(Math.min(604, pageFrom + preset.span))}
-                        className={`px-2.5 py-1 rounded-lg border text-xs font-bold cursor-pointer ${
-                          pageTo - pageFrom === preset.span
-                            ? 'bg-[#2D2218] text-[#EAB338] border-[#C88A14]'
-                            : 'bg-[#FFFDF9] text-[#261C14] border-[#DDD2BE] hover:bg-[#EFE9DC]'
-                        }`}
-                      >
-                        {preset.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* STEP 2 CARD: Collapsible Simple Options + Privacy */}
-          <div className="rounded-2xl bg-[#FFFDF9] border border-[#DDD2BE] p-4 shadow-xs space-y-3">
-            <button
-              type="button"
-              onClick={() => setOptionsExpanded((prev) => !prev)}
-              className="w-full flex items-center justify-between gap-2 cursor-pointer"
-            >
-              <div className="flex items-center gap-2">
-                <span className="w-6 h-6 rounded-full bg-[#2D2218] text-[#EAB338] text-xs font-extrabold flex items-center justify-center">
-                  2
-                </span>
-                <SlidersHorizontal className="w-4 h-4 text-[#C88A14]" />
-                <span className="text-sm font-extrabold text-[#261C14]">
-                  {isAr ? 'خيارات الإخفاء والخصوصية العالية' : 'Hiding & High-Privacy Settings'}
-                </span>
-              </div>
-              <span className="text-xs font-bold text-[#9E650C]">
-                {optionsExpanded
-                  ? isAr
-                    ? 'إخفاء التفاصيل'
-                    : 'Hide'
-                  : isAr
-                  ? 'تخصيص الخيارات'
-                  : 'Customize'}
-              </span>
-            </button>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setHideVersesForReciter(!hideVersesForReciter)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 cursor-pointer transition-colors ${
-                  hideVersesForReciter
-                    ? 'bg-[#2D2218] border-[#2D2218] text-[#EAB338]'
-                    : 'bg-[#F7F3EB] border-[#DDD2BE] text-[#5C4B3B]'
-                }`}
-              >
-                {hideVersesForReciter ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                <span>{isAr ? 'إخفاء الآيات عن القارئ' : 'Hide for Reciter'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setHideVersesForListener(!hideVersesForListener)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 cursor-pointer transition-colors ${
-                  hideVersesForListener
-                    ? 'bg-[#2D2218] border-[#2D2218] text-[#EAB338]'
-                    : 'bg-[#F7F3EB] border-[#DDD2BE] text-[#5C4B3B]'
-                }`}
-              >
-                {hideVersesForListener ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                <span>{isAr ? 'إخفاء الآيات عن المُسمِّع' : 'Hide for Listener'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setFadeFirstWordOnly(!fadeFirstWordOnly)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 cursor-pointer transition-colors ${
-                  fadeFirstWordOnly
-                    ? 'bg-[#4A6144] border-[#4A6144] text-[#FFFDF9]'
-                    : 'bg-[#F7F3EB] border-[#DDD2BE] text-[#5C4B3B]'
-                }`}
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>{isAr ? 'التلاشي (أول كلمة)' : 'First Word Hint'}</span>
-              </button>
-            </div>
-
-            {optionsExpanded && (
-              <div className="pt-2 border-t border-[#EFE9DC] space-y-2">
-                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[#ECFDF3] border border-[#86EFAC] px-3.5 py-2.5">
-                  <div className="flex items-center gap-2.5">
-                    <Lock className="w-4 h-4 text-[#15803D] shrink-0" />
-                    <div>
-                      <div className="text-xs font-extrabold text-[#261C14]">
-                        {isAr ? 'وضع الخصوصية العالية (إخفاء الـ IP)' : 'High Privacy Mode (IP Masking)'}
-                      </div>
-                      <div className="text-[11px] text-[#15803D] font-medium">
-                        {isAr
-                          ? 'توجيه الصوت المشفّر عبر خادم TURN الوسيط وحظر أي تبادل للملفات'
-                          : 'Routes encrypted audio via TURN relay & blocks data channels'}
-                      </div>
-                    </div>
-                  </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {notifPerm !== 'granted' && notifPerm !== 'unsupported' && (
                   <button
                     type="button"
-                    role="switch"
-                    aria-checked={highPrivacyIpMask}
-                    onClick={() => setHighPrivacyIpMask((prev) => !prev)}
-                    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ${
-                      highPrivacyIpMask ? 'bg-[#15803D]' : 'bg-[#C4B7A0]'
-                    }`}
+                    onClick={handleEnableBackgroundCallAlerts}
+                    className="px-3 py-2 rounded-xl bg-[#4A6144] hover:bg-[#3B4F36] text-[#FFFDF9] text-xs font-bold flex items-center gap-1.5 cursor-pointer"
                   >
-                    <span
-                      className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition duration-200 ${
-                        highPrivacyIpMask ? (isAr ? '-translate-x-5' : 'translate-x-5') : 'translate-x-0'
-                      }`}
-                    />
+                    <BellRing className="w-3.5 h-3.5" />
+                    <span>{isAr ? 'تفعيل الرنين' : 'Ring Alerts'}</span>
                   </button>
-                </div>
-
-                {highPrivacyIpMask && !TURN_SERVER_URL.trim() && (
-                  <p className="text-[11px] text-[#9E650C] bg-[#FBF3DF] border border-[#E5C983] rounded-lg px-3 py-1.5 font-semibold">
-                    {isAr
-                      ? 'تنبيه: وضع الخصوصية العالية (relay) مفعّل افتراضياً. ضع بيانات خادم TURN في TURN_SERVER_URL أعلى الملف أو أطفئه مؤقتاً للاتصال عبر STUN.'
-                      : 'Note: High Privacy relay mode is active by default. Add TURN_SERVER_URL or toggle off for direct STUN.'}
-                  </p>
                 )}
-              </div>
-            )}
-          </div>
-
-          {/* STEP 3 CARD: Consent-Gated Invite Link Friends + 1-Tap Direct Voice Calls */}
-          <div className="olive-card-surface rounded-2xl border border-[#C8D4C2] p-4 sm:p-5 space-y-4 shadow-xs">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2.5">
-                <span className="w-6 h-6 rounded-full bg-[#4A6144] text-[#FFFDF9] text-xs font-extrabold flex items-center justify-center">
-                  3
-                </span>
-                <div>
-                  <h2 className="text-base sm:text-lg font-extrabold text-[#261C14]">
-                    {isAr ? 'الأصدقاء والاتصال الصوتي المباشر' : 'Friends & Direct Audio Calling'}
-                  </h2>
-                  <p className="text-xs text-[#4A6144] font-semibold">
-                    {isAr
-                      ? 'شارك رابط صداقتك ولا يُضاف أحد إلا بعد موافقتك'
-                      : 'Share your invite link — friends require your explicit approval'}
-                  </p>
-                </div>
+                <button
+                  type="button"
+                  onClick={handleSignOut}
+                  className="px-3.5 py-2 rounded-xl bg-[#FFFDF9] hover:bg-[#F7F3EB] border border-[#DDD2BE] text-xs font-bold text-[#261C14] flex items-center gap-1.5 cursor-pointer transition-colors"
+                >
+                  <LogOut className="w-4 h-4 text-[#5C4B3B]" />
+                  <span>{isAr ? 'تسجيل الخروج' : 'Sign Out'}</span>
+                </button>
               </div>
             </div>
+
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <input
+                type="text"
+                readOnly
+                dir="ltr"
+                value={personalInviteUrl || (isAr ? 'جاري التوليد...' : 'Generating...')}
+                className="flex-1 min-w-[200px] px-3 py-2 rounded-xl bg-[#FAF7F0] border border-[#DDD2BE] text-xs font-mono-tabular text-[#5C4B3B] select-all truncate"
+              />
+              <button
+                type="button"
+                onClick={handleCopyInviteLink}
+                className="px-3.5 py-2 rounded-xl bg-[#FFFDF9] hover:bg-[#F7F3EB] border border-[#DDD2BE] text-xs font-bold text-[#261C14] flex items-center gap-1.5 cursor-pointer"
+              >
+                {copiedInvite ? (
+                  <Check className="w-3.5 h-3.5 text-[#15803D]" />
+                ) : (
+                  <Copy className="w-3.5 h-3.5 text-[#5C4B3B]" />
+                )}
+                <span>{copiedInvite ? (isAr ? 'نُسخ الرابط' : 'Copied') : isAr ? 'نسخ الرابط' : 'Copy Link'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleSharePersonalInvite}
+                className="px-3.5 py-2 rounded-xl bg-[#ECFDF3] hover:bg-[#DCFCE7] border border-[#BBF7D0] text-xs font-extrabold text-[#15803D] flex items-center gap-1.5 cursor-pointer"
+              >
+                <Share2 className="w-3.5 h-3.5" />
+                <span>{isAr ? 'مشاركة' : 'Share'}</span>
+              </button>
+              <button
+                type="button"
+                disabled={inviteBusy}
+                onClick={handleRegenerateInvite}
+                title={isAr ? 'إصدار رابط جديد وإلغاء السابق' : 'Regenerate & revoke previous link'}
+                className="p-2 rounded-xl bg-[#F7F3EB] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-[#9E650C] cursor-pointer disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${inviteBusy ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
+          </div>
+
+          {/* LOBBY CARD 2: Invite a Friend by Link */}
+          <div className="rounded-[24px] bg-[#FFFDF9] border border-[#DDD2BE] p-4 sm:p-5 shadow-xs space-y-3">
+            <div className="flex items-center gap-2">
+              <UserPlus className="w-5 h-5 text-[#15803D]" />
+              <h3 className="text-base sm:text-lg font-extrabold text-[#261C14]">
+                {isAr ? 'دعوة صديق عبر الرابط' : 'Invite a Friend via Link'}
+              </h3>
+            </div>
+            <p className="text-xs sm:text-sm text-[#5C4B3B]">
+              {isAr
+                ? 'أرسل رابطك لصديقك أو الصق رابط دعوته هنا لإرسال طلب الصداقة:'
+                : 'Send your link or paste your friend’s invite link here to send a friend request:'}
+            </p>
+
+            <form onSubmit={handleLookupPastedInvite} className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <Link2 className="w-4 h-4 text-[#84715E] absolute top-1/2 -translate-y-1/2 end-3 pointer-events-none" />
+                <input
+                  type="text"
+                  value={pasteInviteInput}
+                  onChange={(e) => setPasteInviteInput(e.target.value)}
+                  dir="ltr"
+                  placeholder="https://.../?invite=..."
+                  className="w-full ps-3 pe-9 py-2.5 rounded-2xl bg-[#FAF7F0] border border-[#DDD2BE] text-xs sm:text-sm text-[#261C14] focus:outline-none focus:border-[#15803D]"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={inviteLookupBusy || !pasteInviteInput.trim()}
+                className="px-5 py-2.5 rounded-2xl bg-[#166534] hover:bg-[#14532D] text-[#FFFDF9] text-xs sm:text-sm font-extrabold cursor-pointer disabled:opacity-50 shrink-0 transition-colors"
+              >
+                {inviteLookupBusy
+                  ? isAr
+                    ? 'جاري...'
+                    : '...'
+                  : isAr
+                  ? 'إرسال'
+                  : 'Send'}
+              </button>
+            </form>
 
             {friendFeedback && (
               <div
                 className={`rounded-xl p-3 text-xs font-semibold border ${
                   friendFeedback.type === 'ok'
-                    ? 'bg-[#4A6144]/10 border-[#4A6144]/35 text-[#261C14]'
+                    ? 'bg-[#ECFDF3] border-[#86EFAC] text-[#15803D]'
                     : 'bg-[#FBF3DF] border-[#C88A14] text-[#261C14]'
                 }`}
               >
@@ -2502,76 +2439,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
               </div>
             )}
 
-            {/* Personal Shareable Invite Link Box */}
-            <div className="rounded-xl bg-[#FFFDF9] border border-[#C8D4C2] p-3.5 space-y-2.5">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-xs font-extrabold text-[#261C14] flex items-center gap-1.5">
-                  <Link2 className="w-4 h-4 text-[#4A6144]" />
-                  <span>{isAr ? 'رابط دعوتك الشخصي لإضافة الأصدقاء' : 'Your Personal Friend Invite Link'}</span>
-                </div>
-                <button
-                  type="button"
-                  disabled={inviteBusy}
-                  onClick={handleRegenerateInvite}
-                  className="text-[11px] font-bold text-[#9E650C] hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-60"
-                >
-                  <RefreshCw className={`w-3 h-3 ${inviteBusy ? 'animate-spin' : ''}`} />
-                  <span>{isAr ? 'تجديد وإلغاء السابق' : 'Regenerate Link'}</span>
-                </button>
-              </div>
-
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                <input
-                  type="text"
-                  readOnly
-                  dir="ltr"
-                  value={personalInviteUrl || (isAr ? 'جاري التوليد...' : 'Generating...')}
-                  className="flex-1 px-3 py-2 rounded-xl bg-[#F7F3EB] border border-[#DDD2BE] text-xs font-mono-tabular text-[#5C4B3B] select-all"
-                />
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <button
-                    type="button"
-                    onClick={handleSharePersonalInvite}
-                    className="flex-1 sm:flex-initial px-3.5 py-2 rounded-xl bg-[#4A6144] hover:bg-[#3B4F36] text-[#FFFDF9] text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <Share2 className="w-3.5 h-3.5" />
-                    <span>{isAr ? 'مشاركة الرابط' : 'Share Link'}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleCopyInviteLink}
-                    className="px-3 py-2 rounded-xl bg-[#F6E9C8] hover:bg-[#EDD8A1] text-[#7D5306] text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    {copiedInvite ? <Check className="w-3.5 h-3.5 text-[#4A6144]" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copiedInvite ? (isAr ? 'نُسخ' : 'Copied') : isAr ? 'نسخ' : 'Copy'}</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Paste Received Friend Invite Link */}
-              <form
-                onSubmit={handleLookupPastedInvite}
-                className="pt-2 border-t border-[#EFE9DC] flex flex-col sm:flex-row gap-2"
-              >
-                <input
-                  type="text"
-                  value={pasteInviteInput}
-                  onChange={(e) => setPasteInviteInput(e.target.value)}
-                  dir="ltr"
-                  placeholder={isAr ? 'أو الصق رابط دعوة صديقك هنا...' : 'Or paste a friend invite link here...'}
-                  className="flex-1 px-3 py-1.5 rounded-xl bg-[#F7F3EB] border border-[#DDD2BE] text-xs text-[#261C14] focus:outline-none focus:border-[#4A6144]"
-                />
-                <button
-                  type="submit"
-                  disabled={inviteLookupBusy || !pasteInviteInput.trim()}
-                  className="px-3.5 py-1.5 rounded-xl bg-[#2D2218] text-[#EAB338] text-xs font-bold cursor-pointer disabled:opacity-50"
-                >
-                  {inviteLookupBusy ? (isAr ? 'جاري التحقق...' : 'Checking...') : isAr ? 'معاينة الرابط' : 'Check Link'}
-                </button>
-              </form>
-            </div>
-
-            {/* Incoming Pending Friend Approvals (Privacy Gate!) */}
+            {/* Pending Incoming Approval Requests (Privacy Consent Gate) */}
             {incomingRequests.length > 0 && (
               <div className="rounded-xl bg-[#FBF3DF] border-2 border-[#C88A14] p-3.5 space-y-2.5">
                 <div className="text-xs font-extrabold text-[#261C14] flex items-center gap-1.5">
@@ -2596,7 +2464,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                           type="button"
                           disabled={inviteBusy}
                           onClick={() => handleApproveRequest(req)}
-                          className="px-3 py-1.5 rounded-lg bg-[#4A6144] hover:bg-[#3B4F36] text-[#FFFDF9] text-xs font-bold flex items-center gap-1 cursor-pointer"
+                          className="px-3 py-1.5 rounded-lg bg-[#166534] hover:bg-[#14532D] text-[#FFFDF9] text-xs font-bold flex items-center gap-1 cursor-pointer"
                         >
                           <Check className="w-3.5 h-3.5" />
                           <span>{isAr ? 'موافقة وإضافة' : 'Approve'}</span>
@@ -2617,9 +2485,8 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
               </div>
             )}
 
-            {/* Outgoing Pending Status Notice */}
             {outgoingPendingRequests.length > 0 && (
-              <div className="text-xs text-[#5C4B3B] bg-[#FFFDF9]/80 border border-[#DDD2BE] rounded-xl px-3 py-2">
+              <div className="text-xs text-[#5C4B3B] bg-[#FAF7F0] border border-[#E5DEC9] rounded-xl px-3 py-2">
                 {isAr
                   ? `طلبات صادرة بانتظار موافقة أصحابها: ${outgoingPendingRequests
                       .map((r) => r.toName)
@@ -2627,80 +2494,168 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                   : `Awaiting approval from: ${outgoingPendingRequests.map((r) => r.toName).join(', ')}`}
               </div>
             )}
+          </div>
 
-            {/* Approved Friends List — Direct Voice Call Button ONLY */}
-            {friends.length === 0 ? (
-              <div className="rounded-xl bg-[#FFFDF9]/85 border border-dashed border-[#C8D4C2] p-5 text-center text-xs text-[#5C4B3B]">
+          {/* LOBBY CARD 3: Connected Friends + One-Tap Curriculum Picker + Voice Call */}
+          <div className="rounded-[24px] bg-[#FFFDF9] border border-[#DDD2BE] p-4 sm:p-5 shadow-xs space-y-3.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Users className="w-5 h-5 text-[#15803D]" />
+                <h3 className="text-base sm:text-lg font-extrabold text-[#261C14]">
+                  {isAr ? 'الأصدقاء المتصلون' : 'Connected Friends'}
+                </h3>
+              </div>
+              <span className="text-xs font-bold text-[#5C4B3B]">
                 {isAr
-                  ? 'قائمة أصدقائك فارغة حالياً — شارك رابط دعوتك أعلاه، وعندما توافق على طلب صديقك سيظهر هنا للاتصال الصوتي المباشر.'
-                  : 'No approved friends yet — share your invite link above and approve requests to place direct voice calls.'}
+                  ? `${toArabicDigits(onlineFriendsCount)} متصل الآن من ${toArabicDigits(
+                      friends.length
+                    )}`
+                  : `${onlineFriendsCount} online of ${friends.length}`}
+              </span>
+            </div>
+
+            {/* Compact Current Riwayah, Curriculum & Privacy Bar */}
+            <div className="rounded-xl bg-[#FAF7F0] border border-[#E5DEC9] px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs min-w-0">
+                <BookOpen className="w-4 h-4 text-[#C88A14] shrink-0" />
+                <span className="font-bold text-[#261C14] truncate">{lobbyCurriculumSummary}</span>
+                {highPrivacyIpMask && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#ECFDF3] border border-[#86EFAC] text-[#15803D] text-[10px] font-bold shrink-0">
+                    <Lock className="w-2.5 h-2.5" />
+                    <span>{isAr ? 'إخفاء IP' : 'IP Masked'}</span>
+                  </span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCurriculumModal(true)}
+                className="px-3 py-1.5 rounded-lg bg-[#FFFDF9] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-xs font-bold text-[#261C14] flex items-center gap-1.5 cursor-pointer shrink-0"
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5 text-[#C88A14]" />
+                <span>{isAr ? 'الرواية والمقرر' : 'Narration & Curriculum'}</span>
+              </button>
+            </div>
+
+            {friends.length === 0 ? (
+              <div className="rounded-2xl bg-[#FAF7F0] border border-dashed border-[#DDD2BE] p-6 text-center text-xs sm:text-sm text-[#5C4B3B]">
+                {isAr
+                  ? 'قائمة أصدقائك فارغة حالياً — شارك رابط دعوتك أعلاه، وبمجرد الموافقة سيظهر صديقك هنا.'
+                  : 'Your friends list is empty — share your invite link above to get started.'}
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {friends.map((fr) => (
-                  <div
-                    key={fr.friendUid}
-                    className="rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] p-3.5 flex items-center justify-between gap-2.5 shadow-2xs"
-                  >
-                    <div className="min-w-0">
-                      <div className="text-sm font-extrabold text-[#261C14] truncate">
-                        {fr.friendName}
+              <div className="space-y-2.5">
+                {friends.map((fr) => {
+                  const isOnline = Boolean(friendPresenceMap[fr.friendUid]?.online);
+                  return (
+                    <div
+                      key={fr.friendUid}
+                      className="rounded-2xl bg-[#FAF7F0] border border-[#E5DEC9] p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                    >
+                      <div className="flex items-center justify-between sm:justify-start gap-3">
+                        <div className="w-11 h-11 rounded-2xl bg-[#E8F2EC] border border-[#BBF7D0] text-[#15803D] flex items-center justify-center shrink-0">
+                          <UserCheck className="w-5 h-5" />
+                        </div>
+                        <div className="min-w-0 space-y-0.5">
+                          <div className="text-sm sm:text-base font-extrabold text-[#261C14] truncate">
+                            {fr.friendName}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                            <span
+                              className={`font-bold flex items-center gap-1 ${
+                                isOnline ? 'text-[#15803D]' : 'text-[#84715E]'
+                              }`}
+                            >
+                              <span
+                                className={`w-2 h-2 rounded-full ${
+                                  isOnline ? 'bg-[#16A34A]' : 'bg-[#B5A897]'
+                                }`}
+                              />
+                              <span>
+                                {isOnline
+                                  ? isAr
+                                    ? 'متصل الآن'
+                                    : 'Online now'
+                                  : isAr
+                                  ? 'صديق معتمد'
+                                  : 'Approved friend'}
+                              </span>
+                            </span>
+                            <span className="text-[#B5A897]">·</span>
+                            <span dir="ltr" className="font-mono-tabular text-[11px] text-[#5C4B3B]">
+                              {formatFriendShortCode(fr.friendUid)}
+                            </span>
+                          </div>
+                        </div>
                       </div>
-                      <div className="text-[11px] text-[#4A6144] font-semibold">
-                        {isAr ? 'صديق معتمد · اتصال محمي' : 'Approved Friend'}
-                      </div>
-                    </div>
 
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <button
-                        type="button"
-                        disabled={lobbyBusy}
-                        onClick={() => startDirectFriendCall(fr)}
-                        className="px-3 py-2 rounded-xl bg-[#4A6144] hover:bg-[#3B4F36] text-[#FFFDF9] text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-2xs disabled:opacity-60"
-                      >
-                        <PhoneCall className="w-3.5 h-3.5" />
-                        <span>{isAr ? 'اتصال صوتي' : 'Voice Call'}</span>
-                      </button>
-
-                      {confirmRemoveFriendUid === fr.friendUid ? (
+                      <div className="flex items-center justify-end gap-2 shrink-0">
                         <button
                           type="button"
-                          onClick={() => handleRemoveFriend(fr.friendUid)}
-                          className="px-2 py-2 rounded-xl bg-[#A84A32] text-[#FFFDF9] text-[11px] font-bold cursor-pointer"
+                          disabled={lobbyBusy}
+                          onClick={() => startDirectFriendCall(fr)}
+                          className="flex-1 sm:flex-initial px-4 py-2.5 rounded-2xl bg-[#166534] hover:bg-[#14532D] text-[#FFFDF9] text-xs sm:text-sm font-extrabold flex items-center justify-center gap-2 cursor-pointer shadow-2xs disabled:opacity-60 transition-colors"
                         >
-                          {isAr ? 'تأكيد' : 'Confirm'}
+                          <PhoneCall className="w-4 h-4" />
+                          <span>{isAr ? 'دعوة للسرد الثنائي' : 'Call for Duo Sard'}</span>
                         </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => setConfirmRemoveFriendUid(fr.friendUid)}
-                          title={isAr ? 'حذف الصديق' : 'Remove friend'}
-                          className="p-2 rounded-xl bg-[#F7F3EB] hover:bg-[#EFE9DC] text-[#A84A32] cursor-pointer"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      )}
+
+                        {confirmRemoveFriendUid === fr.friendUid ? (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveFriend(fr.friendUid)}
+                            className="px-2.5 py-2.5 rounded-xl bg-[#B93829] text-[#FFFDF9] text-xs font-bold cursor-pointer"
+                          >
+                            {isAr ? 'تأكيد' : 'Confirm'}
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setConfirmRemoveFriendUid(fr.friendUid)}
+                            title={isAr ? 'إزالة الصديق' : 'Remove friend'}
+                            className="p-2.5 rounded-xl bg-[#FFFDF9] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-[#A84A32] cursor-pointer"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
+
+            {/* Footer Compliance Link */}
+            <div className="pt-2 border-t border-[#EFE9DC] flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#84715E]">
+              <span className="flex items-center gap-1 text-[#15803D] font-bold">
+                <Lock className="w-3 h-3" />
+                <span>{isAr ? 'اتصال صوتي مشفّر ومؤمّن (E2EE)' : 'Encrypted Audio-Only (E2EE)'}</span>
+              </span>
+              {onOpenPrivacyTerms && (
+                <button
+                  type="button"
+                  onClick={onOpenPrivacyTerms}
+                  className="font-bold text-[#5C4B3B] hover:text-[#15803D] hover:underline cursor-pointer"
+                >
+                  {isAr ? 'سياسة الخصوصية وشروط الاستخدام' : 'Privacy Policy & Terms'}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
 
-      {/* STEP 4: ACTIVE DIRECT ENCRYPTED VOICE CALL + SYNCED MUSHAF */}
+      {/* STEP 4: ACTIVE CALL VIEW (MATCHING SCREENSHOT 2 + SCREENSHOT 1 MODAL) */}
       {user && user.emailVerified && sessionId && (
         <div className="space-y-4">
           <audio ref={remoteAudioRef} autoPlay playsInline className="hidden" />
 
-          {/* Outgoing Ringing Call Window */}
+          {/* Outgoing Ringing Overlay Modal */}
           {peerConnState === 'ringing' && outgoingCallTargetName && (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
               <div className="w-full max-w-sm rounded-[28px] bg-[#2D2218] text-[#FFFDF9] border-2 border-[#EAB338] p-6 text-center space-y-5 shadow-2xl">
                 <div className="relative w-20 h-20 mx-auto flex items-center justify-center">
                   <span className="absolute inset-0 rounded-full bg-[#EAB338]/25 animate-ping" />
-                  <div className="relative w-16 h-16 rounded-full bg-[#4A6144] border-2 border-[#EAB338] flex items-center justify-center text-[#FFFDF9]">
+                  <div className="relative w-16 h-16 rounded-full bg-[#166534] border-2 border-[#EAB338] flex items-center justify-center text-[#FFFDF9]">
                     <PhoneCall className="w-7 h-7 animate-bounce" />
                   </div>
                 </div>
@@ -2711,12 +2666,14 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                   <h3 className="text-xl font-extrabold font-display-islamic">
                     {outgoingCallTargetName}
                   </h3>
-                  <p className="text-xs text-[#E6D7BE]">{activeSessionTitle}</p>
+                  <p className="text-xs text-[#E6D7BE]">
+                    {activeCurriculumTextOnly} · {activeRiwayahLabel}
+                  </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => handleEndCall(true)}
-                  className="w-full py-3 rounded-2xl bg-[#A84A32] hover:bg-[#8E3B26] text-[#FFFDF9] text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
+                  className="w-full py-3 rounded-2xl bg-[#B93829] hover:bg-[#992D20] text-[#FFFDF9] text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <PhoneOff className="w-4 h-4" />
                   <span>{isAr ? 'إلغاء المكالمة' : 'Cancel Call'}</span>
@@ -2725,343 +2682,387 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
             </div>
           )}
 
-          {/* Top Session Controls + Visual E2EE Lock Indicator */}
-          <div className="rounded-2xl bg-[#FFFDF9] border border-[#DDD2BE] p-4 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-            <div className="flex flex-wrap items-center gap-2.5">
-              {/* Green Visual E2EE Security Lock Indicator */}
-              <div
-                className="px-3 py-1.5 rounded-xl bg-[#ECFDF3] border border-[#86EFAC] text-[#15803D] text-xs font-extrabold flex items-center gap-1.5 shadow-2xs"
-                title={isAr ? 'اتصال صوتي مشفر ومؤمّن (E2EE)' : 'Encrypted & Secured Audio (E2EE)'}
-              >
-                <Lock className="w-3.5 h-3.5 text-[#16A34A] shrink-0" />
-                <span>
-                  {isAr ? 'اتصال صوتي مشفر ومؤمّن (E2EE)' : 'Encrypted & Secured Audio (E2EE)'}
+          {/* Compact Top Status & Action Bar (Matching Screenshot 2) */}
+          <div className="rounded-[22px] bg-[#FFFDF9] border border-[#DDD2BE] p-4 shadow-xs space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm font-bold">
+                <Radio
+                  className={`w-4 h-4 shrink-0 ${
+                    peerConnState === 'connected'
+                      ? 'text-[#15803D]'
+                      : 'text-[#15803D] animate-pulse'
+                  }`}
+                />
+                <span className="text-[#15803D]">
+                  {peerConnState === 'connected'
+                    ? isAr
+                      ? `متصل صوتياً مع ${partnerName}`
+                      : `Connected with ${partnerName}`
+                    : peerConnState === 'ended'
+                    ? isAr
+                      ? `انتهت الجلسة مع ${partnerName}`
+                      : `Session ended with ${partnerName}`
+                    : isAr
+                    ? `جاري ربط الصوت مع ${partnerName}...`
+                    : `Connecting audio with ${partnerName}...`}
+                </span>
+                <span className="text-[#B5A897]">·</span>
+                <span className="font-mono-tabular text-[#5C4B3B]">
+                  {formatCallDuration(callElapsedSeconds, isAr)}
                 </span>
               </div>
 
+              {/* Green E2EE Security Lock Badge */}
               <div
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-2 border ${
-                  peerConnState === 'connected'
-                    ? 'bg-[#4A6144]/15 border-[#4A6144]/35 text-[#4A6144]'
-                    : peerConnState === 'ended' ||
-                      peerConnState === 'declined' ||
-                      peerConnState === 'disconnected'
-                    ? 'bg-[#A84A32]/15 border-[#A84A32]/35 text-[#A84A32]'
-                    : 'bg-[#F6E9C8] border-[#E5C983] text-[#9E650C]'
-                }`}
+                className="px-2.5 py-1 rounded-lg bg-[#ECFDF3] border border-[#86EFAC] text-[#15803D] text-[11px] font-bold flex items-center gap-1"
+                title={isAr ? 'اتصال صوتي مشفر ومؤمّن (E2EE)' : 'Encrypted & Secured Audio (E2EE)'}
               >
-                <span
-                  className={`w-2 h-2 rounded-full ${
-                    peerConnState === 'connected'
-                      ? 'bg-[#4A6144] animate-pulse'
-                      : peerConnState === 'ended' ||
-                        peerConnState === 'declined' ||
-                        peerConnState === 'disconnected'
-                      ? 'bg-[#A84A32]'
-                      : 'bg-[#C88A14] animate-ping'
-                  }`}
-                />
-                <span>
-                  {peerConnState === 'ringing'
-                    ? isAr
-                      ? 'يرن الآن لدى الصديق...'
-                      : 'Ringing friend...'
-                    : peerConnState === 'connecting'
-                    ? isAr
-                      ? 'جاري إتمام الربط الصوتي الآمن...'
-                      : 'Establishing secure audio...'
-                    : peerConnState === 'connected'
-                    ? highPrivacyIpMask
-                      ? isAr
-                        ? 'متصل صوتياً (تخفي IP مفعّل)'
-                        : 'Audio Connected (IP Masked)'
-                      : isAr
-                      ? 'متصل صوتي مباشر'
-                      : 'Direct Audio Connected'
-                    : peerConnState === 'declined'
-                    ? isAr
-                      ? 'تم رفض المكالمة أو انشغال الصديق'
-                      : 'Call Declined'
-                    : peerConnState === 'ended'
-                    ? isAr
-                      ? 'انتهت المكالمة وأُغلقت المسارات'
-                      : 'Call Ended & Tracks Cleared'
-                    : isAr
-                    ? 'انقطع الاتصال — تم تنظيف الذاكرة'
-                    : 'Disconnected — Tracks Cleared'}
-                </span>
+                <Lock className="w-3 h-3 shrink-0" />
+                <span>{isAr ? 'صوت مشفر ومؤمّن (E2EE)' : 'E2EE Secured'}</span>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#F7F3EB] border border-[#DDD2BE]">
-                <button
-                  type="button"
-                  onClick={handleToggleMic}
-                  className={`flex items-center gap-1.5 text-xs font-bold cursor-pointer ${
-                    isMicMuted ? 'text-[#A84A32]' : 'text-[#4A6144]'
-                  }`}
-                >
-                  {isMicMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                  <span>{isMicMuted ? (isAr ? 'صامت' : 'Muted') : isAr ? 'الميكروفون' : 'Mic On'}</span>
-                </button>
-                <div className="w-14 h-2 rounded-full bg-[#DDD2BE] overflow-hidden">
-                  <div
-                    className="h-full bg-[#4A6144] transition-all duration-75"
-                    style={{ width: `${isMicMuted ? 0 : micLevel}%` }}
-                  />
-                </div>
+            <div className="space-y-0.5">
+              <div className="text-sm sm:text-base font-extrabold text-[#261C14]">
+                {activeCurriculumTextOnly}{' '}
+                <span className="text-[#84715E]">·</span>{' '}
+                <span className="text-[#C88A14]">
+                  {isAr ? `رواية ${activeRiwayahLabel}` : activeRiwayahLabel}
+                </span>
               </div>
+              <div className="text-xs sm:text-sm text-[#5C4B3B]">
+                {isAr ? 'دورك:' : 'Your role:'}{' '}
+                <strong className="text-[#261C14]">
+                  {amICurrentReciter
+                    ? shouldHideVersesForMe
+                      ? isAr
+                        ? 'القارئ (الشاشة مخفية)'
+                        : 'Reciter (Screen Hidden)'
+                      : isAr
+                      ? 'القارئ (النص ظاهر)'
+                      : 'Reciter (Text Visible)'
+                    : isAr
+                    ? 'المُسمِّع (متابعة المصحف وتنبيه الأخطاء)'
+                    : 'Listener (Follow Mushaf & Mark Errors)'}
+                </strong>
+              </div>
+            </div>
+
+            {/* 4 Clean Controls Matching Screenshot 2 */}
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={handleToggleMic}
+                className={`px-3.5 py-2 rounded-2xl border text-xs sm:text-sm font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${
+                  isMicMuted
+                    ? 'bg-[#FEE2E2] border-[#FECACA] text-[#B93829]'
+                    : 'bg-[#FAF7F0] hover:bg-[#EFE9DC] border-[#DDD2BE] text-[#261C14]'
+                }`}
+              >
+                {isMicMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                <span>{isMicMuted ? (isAr ? 'صامت' : 'Muted') : isAr ? 'كتم' : 'Mute'}</span>
+                {!isMicMuted && (
+                  <span className="w-6 h-1.5 rounded-full bg-[#DDD2BE] overflow-hidden inline-block ms-0.5">
+                    <span
+                      className="block h-full bg-[#15803D] transition-all duration-75"
+                      style={{ width: `${micLevel}%` }}
+                    />
+                  </span>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowCurriculumModal(true)}
+                className="px-3.5 py-2 rounded-2xl bg-[#FAF7F0] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-xs sm:text-sm font-bold text-[#261C14] flex items-center gap-1.5 cursor-pointer transition-colors"
+              >
+                <SlidersHorizontal className="w-4 h-4 text-[#5C4B3B]" />
+                <span>{isAr ? 'الرواية والمقرر' : 'Narration & Plan'}</span>
+              </button>
 
               <button
                 type="button"
                 onClick={handleSwapRoles}
-                className="px-3 py-2 rounded-xl bg-[#2D2218] hover:bg-[#3D2F22] text-[#EAB338] text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+                className="px-3.5 py-2 rounded-2xl bg-[#FAF7F0] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-xs sm:text-sm font-bold text-[#261C14] flex items-center gap-1.5 cursor-pointer transition-colors"
               >
-                <ArrowLeftRight className="w-3.5 h-3.5" />
+                <ArrowLeftRight className="w-4 h-4 text-[#5C4B3B]" />
                 <span>{isAr ? 'تبادل الأدوار' : 'Swap Roles'}</span>
               </button>
 
               <button
                 type="button"
-                onClick={() => handleEndCall(true)}
-                className="px-3 py-2 rounded-xl bg-[#A84A32] hover:bg-[#8E3B26] text-[#FFFDF9] text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+                onClick={() => setShowEvalModal(true)}
+                className="px-4 py-2 rounded-2xl bg-[#B93829] hover:bg-[#992D20] text-[#FFFDF9] text-xs sm:text-sm font-extrabold flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs"
               >
-                <PhoneOff className="w-3.5 h-3.5" />
-                <span>{isAr ? 'إنهاء المكالمة' : 'End Call'}</span>
+                <PhoneOff className="w-4 h-4" />
+                <span>{isAr ? 'تقييم وإنهاء' : 'Rate & End'}</span>
               </button>
             </div>
           </div>
 
-          {/* Participants, Roles & Mistakes */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div
-              className={`rounded-2xl p-3.5 border flex items-center justify-between gap-2 ${
-                reciterSide === 'host'
-                  ? 'bg-[#4A6144]/10 border-[#4A6144]'
-                  : 'bg-[#FFFDF9] border-[#DDD2BE]'
-              }`}
-            >
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div className="w-9 h-9 rounded-xl bg-[#2D2218] text-[#EAB338] flex items-center justify-center shrink-0">
-                  {reciterSide === 'host' ? <Mic className="w-4 h-4" /> : <Headphones className="w-4 h-4" />}
+          {/* Main Reading Area: Hidden Reciter Screen OR Listener Interactive Word-Tap Mushaf */}
+          {shouldHideVersesForMe ? (
+            <div className="rounded-[24px] bg-[#FFFDF9] border border-[#DDD2BE] p-5 sm:p-6 shadow-xs min-h-[54vh] flex flex-col justify-between gap-6">
+              <div className="flex-1 flex flex-col items-center justify-center text-center py-6 space-y-3 max-w-md mx-auto">
+                <div className="w-16 h-16 rounded-2xl bg-[#FAF7F0] border border-[#E5DEC9] flex items-center justify-center text-[#15803D]">
+                  <EyeOff className="w-8 h-8" />
                 </div>
-                <div className="min-w-0">
-                  <div className="text-xs font-extrabold text-[#261C14] truncate">
-                    {sessionMeta?.hostName || (isAr ? 'المتصل' : 'Caller')}{' '}
-                    {myRoleInCall === 'host' ? (isAr ? '(أنت)' : '(You)') : ''}
+                <h2 className="text-lg sm:text-xl font-extrabold text-[#261C14]">
+                  {amICurrentReciter
+                    ? isAr
+                      ? 'شاشة القارئ — النص مخفي'
+                      : 'Reciter Screen — Text Hidden'
+                    : isAr
+                    ? 'شاشة المُسمِّع — النص مخفي'
+                    : 'Listener Screen — Text Hidden'}
+                </h2>
+                <p className="text-xs sm:text-sm text-[#5C4B3B] leading-relaxed">
+                  {amICurrentReciter
+                    ? isAr
+                      ? `اتلُ المقرر غيباً، وسيصلك تنبيه لحظي فوري هنا إذا علّم المُسمِّع (${partnerName}) على أي كلمة.`
+                      : `Recite from memory. Any word marked by listener (${partnerName}) will appear instantaneously below.`
+                    : isAr
+                    ? 'تم تفعيل إخفاء النص لديك — اضغط على الزر أدناه لعرض المصحف ومتابعة الكلمات.'
+                    : 'Text is hidden locally — tap below to view Mushaf verses.'}
+                </p>
+
+                {markedErrors.length > 0 && (
+                  <div className="mt-2 px-3.5 py-2 rounded-xl bg-[#FEE2E2] border border-[#FECACA] text-[#991B1B] text-xs font-extrabold animate-in fade-in">
+                    {isAr
+                      ? `تنبيه لحظي: تم التعليم على كلمة «${
+                          parseMarkedErrorToken(markedErrors[0]).word
+                        }» (${parseMarkedErrorToken(markedErrors[0]).verseKey})`
+                      : `Marked word alert: "${parseMarkedErrorToken(markedErrors[0]).word}"`}
                   </div>
-                  <div className="text-[11px] font-bold text-[#4A6144]">
-                    {reciterSide === 'host'
-                      ? isAr
-                        ? 'الدور: القارئ (يُسمِّع حفظه)'
-                        : 'Role: Reciter'
-                      : isAr
-                      ? 'الدور: المُسمِّع (يتابع المصحف)'
-                      : 'Role: Listener'}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div
-              className={`rounded-2xl p-3.5 border flex items-center justify-between gap-2 ${
-                reciterSide === 'guest'
-                  ? 'bg-[#4A6144]/10 border-[#4A6144]'
-                  : 'bg-[#FFFDF9] border-[#DDD2BE]'
-              }`}
-            >
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div className="w-9 h-9 rounded-xl bg-[#F6E9C8] text-[#9E650C] flex items-center justify-center shrink-0">
-                  {reciterSide === 'guest' ? <Mic className="w-4 h-4" /> : <UserCheck className="w-4 h-4" />}
-                </div>
-                <div className="min-w-0">
-                  <div className="text-xs font-extrabold text-[#261C14] truncate">
-                    {sessionMeta?.guestName
-                      ? `${sessionMeta.guestName} ${
-                          myRoleInCall === 'guest' ? (isAr ? '(أنت)' : '(You)') : ''
-                        }`
-                      : outgoingCallTargetName || (isAr ? 'في انتظار الرد...' : 'Calling friend...')}
-                  </div>
-                  <div className="text-[11px] font-bold text-[#9E650C]">
-                    {reciterSide === 'guest'
-                      ? isAr
-                        ? 'الدور: القارئ (يُسمِّع حفظه)'
-                        : 'Role: Reciter'
-                      : isAr
-                      ? 'الدور: المُسمِّع (يتابع المصحف)'
-                      : 'Role: Listener'}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-2xl p-3.5 bg-[#FFFDF9] border border-[#DDD2BE] flex items-center justify-between gap-2">
-              <div>
-                <div className="text-[11px] font-bold text-[#84715E]">
-                  {isAr ? 'تنبيهات الأخطاء المتزامنة' : 'Synced Mistakes'}
-                </div>
-                <div className="text-lg font-extrabold font-mono-tabular text-[#261C14]">
-                  {mistakesCount}
-                </div>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => handleAdjustMistakes(-1)}
-                  className="px-2.5 py-1.5 rounded-lg bg-[#F7F3EB] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-xs font-bold text-[#5C4B3B] cursor-pointer"
-                >
-                  -1
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleAdjustMistakes(1)}
-                  className="px-3 py-1.5 rounded-lg bg-[#FBF3DF] hover:bg-[#F5E4B8] border border-[#C88A14]/50 text-xs font-bold text-[#9E650C] cursor-pointer"
-                >
-                  {isAr ? '+ خطأ' : '+ Error'}
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Live Options Toolbar: Hide Verses + Riwayah + Privacy + Font Size */}
-          <div className="rounded-2xl bg-[#FFFDF9] border border-[#DDD2BE] p-3.5 shadow-2xs space-y-2.5">
-            <div className="flex flex-wrap items-center justify-between gap-2.5">
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleToggleSyncedHideReciter}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 cursor-pointer transition-colors ${
-                    hideVersesForReciter
-                      ? 'bg-[#2D2218] text-[#EAB338] border-[#2D2218]'
-                      : 'bg-[#F7F3EB] text-[#5C4B3B] border-[#DDD2BE]'
-                  }`}
-                >
-                  {hideVersesForReciter ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                  <span>{isAr ? 'إخفاء عن القارئ' : 'Hide for Reciter'}</span>
-                </button>
+                )}
 
                 <button
                   type="button"
-                  onClick={handleToggleSyncedHideListener}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 cursor-pointer transition-colors ${
-                    hideVersesForListener
-                      ? 'bg-[#2D2218] text-[#EAB338] border-[#2D2218]'
-                      : 'bg-[#F7F3EB] text-[#5C4B3B] border-[#DDD2BE]'
-                  }`}
+                  onClick={() => setLocalHideVerses(false)}
+                  className="text-[11px] font-bold text-[#84715E] hover:text-[#261C14] flex items-center gap-1 pt-2 cursor-pointer"
                 >
-                  {hideVersesForListener ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                  <span>{isAr ? 'إخفاء عن المُسمِّع' : 'Hide for Listener'}</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setLocalHideVerses(!localHideVerses)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 cursor-pointer transition-colors ${
-                    localHideVerses
-                      ? 'bg-[#A84A32] text-[#FFFDF9] border-[#A84A32]'
-                      : 'bg-[#F7F3EB] text-[#5C4B3B] border-[#DDD2BE]'
-                  }`}
-                >
-                  {localHideVerses ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                  <span>{isAr ? 'إخفاء عندي' : 'Hide Local'}</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setFadeFirstWordOnly(!fadeFirstWordOnly)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 cursor-pointer transition-colors ${
-                    fadeFirstWordOnly
-                      ? 'bg-[#4A6144] text-[#FFFDF9] border-[#4A6144]'
-                      : 'bg-[#F7F3EB] text-[#5C4B3B] border-[#DDD2BE]'
-                  }`}
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>{isAr ? 'تلاشي' : 'Fade Hint'}</span>
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>{isAr ? 'إظهار النص مؤقتاً لي' : 'Show Text Locally'}</span>
                 </button>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
-                {/* Live Riwayah Switcher */}
-                <div className="flex items-center gap-1 bg-[#F7F3EB] border border-[#DDD2BE] rounded-xl p-0.5 text-[11px] font-bold">
-                  {RIWAYAH_OPTIONS.map((rw) => (
-                    <button
-                      key={rw.id}
-                      type="button"
-                      onClick={() => handleSwitchSessionRiwayah(rw.id)}
-                      className={`px-2.5 py-1 rounded-lg cursor-pointer ${
-                        selectedRiwayah === rw.id
-                          ? 'bg-[#4A6144] text-[#FFFDF9]'
-                          : 'text-[#5C4B3B]'
-                      }`}
-                    >
-                      {isAr ? rw.shortAr : rw.shortEn}
-                    </button>
-                  ))}
-                </div>
-
-                {/* High Privacy IP Masking Toggle */}
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={highPrivacyIpMask}
-                  onClick={() => setHighPrivacyIpMask((prev) => !prev)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 cursor-pointer transition-colors ${
-                    highPrivacyIpMask
-                      ? 'bg-[#ECFDF3] border-[#86EFAC] text-[#15803D]'
-                      : 'bg-[#F7F3EB] border-[#DDD2BE] text-[#5C4B3B]'
-                  }`}
-                >
-                  <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
-                  <span>{isAr ? 'وضع الخصوصية العالية (إخفاء الـ IP)' : 'High Privacy (IP Mask)'}</span>
-                </button>
-
-                <div className="flex items-center gap-1 bg-[#F7F3EB] border border-[#DDD2BE] rounded-xl p-0.5 text-[11px] font-bold">
-                  {(
-                    [
-                      { id: 'normal', label: isAr ? 'عادي' : 'S' },
-                      { id: 'large', label: isAr ? 'كبير' : 'M' },
-                      { id: 'xlarge', label: isAr ? 'مكبر' : 'L' },
-                    ] as const
-                  ).map((sz) => (
-                    <button
-                      key={sz.id}
-                      type="button"
-                      onClick={() => setTextScale(sz.id)}
-                      className={`px-2.5 py-1 rounded-lg cursor-pointer ${
-                        textScale === sz.id ? 'bg-[#2D2218] text-[#EAB338]' : 'text-[#5C4B3B]'
-                      }`}
-                    >
-                      {sz.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {highPrivacyIpMask && !TURN_SERVER_URL.trim() && (
-              <div className="rounded-lg bg-[#FBF3DF] border border-[#E5C983] px-3 py-1.5 text-[11px] font-semibold text-[#9E650C]">
-                {isAr
-                  ? 'وضع إخفاء الـ IP (relay) مفعّل: يرجى تعبئة بيانات خادم TURN (TURN_SERVER_URL) لإتمام التمرير الوسيط، أو إيقافه مؤقتاً عند الاختبار.'
-                  : 'IP Masking relay mode is active: set TURN_SERVER_URL credentials or toggle off for local STUN testing.'}
-              </div>
-            )}
-          </div>
-
-          {/* Synchronized Trusted Mushaf Panel */}
-          <div className="rounded-[24px] bg-[#FFFDF9] border border-[#DDD2BE] p-4 sm:p-6 shadow-xs space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#EFE9DC]">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <BookOpen className="w-5 h-5 text-[#4A6144]" />
-                  <h3 className="text-base sm:text-lg font-extrabold font-display-islamic text-[#261C14]">
-                    {activeSessionTitle}
+              {/* Bottom Card: Marked Session Errors (Matching Screenshot 2) */}
+              <div className="rounded-2xl bg-[#FAF7F0] border border-[#E5DEC9] p-4 space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-sm font-extrabold text-[#261C14]">
+                    {isAr ? 'الأخطاء المعلّم عليها في الجلسة' : 'Marked Errors in Session'}
                   </h3>
+                  <div className="flex items-center gap-1.5 text-xs font-extrabold text-[#B93829]">
+                    <span className="w-2 h-2 rounded-full bg-[#B93829]" />
+                    <span>{isAr ? toArabicDigits(mistakesCount) : mistakesCount}</span>
+                  </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-2 text-[11px] text-[#5C4B3B]">
-                  <span className="font-bold text-[#4A6144]">
-                    {isAr ? `المصدر: ${activeSourceMeta.labelAr}` : `Source: ${activeSourceMeta.labelEn}`}
+
+                {markedErrors.length === 0 && mistakesCount === 0 ? (
+                  <p className="text-xs sm:text-sm text-[#5C4B3B]">
+                    {isAr
+                      ? 'لم تُسجّل أي أخطاء حتى الآن — واصل التلاوة بثبات.'
+                      : 'No errors marked yet — keep reciting steadily.'}
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {markedErrors.map((tok, i) => {
+                      const parsed = parseMarkedErrorToken(tok);
+                      return (
+                        <span
+                          key={`${tok}-${i}`}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-[#FEE2E2] border border-[#FECACA] text-[#991B1B] text-xs font-extrabold"
+                        >
+                          <span className="font-uthmani text-sm">{parsed.word}</span>
+                          {parsed.verseKey && (
+                            <span className="text-[10px] opacity-80 font-mono-tabular">
+                              ({parsed.verseKey})
+                            </span>
+                          )}
+                        </span>
+                      );
+                    })}
+                    {markedErrors.length === 0 && mistakesCount > 0 && (
+                      <span className="text-xs text-[#991B1B] font-bold">
+                        {isAr
+                          ? `تم تسجيل ${toArabicDigits(mistakesCount)} تنبيه خطأ من المُسمِّع.`
+                          : `${mistakesCount} error alert(s) marked by listener.`}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            /* Listener Interactive Word-Tap Mushaf Screen */
+            <div className="rounded-[24px] bg-[#FFFDF9] border border-[#DDD2BE] p-4 sm:p-5 shadow-xs space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#EFE9DC]">
+                <div className="space-y-0.5">
+                  <div className="text-xs sm:text-sm font-extrabold text-[#15803D]">
+                    {isAr
+                      ? 'المصحف المتزامن — المس أي كلمة للتنبيه اللحظي على خطأ'
+                      : 'Synced Mushaf — Tap any word to alert reciter'}
+                  </div>
+                  <div className="text-[11px] text-[#5C4B3B]">
+                    {isAr ? `عدد الأخطاء المسجلة:` : `Marked Errors:`}{' '}
+                    <strong className="text-[#B93829] font-mono-tabular">
+                      {isAr ? toArabicDigits(mistakesCount) : mistakesCount}
+                    </strong>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => handleAdjustMistakes(-1)}
+                    className="px-2.5 py-1.5 rounded-lg bg-[#FAF7F0] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-xs font-bold text-[#5C4B3B] cursor-pointer"
+                  >
+                    -1
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleAdjustMistakes(1)}
+                    className="px-3 py-1.5 rounded-lg bg-[#FEE2E2] hover:bg-[#FECACA] border border-[#FCA5A5] text-xs font-bold text-[#991B1B] cursor-pointer"
+                  >
+                    {isAr ? '+ خطأ' : '+ Error'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleStepVerse(-1)}
+                    className="px-2.5 py-1.5 rounded-lg bg-[#FAF7F0] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-xs font-bold text-[#261C14] flex items-center gap-0.5 cursor-pointer"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5" />
+                    <span>{isAr ? 'السابقة' : 'Prev'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleStepVerse(1)}
+                    className="px-2.5 py-1.5 rounded-lg bg-[#FAF7F0] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-xs font-bold text-[#261C14] flex items-center gap-0.5 cursor-pointer"
+                  >
+                    <span>{isAr ? 'التالية' : 'Next'}</span>
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              {versesLoading ? (
+                <div className="py-10 flex items-center justify-center gap-2 text-sm text-[#5C4B3B]">
+                  <RefreshCw className="w-4 h-4 animate-spin text-[#C88A14]" />
+                  <span>
+                    {isAr
+                      ? `جاري تحميل الآيات برواية ${getRiwayahLabel(selectedRiwayah, 'ar')}...`
+                      : `Loading verses in ${getRiwayahLabel(selectedRiwayah, 'en')}...`}
                   </span>
+                </div>
+              ) : verses.length === 0 ? (
+                <div className="py-8 text-center text-xs text-[#84715E]">
+                  {isAr
+                    ? 'تعذر جلب النص حالياً — الاتصال الصوتي المباشر ما زال يعمل بشكل طبيعي.'
+                    : 'Unable to load Quran text right now — direct P2P audio remains active.'}
+                </div>
+              ) : (
+                <div className="space-y-2.5 max-h-[54vh] overflow-y-auto pe-1">
+                  {verses.map((v, idx) => {
+                    const isActive = activeAyah === v.ayahNumber;
+                    const isPeeking = peekVerseKey === v.verseKey;
+                    const prevSurah = idx > 0 ? verses[idx - 1].surahNumber : null;
+                    const surahObj = SURAH_LIST.find((s) => s.number === v.surahNumber);
+                    const words = v.text.trim().split(/\s+/).filter(Boolean);
+
+                    return (
+                      <React.Fragment key={`${v.verseKey}-${idx}`}>
+                        {(idx === 0 || prevSurah !== v.surahNumber) && surahObj && (
+                          <div className="px-3 py-1.5 rounded-xl bg-[#F6E9C8]/70 border border-[#C88A14]/35 text-xs font-extrabold text-[#2D2218] text-center">
+                            {isAr ? `سورة ${surahObj.nameAr}` : `Surah ${surahObj.nameEn}`}
+                          </div>
+                        )}
+                        <div
+                          onClick={() => handleSelectAyahSync(v.ayahNumber)}
+                          className={`w-full text-start p-3.5 sm:p-4 rounded-2xl border transition-all cursor-pointer ${
+                            isActive
+                              ? 'bg-[#FBF3DF] border-[#C88A14] ring-1 ring-[#C88A14]/40 shadow-2xs'
+                              : 'bg-[#FAF7F0] hover:bg-[#EFE9DC]/70 border-[#E5DEC9]'
+                          }`}
+                        >
+                          {fadeFirstWordOnly && !isPeeking ? (
+                            <div className="flex items-center justify-between gap-2">
+                              <p
+                                dir="rtl"
+                                className={`font-uthmani text-[#261C14] leading-[2.2] ${
+                                  textScale === 'xlarge'
+                                    ? 'text-2xl sm:text-3xl'
+                                    : textScale === 'large'
+                                    ? 'text-xl sm:text-2xl'
+                                    : 'text-lg sm:text-xl'
+                                }`}
+                              >
+                                {extractFirstWordMask(v.textCleanUthmani)}{' '}
+                                <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-[#C88A14]/15 border border-[#C88A14]/40 text-xs font-mono-tabular font-bold text-[#9E650C] align-middle mx-1">
+                                  {v.ayahNumber}
+                                </span>
+                              </p>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setPeekVerseKey(v.verseKey);
+                                }}
+                                className="px-2.5 py-1 rounded-lg bg-[#FFFDF9] border border-[#DDD2BE] text-[11px] font-bold text-[#9E650C] shrink-0 cursor-pointer"
+                              >
+                                {isAr ? 'كشف' : 'Reveal'}
+                              </button>
+                            </div>
+                          ) : (
+                            <p
+                              dir="rtl"
+                              className={`font-uthmani text-[#261C14] leading-[2.3] flex flex-wrap items-baseline gap-x-1.5 gap-y-1 ${
+                                textScale === 'xlarge'
+                                  ? 'text-2xl sm:text-3xl'
+                                  : textScale === 'large'
+                                  ? 'text-xl sm:text-2xl'
+                                  : 'text-lg sm:text-xl'
+                              }`}
+                            >
+                              {words.map((word, wIdx) => {
+                                const token = `${v.verseKey}|${word.slice(0, 28)}|${wIdx}`.slice(0, 80);
+                                const isMarked = markedErrors.includes(token);
+                                return (
+                                  <button
+                                    key={`${v.verseKey}-w-${wIdx}`}
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleSelectAyahSync(v.ayahNumber);
+                                      handleToggleWordError(v.verseKey, word, wIdx);
+                                    }}
+                                    className={`inline-block rounded-md px-0.5 transition-colors cursor-pointer ${
+                                      isMarked
+                                        ? 'bg-[#FEE2E2] text-[#991B1B] border-b-2 border-[#DC2626]'
+                                        : 'hover:bg-[#E5DEC9]/70'
+                                    }`}
+                                  >
+                                    {word}
+                                  </button>
+                                );
+                              })}
+                              <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-[#C88A14]/15 border border-[#C88A14]/40 text-xs font-mono-tabular font-bold text-[#9E650C] align-middle mx-1">
+                                {v.ayahNumber}
+                              </span>
+                            </p>
+                          )}
+                        </div>
+                      </React.Fragment>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Trusted Source Links */}
+              <div className="pt-2 border-t border-[#EFE9DC] flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#5C4B3B]">
+                <span className="font-bold text-[#4A6144]">
+                  {isAr ? `المصدر: ${activeSourceMeta.labelAr}` : `Source: ${activeSourceMeta.labelEn}`}
+                </span>
+                <div className="flex items-center gap-3">
                   <a
                     href={activeSourceMeta.url}
                     target="_blank"
@@ -3082,137 +3083,571 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                   </a>
                 </div>
               </div>
+            </div>
+          )}
+        </div>
+      )}
 
-              {/* Ayah Stepping & Sync Status */}
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleStepVerse(-1)}
-                  className="px-2.5 py-1.5 rounded-lg bg-[#F7F3EB] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-xs font-bold text-[#261C14] flex items-center gap-1 cursor-pointer"
-                >
-                  <ChevronRight className="w-3.5 h-3.5" />
-                  <span>{isAr ? 'السابقة' : 'Prev'}</span>
-                </button>
-                <span className="text-xs font-mono-tabular font-extrabold text-[#9E650C] px-2">
-                  {isAr ? `آية ${activeAyah}` : `Ayah ${activeAyah}`}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => handleStepVerse(1)}
-                  className="px-2.5 py-1.5 rounded-lg bg-[#F7F3EB] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-xs font-bold text-[#261C14] flex items-center gap-1 cursor-pointer"
-                >
-                  <span>{isAr ? 'التالية' : 'Next'}</span>
-                  <ChevronLeft className="w-3.5 h-3.5" />
-                </button>
+      {/* IN-CALL & LOBBY MODAL: RIWAYAH, CURRICULUM, HIDING & IP PRIVACY */}
+      {showCurriculumModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-xs p-3 sm:p-4"
+          onClick={() => setShowCurriculumModal(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-xl max-h-[88vh] flex flex-col rounded-[26px] bg-[#FFFDF9] border border-[#DDD2BE] shadow-2xl overflow-hidden text-[#261C14]"
+          >
+            <div className="px-4 sm:px-5 py-3.5 bg-[#2D2218] text-[#FFFDF9] flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <SlidersHorizontal className="w-4 h-4 text-[#EAB338]" />
+                <h3 className="text-sm sm:text-base font-extrabold">
+                  {isAr ? 'الرواية والمقرر وخيارات السرد' : 'Narration, Curriculum & Options'}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCurriculumModal(false)}
+                className="p-1.5 rounded-lg bg-[#FFFDF9]/10 hover:bg-[#FFFDF9]/20 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 sm:p-5 overflow-y-auto space-y-4">
+              {/* Riwayah Switcher */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-[#5C4B3B]">
+                  {isAr ? 'الرواية القرآنية:' : 'Quran Narration:'}
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {RIWAYAH_OPTIONS.map((rw) => {
+                    const active = selectedRiwayah === rw.id;
+                    return (
+                      <button
+                        key={rw.id}
+                        type="button"
+                        onClick={() => setSelectedRiwayah(rw.id)}
+                        className={`py-2.5 px-2 rounded-xl border text-center cursor-pointer transition-colors ${
+                          active
+                            ? 'bg-[#2D2218] border-[#C88A14] text-[#EAB338]'
+                            : 'bg-[#FAF7F0] border-[#DDD2BE] text-[#261C14]'
+                        }`}
+                      >
+                        <div className="text-xs sm:text-sm font-extrabold">
+                          {isAr ? rw.labelAr : rw.labelEn}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 3 Curriculum Modes */}
+              <div className="space-y-2.5">
+                <div className="grid grid-cols-3 gap-1.5 p-1 bg-[#F7F3EB] rounded-xl border border-[#DDD2BE]">
+                  {(
+                    [
+                      { id: 'surah', label: isAr ? 'بالسور' : 'By Surah', icon: BookOpen },
+                      { id: 'ayah', label: isAr ? 'بأرقام الآيات' : 'By Ayahs', icon: Hash },
+                      { id: 'page', label: isAr ? 'بالصفحات' : 'By Pages', icon: FileText },
+                    ] as const
+                  ).map((tab) => {
+                    const Icon = tab.icon;
+                    const active = curriculumMode === tab.id;
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setCurriculumMode(tab.id)}
+                        className={`py-2 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1 cursor-pointer ${
+                          active
+                            ? 'bg-[#166534] text-[#FFFDF9]'
+                            : 'text-[#5C4B3B] hover:text-[#261C14]'
+                        }`}
+                      >
+                        <Icon className="w-3.5 h-3.5" />
+                        <span>{tab.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* By Surah */}
+                {curriculumMode === 'surah' && (
+                  <div className="rounded-xl bg-[#FAF7F0] border border-[#DDD2BE] p-3 space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-1 p-0.5 bg-[#EFE9DC] rounded-lg border border-[#DDD2BE]">
+                        <button
+                          type="button"
+                          onClick={() => setSurahPickStyle('touch')}
+                          className={`px-2.5 py-1 rounded-md text-xs font-bold flex items-center gap-1 cursor-pointer ${
+                            surahPickStyle === 'touch'
+                              ? 'bg-[#2D2218] text-[#EAB338]'
+                              : 'text-[#5C4B3B]'
+                          }`}
+                        >
+                          <Touchpad className="w-3.5 h-3.5" />
+                          <span>{isAr ? 'باللمس' : 'Touch'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSurahPickStyle('dropdown')}
+                          className={`px-2.5 py-1 rounded-md text-xs font-bold flex items-center gap-1 cursor-pointer ${
+                            surahPickStyle === 'dropdown'
+                              ? 'bg-[#2D2218] text-[#EAB338]'
+                              : 'text-[#5C4B3B]'
+                          }`}
+                        >
+                          <ListFilter className="w-3.5 h-3.5" />
+                          <span>{isAr ? 'قائمة منسدلة' : 'Dropdown'}</span>
+                        </button>
+                      </div>
+
+                      <label className="inline-flex items-center gap-1.5 text-xs font-bold text-[#5C4B3B] cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={multiSurahRange}
+                          onChange={(e) => {
+                            setMultiSurahRange(e.target.checked);
+                            if (!e.target.checked) setSelectedSurahEnd(selectedSurah);
+                          }}
+                          className="rounded border-[#C88A14] text-[#C88A14]"
+                        />
+                        <span>{isAr ? 'عدة سور متتالية' : 'Multi-Surah'}</span>
+                      </label>
+                    </div>
+
+                    {surahPickStyle === 'dropdown' ? (
+                      <div className={`grid gap-2 ${multiSurahRange ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                        <select
+                          value={selectedSurah}
+                          onChange={(e) => setSelectedSurah(Number(e.target.value))}
+                          className="w-full px-3 py-2 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] text-xs sm:text-sm font-bold"
+                        >
+                          {SURAH_LIST.map((s) => (
+                            <option key={s.number} value={s.number}>
+                              {s.number}. {isAr ? `سورة ${s.nameAr}` : s.nameEn}
+                            </option>
+                          ))}
+                        </select>
+                        {multiSurahRange && (
+                          <select
+                            value={selectedSurahEnd}
+                            onChange={(e) => setSelectedSurahEnd(Number(e.target.value))}
+                            className="w-full px-3 py-2 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] text-xs sm:text-sm font-bold"
+                          >
+                            {SURAH_LIST.filter(
+                              (s) => s.number >= selectedSurah && s.number <= selectedSurah + 4
+                            ).map((s) => (
+                              <option key={s.number} value={s.number}>
+                                {s.number}. {isAr ? `سورة ${s.nameAr}` : s.nameEn}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="relative">
+                          <Search className="w-3.5 h-3.5 text-[#84715E] absolute top-1/2 -translate-y-1/2 start-3 pointer-events-none" />
+                          <input
+                            type="text"
+                            value={surahSearchQuery}
+                            onChange={(e) => setSurahSearchQuery(e.target.value)}
+                            placeholder={isAr ? 'ابحث باسم السورة أو رقمها...' : 'Search Surah...'}
+                            className="w-full ps-8 pe-3 py-1.5 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] text-xs"
+                          />
+                        </div>
+                        <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5 max-h-40 overflow-y-auto">
+                          {filteredSurahs.map((s) => {
+                            const isStart = s.number === selectedSurah;
+                            const isInRange =
+                              multiSurahRange &&
+                              s.number >= selectedSurah &&
+                              s.number <= selectedSurahEnd;
+                            return (
+                              <button
+                                key={s.number}
+                                type="button"
+                                onClick={() => {
+                                  if (!multiSurahRange) {
+                                    setSelectedSurah(s.number);
+                                    setSelectedSurahEnd(s.number);
+                                  } else if (
+                                    s.number < selectedSurah ||
+                                    selectedSurahEnd !== selectedSurah
+                                  ) {
+                                    setSelectedSurah(s.number);
+                                    setSelectedSurahEnd(s.number);
+                                  } else {
+                                    setSelectedSurahEnd(Math.min(s.number, selectedSurah + 4));
+                                  }
+                                }}
+                                className={`px-2 py-1.5 rounded-xl border text-center cursor-pointer ${
+                                  isStart
+                                    ? 'bg-[#2D2218] border-[#C88A14] text-[#EAB338]'
+                                    : isInRange
+                                    ? 'bg-[#4A6144]/15 border-[#4A6144] text-[#261C14]'
+                                    : 'bg-[#FFFDF9] border-[#DDD2BE] text-[#261C14]'
+                                }`}
+                              >
+                                <div className="text-[10px] opacity-70">{s.number}</div>
+                                <div className="text-xs font-bold truncate">
+                                  {isAr ? s.nameAr : s.nameEn}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* By Ayah Range */}
+                {curriculumMode === 'ayah' && (
+                  <div className="rounded-xl bg-[#FAF7F0] border border-[#DDD2BE] p-3 space-y-2.5">
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <label className="block text-[11px] font-bold text-[#5C4B3B] mb-1">
+                          {isAr ? 'السورة' : 'Surah'}
+                        </label>
+                        <select
+                          value={selectedSurah}
+                          onChange={(e) => setSelectedSurah(Number(e.target.value))}
+                          className="w-full px-2.5 py-2 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] text-xs font-bold"
+                        >
+                          {SURAH_LIST.map((s) => (
+                            <option key={s.number} value={s.number}>
+                              {s.number}. {isAr ? s.nameAr : s.nameEn}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-[#5C4B3B] mb-1">
+                          {isAr ? 'من الآية' : 'From'}
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={currentSurahInfo.ayahCount}
+                          value={ayahFrom}
+                          onChange={(e) =>
+                            setAyahFrom(
+                              Math.max(1, Math.min(Number(e.target.value) || 1, currentSurahInfo.ayahCount))
+                            )
+                          }
+                          className="w-full px-2.5 py-2 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] text-xs font-mono-tabular font-bold"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-[#5C4B3B] mb-1">
+                          {isAr ? 'إلى الآية' : 'To'}
+                        </label>
+                        <input
+                          type="number"
+                          min={ayahFrom}
+                          max={currentSurahInfo.ayahCount}
+                          value={ayahTo}
+                          onChange={(e) =>
+                            setAyahTo(
+                              Math.max(
+                                ayahFrom,
+                                Math.min(Number(e.target.value) || ayahFrom, currentSurahInfo.ayahCount)
+                              )
+                            )
+                          }
+                          className="w-full px-2.5 py-2 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] text-xs font-mono-tabular font-bold"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* By Page Range */}
+                {curriculumMode === 'page' && (
+                  <div className="rounded-xl bg-[#FAF7F0] border border-[#DDD2BE] p-3 grid grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="block text-[11px] font-bold text-[#5C4B3B] mb-1">
+                        {isAr ? 'من الصفحة (١–٦٠٤)' : 'From Page (1–604)'}
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={604}
+                        value={pageFrom}
+                        onChange={(e) => {
+                          const v = Math.max(1, Math.min(604, Number(e.target.value) || 1));
+                          setPageFrom(v);
+                          if (pageTo < v) setPageTo(v);
+                        }}
+                        className="w-full px-3 py-2 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] text-xs font-mono-tabular font-bold"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-[#5C4B3B] mb-1">
+                        {isAr ? 'إلى الصفحة (حد ١٠)' : 'To Page (max 10)'}
+                      </label>
+                      <input
+                        type="number"
+                        min={pageFrom}
+                        max={Math.min(604, pageFrom + 9)}
+                        value={pageTo}
+                        onChange={(e) =>
+                          setPageTo(
+                            Math.max(
+                              pageFrom,
+                              Math.min(604, pageFrom + 9, Number(e.target.value) || pageFrom)
+                            )
+                          )
+                        }
+                        className="w-full px-3 py-2 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] text-xs font-mono-tabular font-bold"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Hiding, Font Size & IP Privacy Controls */}
+              <div className="space-y-2.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleToggleSyncedHideReciter}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 cursor-pointer ${
+                      hideVersesForReciter
+                        ? 'bg-[#2D2218] text-[#EAB338] border-[#2D2218]'
+                        : 'bg-[#FAF7F0] text-[#5C4B3B] border-[#DDD2BE]'
+                    }`}
+                  >
+                    {hideVersesForReciter ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    <span>{isAr ? 'إخفاء عن القارئ' : 'Hide for Reciter'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleToggleSyncedHideListener}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 cursor-pointer ${
+                      hideVersesForListener
+                        ? 'bg-[#2D2218] text-[#EAB338] border-[#2D2218]'
+                        : 'bg-[#FAF7F0] text-[#5C4B3B] border-[#DDD2BE]'
+                    }`}
+                  >
+                    {hideVersesForListener ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    <span>{isAr ? 'إخفاء عن المُسمِّع' : 'Hide for Listener'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setFadeFirstWordOnly(!fadeFirstWordOnly)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 cursor-pointer ${
+                      fadeFirstWordOnly
+                        ? 'bg-[#166534] text-[#FFFDF9] border-[#166534]'
+                        : 'bg-[#FAF7F0] text-[#5C4B3B] border-[#DDD2BE]'
+                    }`}
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>{isAr ? 'تلاشي' : 'Fade'}</span>
+                  </button>
+                </div>
+
+                {/* Text Scale */}
+                <div className="flex items-center justify-between gap-2 rounded-xl bg-[#FAF7F0] border border-[#DDD2BE] px-3 py-2">
+                  <span className="text-xs font-bold text-[#5C4B3B]">
+                    {isAr ? 'حجم خط الآيات:' : 'Verse Font Size:'}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    {(
+                      [
+                        { id: 'normal', label: isAr ? 'عادي' : 'S' },
+                        { id: 'large', label: isAr ? 'كبير' : 'M' },
+                        { id: 'xlarge', label: isAr ? 'مكبر' : 'L' },
+                      ] as const
+                    ).map((sz) => (
+                      <button
+                        key={sz.id}
+                        type="button"
+                        onClick={() => setTextScale(sz.id)}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer ${
+                          textScale === sz.id
+                            ? 'bg-[#2D2218] text-[#EAB338]'
+                            : 'bg-[#FFFDF9] text-[#5C4B3B]'
+                        }`}
+                      >
+                        {sz.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* High Privacy IP Masking Toggle */}
+                <div className="flex items-center justify-between gap-3 rounded-xl bg-[#ECFDF3] border border-[#86EFAC] px-3.5 py-2.5">
+                  <div className="flex items-center gap-2">
+                    <Lock className="w-4 h-4 text-[#15803D] shrink-0" />
+                    <div>
+                      <div className="text-xs font-extrabold text-[#261C14]">
+                        {isAr ? 'وضع الخصوصية العالية (إخفاء الـ IP)' : 'High Privacy Mode (IP Masking)'}
+                      </div>
+                      <div className="text-[11px] text-[#15803D]">
+                        {isAr
+                          ? 'تمرير عبر TURN الوسيط وحظر أي تبادل للملفات'
+                          : 'TURN relay + strict audio-only'}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={highPrivacyIpMask}
+                    onClick={() => setHighPrivacyIpMask((prev) => !prev)}
+                    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
+                      highPrivacyIpMask ? 'bg-[#15803D]' : 'bg-[#C4B7A0]'
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition ${
+                        highPrivacyIpMask
+                          ? isAr
+                            ? '-translate-x-5'
+                            : 'translate-x-5'
+                          : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {highPrivacyIpMask && !TURN_SERVER_URL.trim() && (
+                  <p className="text-[11px] text-[#9E650C] bg-[#FBF3DF] border border-[#E5C983] rounded-lg px-3 py-1.5 font-semibold">
+                    {isAr
+                      ? 'تنبيه: وضع الخصوصية العالية (relay) مفعّل افتراضياً. ضع بيانات خادم TURN في TURN_SERVER_URL أو أطفئه مؤقتاً عند الاختبار.'
+                      : 'Relay mode active by default. Set TURN_SERVER_URL or toggle off for STUN testing.'}
+                  </p>
+                )}
               </div>
             </div>
 
-            {shouldHideVersesForMe && (
-              <div className="rounded-xl bg-[#FBF3DF] border border-[#C88A14]/50 px-3.5 py-2.5 text-xs text-[#261C14] flex items-center justify-between gap-2">
-                <span className="font-bold">
-                  {isAr
-                    ? 'الآيات مخفية حالياً للتسميع غيباً — اضغط «كشف الآية» على أي سطر لاختلاس نظرة مؤقتة.'
-                    : 'Verses are hidden for memorization — tap Peek on any verse row if needed.'}
-                </span>
-              </div>
-            )}
+            <div className="px-4 sm:px-5 py-3 bg-[#F7F3EB] border-t border-[#DDD2BE] flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={handleApplyCurriculumSettings}
+                className="px-5 py-2 rounded-xl bg-[#166534] hover:bg-[#14532D] text-[#FFFDF9] text-xs sm:text-sm font-extrabold cursor-pointer"
+              >
+                {sessionId
+                  ? isAr
+                    ? 'حفظ ومزامنة في الجلسة'
+                    : 'Save & Sync Live'
+                  : isAr
+                  ? 'حفظ وإغلاق'
+                  : 'Save & Close'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
-            {versesLoading ? (
-              <div className="py-10 flex items-center justify-center gap-2 text-sm text-[#5C4B3B]">
-                <RefreshCw className="w-4 h-4 animate-spin text-[#C88A14]" />
-                <span>
-                  {isAr
-                    ? `جاري تحميل الآيات برواية ${getRiwayahLabel(selectedRiwayah, 'ar')}...`
-                    : `Loading verses in ${getRiwayahLabel(selectedRiwayah, 'en')}...`}
-                </span>
+      {/* END-CALL EVALUATION MODAL (MATCHING SCREENSHOT 1) */}
+      {showEvalModal && sessionId && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/55 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md rounded-[28px] bg-[#FFFDF9] border border-[#DDD2BE] p-5 sm:p-6 shadow-2xl space-y-5 text-[#261C14]">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Award className="w-5 h-5 text-[#C88A14]" />
+                <h3 className="text-base sm:text-lg font-extrabold">
+                  {isAr ? 'التقييم وإنهاء الاتصال' : 'Evaluate & End Call'}
+                </h3>
               </div>
-            ) : verses.length === 0 ? (
-              <div className="py-8 text-center text-xs text-[#84715E]">
+              <button
+                type="button"
+                onClick={() => setShowEvalModal(false)}
+                className="p-1.5 rounded-lg hover:bg-[#F7F3EB] text-[#5C4B3B] cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* 3 Metrics Card */}
+            <div className="rounded-2xl bg-[#FAF7F0] border border-[#E5DEC9] grid grid-cols-3 py-3.5 px-2 text-center divide-x rtl:divide-x-reverse divide-[#E5DEC9]">
+              <div className="space-y-1">
+                <div className="text-[11px] font-bold text-[#5C4B3B]">
+                  {isAr ? 'المدة' : 'Duration'}
+                </div>
+                <div className="text-base font-extrabold font-mono-tabular text-[#261C14]">
+                  {formatCallDuration(callElapsedSeconds, isAr)}
+                </div>
+              </div>
+              <div className="space-y-1">
+                <div className="text-[11px] font-bold text-[#5C4B3B]">
+                  {isAr ? 'الأخطاء' : 'Errors'}
+                </div>
+                <div className="text-base font-extrabold font-mono-tabular text-[#B93829]">
+                  {isAr ? toArabicDigits(mistakesCount) : mistakesCount}
+                </div>
+              </div>
+              <div className="space-y-1">
+                <div className="text-[11px] font-bold text-[#5C4B3B]">
+                  {isAr ? 'نسبة الإتقان' : 'Accuracy'}
+                </div>
+                <div className="text-base font-extrabold font-mono-tabular text-[#15803D]">
+                  {isAr ? `٪${toArabicDigits(computedAccuracyPct)}` : `${computedAccuracyPct}%`}
+                </div>
+              </div>
+            </div>
+
+            {/* Final Rating Choices */}
+            <div className="space-y-2.5">
+              <p className="text-xs sm:text-sm font-bold text-[#261C14]">
                 {isAr
-                  ? 'تعذر جلب النص حالياً — الاتصال الصوتي المباشر ما زال يعمل بشكل طبيعي.'
-                  : 'Unable to load Quran text right now — direct P2P audio remains active.'}
-              </div>
-            ) : (
-              <div className="space-y-2.5 max-h-[54vh] overflow-y-auto pe-1">
-                {verses.map((v, idx) => {
-                  const isActive = activeAyah === v.ayahNumber;
-                  const isPeeking = peekVerseKey === v.verseKey;
-                  const displayMode =
-                    shouldHideVersesForMe && !isPeeking
-                      ? 'hidden'
-                      : fadeFirstWordOnly && !isPeeking
-                      ? 'fade'
-                      : 'full';
-                  const prevSurah = idx > 0 ? verses[idx - 1].surahNumber : null;
-                  const surahObj = SURAH_LIST.find((s) => s.number === v.surahNumber);
+                  ? 'التقدير النهائي للجلسة (سيظهر لك ولصديقك)'
+                  : 'Final Session Rating (visible to you & your friend)'}
+              </p>
 
+              <div className="grid grid-cols-2 gap-2.5">
+                {EVALUATION_CHOICES.map((opt) => {
+                  const selected = selectedEvaluation === opt.id;
                   return (
-                    <React.Fragment key={`${v.verseKey}-${idx}`}>
-                      {(idx === 0 || prevSurah !== v.surahNumber) && surahObj && (
-                        <div className="px-3 py-1.5 rounded-xl bg-[#F6E9C8]/70 border border-[#C88A14]/35 text-xs font-extrabold text-[#2D2218] text-center">
-                          {isAr ? `سورة ${surahObj.nameAr}` : `Surah ${surahObj.nameEn}`}
-                        </div>
-                      )}
-                      <div
-                        onClick={() => handleSelectAyahSync(v.ayahNumber)}
-                        className={`w-full text-start p-3.5 sm:p-4 rounded-2xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${
-                          isActive
-                            ? 'bg-[#FBF3DF] border-[#C88A14] ring-1 ring-[#C88A14]/40 shadow-2xs'
-                            : 'bg-[#F7F3EB]/60 hover:bg-[#EFE9DC]/70 border-[#E5DEC9]'
-                        }`}
-                      >
-                        <div className="flex-1 min-w-0">
-                          {displayMode === 'hidden' ? (
-                            <div className="flex items-center justify-between gap-3 py-1">
-                              <div className="flex items-center gap-2">
-                                <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-[#2D2218] text-xs font-mono-tabular font-bold text-[#EAB338]">
-                                  {v.ayahNumber}
-                                </span>
-                                <span className="text-xs sm:text-sm font-bold text-[#84715E] select-none">
-                                  {isAr
-                                    ? 'آية مخفية للتسميع غيباً ••••••••••••••'
-                                    : 'Verse hidden for memorization ••••••••••'}
-                                </span>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setPeekVerseKey(v.verseKey);
-                                  handleSelectAyahSync(v.ayahNumber);
-                                }}
-                                className="px-2.5 py-1 rounded-lg bg-[#FFFDF9] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-[11px] font-bold text-[#9E650C] flex items-center gap-1 shrink-0 cursor-pointer"
-                              >
-                                <Eye className="w-3 h-3" />
-                                <span>{isAr ? 'كشف الآية' : 'Peek'}</span>
-                              </button>
-                            </div>
-                          ) : (
-                            <p
-                              dir="rtl"
-                              className={`font-uthmani text-[#261C14] leading-[2.2] ${
-                                textScale === 'xlarge'
-                                  ? 'text-2xl sm:text-3xl'
-                                  : textScale === 'large'
-                                  ? 'text-xl sm:text-2xl'
-                                  : 'text-lg sm:text-xl'
-                              }`}
-                            >
-                              {displayMode === 'fade'
-                                ? extractFirstWordMask(v.textCleanUthmani)
-                                : v.text}{' '}
-                              <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-[#C88A14]/15 border border-[#C88A14]/40 text-xs font-mono-tabular font-bold text-[#9E650C] align-middle mx-1">
-                                {v.ayahNumber}
-                              </span>
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    </React.Fragment>
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setSelectedEvaluation(opt.id)}
+                      className={`py-2.5 px-3 rounded-2xl border text-xs sm:text-sm font-bold text-center cursor-pointer transition-all ${
+                        selected
+                          ? 'bg-[#E6F4EE] border-[#15803D] text-[#155E42] shadow-2xs'
+                          : 'bg-[#FFFDF9] border-[#DDD2BE] text-[#261C14] hover:bg-[#FAF7F0]'
+                      }`}
+                    >
+                      {isAr ? opt.labelAr : opt.labelEn}
+                    </button>
                   );
                 })}
               </div>
-            )}
+            </div>
+
+            {/* Actions */}
+            <div className="grid grid-cols-2 gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() =>
+                  handleEndCall(true, {
+                    evaluation: selectedEvaluation,
+                    durationSeconds: callElapsedSeconds,
+                    accuracyPct: computedAccuracyPct,
+                  })
+                }
+                className="py-3 px-3 rounded-2xl bg-[#B93829] hover:bg-[#992D20] text-[#FFFDF9] text-xs sm:text-sm font-extrabold flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <PhoneOff className="w-4 h-4" />
+                <span>{isAr ? 'حفظ وإنهاء الاتصال' : 'Save & End Call'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowEvalModal(false)}
+                className="py-3 px-3 rounded-2xl bg-[#FFFDF9] hover:bg-[#FAF7F0] border border-[#DDD2BE] text-[#261C14] text-xs sm:text-sm font-bold cursor-pointer"
+              >
+                {isAr ? 'متابعة الجلسة' : 'Continue Session'}
+              </button>
+            </div>
           </div>
         </div>
       )}

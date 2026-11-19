@@ -29,25 +29,9 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
     }
   };
 
-  // If already installed and running standalone, show an indicator in settings or clear badge
-  if (isInstalled && variant === 'settings') {
-    return (
-      <div className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-[#4A6144]/15 border border-[#88B87E]/30 text-xs text-[#261C14]">
-        <div className="flex items-center gap-2">
-          <Check className="w-4 h-4 text-[#4A6144] shrink-0" />
-          <span className="font-semibold">
-            {lang === 'ar' ? 'التطبيق مثبت ويعمل كنسخة أصلية على جهازك' : 'App is installed as PWA'}
-          </span>
-        </div>
-        <button
-          type="button"
-          onClick={() => setShowGuideModal(true)}
-          className="text-[11px] text-[#C88A14] hover:underline font-bold cursor-pointer shrink-0"
-        >
-          {lang === 'ar' ? 'دليل التثبيت' : 'Guide'}
-        </button>
-      </div>
-    );
+  // Remove install button completely once installed on any device to save UI space
+  if (isInstalled) {
+    return null;
   }
 
   const buttonClasses =

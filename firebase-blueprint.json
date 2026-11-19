@@ -45,6 +45,9 @@
           "type": "string",
           "maxLength": 80
         },
+        "lastSeen": {
+          "type": "number"
+        },
         "updatedAt": {
           "type": "string",
           "format": "date-time"
@@ -234,6 +237,23 @@
           "enum": ["host", "guest"]
         },
         "mistakesCount": {
+          "type": "number"
+        },
+        "markedErrors": {
+          "type": "array"
+        },
+        "endedByUid": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "sessionEvaluation": {
+          "type": "string",
+          "enum": ["excellent", "very_good", "good_practice", "needs_review"]
+        },
+        "callDurationSeconds": {
+          "type": "number"
+        },
+        "accuracyPct": {
           "type": "number"
         },
         "surahNumber": {

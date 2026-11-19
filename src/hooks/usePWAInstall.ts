@@ -7,19 +7,44 @@ export interface BeforeInstallPromptEvent extends Event {
 
 export type BrowserType = 'ios' | 'samsung' | 'firefox' | 'mac_safari' | 'chromium' | 'other';
 
+const STORAGE_KEY_PWA_INSTALLED = 'alutrujjah_pwa_installed_v1';
+
+function detectStandaloneDisplay(): boolean {
+  if (typeof window === 'undefined') return false;
+  const nav = window.navigator as unknown as { standalone?: boolean };
+  const byDisplayMode =
+    window.matchMedia('(display-mode: standalone)').matches ||
+    window.matchMedia('(display-mode: minimal-ui)').matches ||
+    window.matchMedia('(display-mode: fullscreen)').matches ||
+    window.matchMedia('(display-mode: window-controls-overlay)').matches;
+  const byIOSStandalone = nav.standalone === true;
+  const byTWA = typeof document !== 'undefined' && document.referrer.startsWith('android-app://');
+  return Boolean(byDisplayMode || byIOSStandalone || byTWA);
+}
+
 export function usePWAInstall() {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
-  const [isInstalled, setIsInstalled] = useState(false);
+  const [isInstalled, setIsInstalled] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    if (detectStandaloneDisplay()) return true;
+    try {
+      return localStorage.getItem(STORAGE_KEY_PWA_INSTALLED) === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [isIOS, setIsIOS] = useState(false);
   const [browserType, setBrowserType] = useState<BrowserType>('chromium');
 
   useEffect(() => {
-    // Detect standalone mode (already installed or running as standalone PWA)
-    const isStandalone =
-      typeof window !== 'undefined' &&
-      (window.matchMedia('(display-mode: standalone)').matches ||
-        (window.navigator as unknown as { standalone?: boolean }).standalone === true);
-    setIsInstalled(Boolean(isStandalone));
+    if (detectStandaloneDisplay()) {
+      setIsInstalled(true);
+      try {
+        localStorage.setItem(STORAGE_KEY_PWA_INSTALLED, 'true');
+      } catch {
+        // ignore
+      }
+    }
 
     // Detect browser environment
     const userAgent = typeof window !== 'undefined' ? window.navigator.userAgent.toLowerCase() : '';
@@ -41,19 +66,46 @@ export function usePWAInstall() {
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
       setDeferredPrompt(e as BeforeInstallPromptEvent);
+      // If browser explicitly offers beforeinstallprompt, app is not currently installed
+      if (!detectStandaloneDisplay()) {
+        setIsInstalled(false);
+        try {
+          localStorage.removeItem(STORAGE_KEY_PWA_INSTALLED);
+        } catch {
+          // ignore
+        }
+      }
     };
 
     const handleAppInstalled = () => {
       setIsInstalled(true);
       setDeferredPrompt(null);
+      try {
+        localStorage.setItem(STORAGE_KEY_PWA_INSTALLED, 'true');
+      } catch {
+        // ignore
+      }
+    };
+
+    const standaloneMq = window.matchMedia('(display-mode: standalone)');
+    const handleDisplayChange = () => {
+      if (detectStandaloneDisplay()) {
+        handleAppInstalled();
+      }
     };
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
     window.addEventListener('appinstalled', handleAppInstalled);
+    if (typeof standaloneMq.addEventListener === 'function') {
+      standaloneMq.addEventListener('change', handleDisplayChange);
+    }
 
     return () => {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
       window.removeEventListener('appinstalled', handleAppInstalled);
+      if (typeof standaloneMq.removeEventListener === 'function') {
+        standaloneMq.removeEventListener('change', handleDisplayChange);
+      }
     };
   }, []);
 
@@ -65,6 +117,11 @@ export function usePWAInstall() {
       if (outcome === 'accepted') {
         setIsInstalled(true);
         setDeferredPrompt(null);
+        try {
+          localStorage.setItem(STORAGE_KEY_PWA_INSTALLED, 'true');
+        } catch {
+          // ignore
+        }
         return true;
       }
     } catch {

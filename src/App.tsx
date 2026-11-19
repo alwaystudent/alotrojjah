@@ -44,6 +44,7 @@ import {
   Users,
   PhoneCall,
   PhoneOff,
+  ShieldCheck,
 } from 'lucide-react';
 import { User, onAuthStateChanged } from 'firebase/auth';
 import {
@@ -89,6 +90,8 @@ import { SmartMemorizationSystem } from './components/SmartMemorizationSystem';
 import { RandomQuizModal } from './components/RandomQuizModal';
 import { MemorizationReportModal } from './components/MemorizationReportModal';
 import { PWAInstallButton } from './components/PWAInstallButton';
+import { PrivacyTermsModal } from './components/PrivacyTermsModal';
+import { usePWAInstall } from './hooks/usePWAInstall';
 import { getDualDate, getCompactDualDate } from './utils/calendar';
 import { memoryManager } from './utils/memoryCleanup';
 import {
@@ -133,7 +136,8 @@ export default function App() {
 
   const [initialFriendInviteToken, setInitialFriendInviteToken] = useState<string>(() => {
     try {
-      const inv = new URLSearchParams(window.location.search).get('friendInvite');
+      const params = new URLSearchParams(window.location.search);
+      const inv = params.get('friendInvite') || params.get('invite');
       return inv ? inv.trim() : '';
     } catch {
       return '';
@@ -153,6 +157,8 @@ export default function App() {
   const [authUser, setAuthUser] = useState<User | null>(auth.currentUser);
   const [incomingCall, setIncomingCall] = useState<IncomingDuoCall | null>(null);
   const lastRingingCallIdRef = useRef<string | null>(null);
+  const { isInstalled: isPwaInstalled } = usePWAInstall();
+  const [isPrivacyTermsOpen, setIsPrivacyTermsOpen] = useState<boolean>(false);
 
   const [activeSection, setActiveSection] = useState<
     'home' | 'schedule' | 'today' | 'analytics' | 'reminders' | 'mutun' | 'duo'
@@ -1122,15 +1128,17 @@ export default function App() {
           </div>
         </div>
 
-        {/* Top Left Bar directly under Date: PWA Install Button */}
-        <div
-          dir="ltr"
-          className="w-full px-3 sm:px-6 lg:px-10 py-1 border-t border-[#E5DEC9]/80 bg-[#F7F3EB]/90 flex items-center justify-start"
-        >
-          <div dir={lang === 'ar' ? 'rtl' : 'ltr'}>
-            <PWAInstallButton lang={lang} variant="header" />
+        {/* Top Left Bar directly under Date: PWA Install Button (hidden immediately once installed) */}
+        {!isPwaInstalled && (
+          <div
+            dir="ltr"
+            className="w-full px-3 sm:px-6 lg:px-10 py-1 border-t border-[#E5DEC9]/80 bg-[#F7F3EB]/90 flex items-center justify-start"
+          >
+            <div dir={lang === 'ar' ? 'rtl' : 'ltr'}>
+              <PWAInstallButton lang={lang} variant="header" />
+            </div>
           </div>
-        </div>
+        )}
       </header>
 
       {/* In-App Reminder Notification Banner when triggered (Soft Comfortable Earthy Theme) */}
@@ -1914,6 +1922,7 @@ export default function App() {
             onClearFriendInvite={() => setInitialFriendInviteToken('')}
             pendingAcceptCallId={pendingAcceptCallId}
             onClearPendingCall={() => setPendingAcceptCallId(null)}
+            onOpenPrivacyTerms={() => setIsPrivacyTermsOpen(true)}
           />
         )}
       </main>
@@ -2399,20 +2408,49 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 4. Optional App Install (خيار تثبيت التطبيق بدل التثبيت التلقائي) */}
-              <div className="p-3 rounded-xl bg-[#F7F3EB] border border-[#DDD2BE] space-y-2.5">
-                <div className="space-y-0.5">
-                  <h3 className="font-bold text-[#2D2218] flex items-center gap-1.5 text-xs">
-                    <Smartphone className="w-3.5 h-3.5 text-[#C88A14]" />
-                    <span>{dict.installAppOptionalChoice}</span>
+              {/* 4. Optional App Install (Hidden automatically once installed to save space) */}
+              {!isPwaInstalled && (
+                <div className="p-3 rounded-xl bg-[#F7F3EB] border border-[#DDD2BE] space-y-2.5">
+                  <div className="space-y-0.5">
+                    <h3 className="font-bold text-[#2D2218] flex items-center gap-1.5 text-xs">
+                      <Smartphone className="w-3.5 h-3.5 text-[#C88A14]" />
+                      <span>{dict.installAppOptionalChoice}</span>
+                    </h3>
+                    <p className="text-[11px] text-[#5C4B3B] leading-relaxed">
+                      {dict.installAppOptionalChoiceDesc}
+                    </p>
+                  </div>
+                  <div className="pt-1">
+                    <PWAInstallButton lang={lang} variant="settings" />
+                  </div>
+                </div>
+              )}
+
+              {/* 4b. Privacy Policy & Platform Terms */}
+              <div className="p-3 rounded-xl bg-[#ECFDF3] border border-[#86EFAC] flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="font-bold text-[#15803D] flex items-center gap-1.5 text-xs">
+                    <ShieldCheck className="w-4 h-4 shrink-0" />
+                    <span>
+                      {lang === 'ar' ? 'سياسة الخصوصية وشروط الاستخدام' : 'Privacy Policy & Terms'}
+                    </span>
                   </h3>
-                  <p className="text-[11px] text-[#5C4B3B] leading-relaxed">
-                    {dict.installAppOptionalChoiceDesc}
+                  <p className="text-[11px] text-[#5C4B3B] mt-0.5">
+                    {lang === 'ar'
+                      ? 'متوافقة مع سياسات المنصات والاتصال المشفر والتحديثات التلقائية.'
+                      : 'Compliant with platform policies, E2EE calling & auto-updates.'}
                   </p>
                 </div>
-                <div className="pt-1">
-                  <PWAInstallButton lang={lang} variant="settings" />
-                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsSettingsOpen(false);
+                    setIsPrivacyTermsOpen(true);
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-[#15803D] hover:bg-[#166534] text-[#FFFDF9] text-xs font-bold shrink-0 cursor-pointer"
+                >
+                  {lang === 'ar' ? 'عرض' : 'View'}
+                </button>
               </div>
 
               {/* 5. Reminders & Alerts Settings */}
@@ -2648,6 +2686,13 @@ export default function App() {
           }}
         />
       )}
+
+      {/* Privacy Policy & Platform Terms Modal */}
+      <PrivacyTermsModal
+        lang={lang}
+        isOpen={isPrivacyTermsOpen}
+        onClose={() => setIsPrivacyTermsOpen(false)}
+      />
     </div>
   );
 }
