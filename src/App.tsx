@@ -535,6 +535,14 @@ export default function App() {
             ? `أصبح «${req.fromName}» في قائمة السرد الثنائي — اضغط زر الاتصال للبدء.`
             : `"${req.fromName}" added to Duo Sard — tap Call to begin.`,
       });
+    } catch {
+      setActiveToast({
+        title: lang === 'ar' ? 'تعذر إتمام الإضافة' : 'Could Not Add Friend',
+        body:
+          lang === 'ar'
+            ? 'تحقق من الاتصال بالإنترنت ثم أعد المحاولة.'
+            : 'Check your internet connection and try again.',
+      });
     } finally {
       setFriendAlertBusy(false);
     }

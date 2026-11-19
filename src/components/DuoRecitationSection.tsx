@@ -419,13 +419,32 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   const [trustedSourceId] = useState<TrustedQuranSourceId>('kfgqpc_hafs');
   const [activeUsedSource, setActiveUsedSource] = useState<TrustedQuranSourceId>('kfgqpc_hafs');
 
-  // Privacy & Encryption Settings (Default ON for High Privacy IP Masking via TURN relay)
-  const [highPrivacyIpMask, setHighPrivacyIpMask] = useState<boolean>(true);
-  const highPrivacyRef = useRef<boolean>(true);
+  // Privacy & Encryption Settings (Default ON for High Privacy IP Masking via TURN relay, persisted locally)
+  const [highPrivacyIpMask, setHighPrivacyIpMask] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('alutrujjah_high_privacy_ip');
+      return saved === null ? true : saved === 'true';
+    } catch {
+      return true;
+    }
+  });
+  const highPrivacyRef = useRef<boolean>(highPrivacyIpMask);
 
   useEffect(() => {
     highPrivacyRef.current = highPrivacyIpMask;
+    try {
+      localStorage.setItem('alutrujjah_high_privacy_ip', String(highPrivacyIpMask));
+    } catch {
+      // ignore
+    }
   }, [highPrivacyIpMask]);
+
+  // Keep Riwayah synced when changed from Settings while not inside an active call
+  useEffect(() => {
+    if (!sessionIdRef.current) {
+      setSelectedRiwayah(defaultRiwayah);
+    }
+  }, [defaultRiwayah]);
 
   // Active Direct Voice Call Session State
   const [sessionId, setSessionId] = useState<string | null>(null);

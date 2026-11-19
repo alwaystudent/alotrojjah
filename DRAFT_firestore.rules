@@ -256,7 +256,13 @@ service cloud.firestore {
     match /friendRequests/{requestId} {
       allow get: if isVerifiedUser()
         && isValidId(requestId)
-        && (existing().fromUid == request.auth.uid || existing().toUid == request.auth.uid);
+        && (
+          (resource == null && (
+            requestId.matches('^' + request.auth.uid + '_[a-zA-Z0-9_\\-]+$')
+            || requestId.matches('^[a-zA-Z0-9_\\-]+_' + request.auth.uid + '$')
+          ))
+          || (resource != null && (existing().fromUid == request.auth.uid || existing().toUid == request.auth.uid))
+        );
       allow list: if isVerifiedUser()
         && (resource.data.toUid == request.auth.uid || resource.data.fromUid == request.auth.uid);
       allow create: if isVerifiedUser()
@@ -333,6 +339,7 @@ service cloud.firestore {
     match /duoSessions/{sessionId} {
       allow get: if isVerifiedUser()
         && isValidId(sessionId)
+        && resource != null
         && (
           existing().hostUid == request.auth.uid
           || existing().guestUid == request.auth.uid

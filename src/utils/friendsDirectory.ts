@@ -79,11 +79,11 @@ function generateCryptoToken(prefix: string, length = 10): string {
 }
 
 export function getDisplayNameForUser(user: User): string {
-  return (
-    user.displayName ||
-    user.email?.split('@')[0] ||
-    'قارئ الأترجة'
-  ).slice(0, 80);
+  const candidate =
+    user.displayName?.trim() ||
+    user.email?.split('@')[0]?.trim() ||
+    'قارئ الأترجة';
+  return candidate.slice(0, 80);
 }
 
 export function formatFriendShortCode(uid: string): string {
@@ -286,11 +286,36 @@ export async function sendConsentFriendRequest(
   invite: FriendInviteDoc
 ): Promise<'sent' | 'already_pending' | 'already_accepted'> {
   const requestId = `${currentUser.uid}_${invite.ownerUid}`;
+  const reverseRequestId = `${invite.ownerUid}_${currentUser.uid}`;
   const reqRef = doc(db, 'friendRequests', requestId);
+  const reverseReqRef = doc(db, 'friendRequests', reverseRequestId);
   const friendRef = doc(db, 'users', currentUser.uid, 'friends', invite.ownerUid);
+  const safeOwnerName = invite.ownerName?.trim().slice(0, 80) || 'قارئ';
   const reqPath = `friendRequests/${requestId}`;
 
   try {
+    // Check if inviter already sent us a pending/accepted request in the opposite direction
+    const reverseSnap = await getDoc(reverseReqRef);
+    if (reverseSnap.exists()) {
+      const reverseData = reverseSnap.data() as FriendRequestDoc;
+      if (reverseData.status === 'pending') {
+        await approveIncomingFriendRequest(currentUser, reverseData);
+        return 'already_accepted';
+      }
+      if (reverseData.status === 'accepted') {
+        const friendSnap = await getDoc(friendRef);
+        if (!friendSnap.exists()) {
+          await setDoc(friendRef, {
+            friendUid: invite.ownerUid,
+            friendName: safeOwnerName,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        }
+        return 'already_accepted';
+      }
+    }
+
     const existingSnap = await getDoc(reqRef);
     if (existingSnap.exists()) {
       const prev = existingSnap.data() as FriendRequestDoc;
@@ -302,13 +327,13 @@ export async function sendConsentFriendRequest(
           if (!friendSnap.exists()) {
             batch.set(friendRef, {
               friendUid: invite.ownerUid,
-              friendName: invite.ownerName.slice(0, 80),
+              friendName: safeOwnerName,
               createdAt: serverTimestamp(),
               updatedAt: serverTimestamp(),
             });
           } else {
             batch.update(friendRef, {
-              friendName: invite.ownerName.slice(0, 80),
+              friendName: safeOwnerName,
               updatedAt: serverTimestamp(),
             });
           }
@@ -331,7 +356,7 @@ export async function sendConsentFriendRequest(
       fromUid: currentUser.uid,
       fromName: getDisplayNameForUser(currentUser),
       toUid: invite.ownerUid,
-      toName: invite.ownerName.slice(0, 80),
+      toName: safeOwnerName,
       inviteToken: invite.inviteToken,
       status: 'pending',
       syncedBySender: false,
