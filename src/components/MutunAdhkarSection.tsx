@@ -766,8 +766,8 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
           </div>
           <p className="text-xs sm:text-sm text-[#E6D7BE]">
             {lang === 'ar'
-              ? 'المتون العلمية، وإضافة الكتب عبر روابط خارجية، والأذكار اليومية بمظهر مريح للقراءة'
-              : 'Islamic Mutun texts, external book links for comfortable reading, and daily Adhkar'}
+              ? 'متون علمية · كتب بروابط خارجية · أذكار يومية'
+              : 'Islamic Mutun · External Books · Daily Adhkar'}
           </p>
         </div>
 

@@ -20,65 +20,65 @@ export const PrivacyTermsModal: React.FC<PrivacyTermsModalProps> = ({
     ? [
         {
           icon: Lock,
-          title: '١. سرية الاتصال الصوتي المباشر (WebRTC E2EE)',
-          body: 'جميع مكالمات السرد الثنائي مشفرة من طرف إلى طرف (DTLS-SRTP) وتعمل بالصوت فقط (Strict Audio-Only) مع تعطيل قنوات تبادل الملفات والبيانات كلياً (RTCDataChannel Disabled). كما يعمل وضع الخصوصية العالية على تمرير الصوت عبر خادم TURN الوسيط لإخفاء عنوان الـ IP الحقيقي عن الطرف الآخر، وتُغلق مسارات الميكروفون وتُمسح من الذاكرة فور إنهاء المكالمة دون أي تسجيل صوتي.',
+          title: '١. سرية الاتصال الصوتي (WebRTC E2EE)',
+          body: 'مكالمات السرد الثنائي مشفّرة (DTLS-SRTP) بالصوت فقط مع تعطيل تبادل الملفات (RTCDataChannel). يمرّر وضع الخصوصية الصوت عبر خادم TURN لإخفاء IP، وتُغلق مسارات الميكروفون فور إنهاء المكالمة دون تسجيل.',
         },
         {
           icon: ShieldCheck,
-          title: '٢. المصادقة وإضافة الأصدقاء بالموافقة الصريحة',
-          body: 'يتم تسجيل الدخول عبر Firebase Authentication (البريد الموثّق أو حساب Google) وفق سياسات الأمان المعتمدة. يُعزل البريد الإلكتروني في سجل خاص بالمالك فقط ولا يُعرض للآخرين، كما تقتصر إضافة الأصدقاء على مشاركة رابط دعوة شخصي قابل للإلغاء ولا تكتمل الإضافة إلا بعد موافقة الطرف المستلم.',
+          title: '٢. المصادقة وإضافة الأصدقاء بالموافقة',
+          body: 'الدخول عبر Firebase Auth (البريد الموثّق أو Google)، ويُحفظ البريد في سجل خاص بالمالك فقط. إضافة الأصدقاء تتم عبر رابط شخصي قابل للإلغاء وبموافقة المستلم.',
         },
         {
           icon: Mic,
-          title: '٣. أذونات الميكروفون والتحقق الصوتي الذاتي',
-          body: 'يُطلب إذن الميكروفون حصراً أثناء تشغيل جلسات التلاوة الذاتية أو مكالمات السرد الثنائي، وتُعالج بيانات التعرف الصوتي محلياً داخل المتصفح دون الاحتفاظ بتسجيلات أو مشاركتها مع أطراف تسويقية.',
+          title: '٣. الميكروفون والتسميع',
+          body: 'يُستخدم الميكروفون أثناء جلسات التلاوة والمكالمات فقط، ولا تُحفظ أي تسجيلات صوتية.',
         },
         {
           icon: BookOpen,
-          title: '٤. مصادر المصحف الموثوقة والروابط الخارجية',
-          body: 'يستمد التطبيق النصوص القرآنية بروايات حفص وقالون وورش من واجهات موثوقة (مجمع الملك فهد لطباعة المصحف الشريف، موقع آية، AlQuran Cloud، وCDN المصاحف المعتمدة)، كما يعرض فقط المصادر والروابط العلمية التي يضيفها المستخدم طوعاً في المكتبة.',
+          title: '٤. مصادر المصحف والمكتبة',
+          body: 'تُجلب الآيات (حفص، قالون، ورش) من مصادر موثوقة (مجمع الملك فهد، موقع آية، AlQuran Cloud)، وتخضع روابط المكتبة لاختيار المستخدم.',
         },
         {
           icon: Database,
-          title: '٥. التخزين المحلي والتحديثات التلقائية (PWA)',
-          body: 'تُحفظ خططك وإحصائياتك ومكتبتك في ذاكرة متصفحك المحلية (localStorage) وذاكرة التخزين المؤقت للعمل دون اتصال. يقوم التطبيق بتحديث ملفاته تلقائياً في الخلفية فور صدور أي نسخة جديدة دون الحاجة لمسح ذاكرة المتصفح أو إعادة التثبيت، مع الحفاظ الكامل على خططك وبياناتك.',
+          title: '٥. التخزين المحلي والتحديث الصامت',
+          body: 'تُحفظ خططك محلياً في المتصفح، ويحدَّث التطبيق تلقائياً في الخلفية دون مسح البيانات أو إعادة التثبيت.',
         },
         {
           icon: RefreshCw,
-          title: '٦. شروط الاستخدام والالتزام بقوانين المنصات',
-          body: 'باستخدامك لمنصة «الأترجة / السرد»، فإنك توافق على استخدام خصائص الاتصال الصوتي ومشاركة الروابط في التلاوة وتدارُس القرآن الكريم فقط، والالتزام بشروط مزودي الخدمة المرتبطين (Google Firebase ومتصفحات الويب). يملك المستخدم كامل الحق في حذف أصدقائه أو بياناته المحلية أو تسجيل الخروج في أي وقت.',
+          title: '٦. شروط الاستخدام',
+          body: 'استخدام المكالمات والروابط مخصص لتدارس القرآن الكريم وفق سياسات Google Firebase والمتصفحات، مع حق حذف البيانات أو الأصدقاء في أي وقت.',
         },
       ]
     : [
         {
           icon: Lock,
-          title: '1. End-to-End Encrypted Audio & IP Masking',
-          body: 'Duo Recitation calls use strict audio-only WebRTC (DTLS-SRTP) with data/file channels blocked (RTCDataChannel disabled). High Privacy Mode routes audio via TURN relay to mask real IP addresses. Microphone tracks and peer connections are closed and purged from memory immediately when a call ends, with zero server recording.',
+          title: '1. Encrypted Audio & IP Masking',
+          body: 'Duo calls use strict audio-only WebRTC (DTLS-SRTP) with data channels disabled. High Privacy routes audio via TURN to mask IPs, and mic tracks purge immediately on hang-up with zero recording.',
         },
         {
           icon: ShieldCheck,
-          title: '2. Authentication & Consent-Based Friend Invites',
-          body: 'Authentication is powered by Firebase Auth (verified email or Google Sign-In). Your email is isolated strictly to your private owner record. Friends are added exclusively through revocable invite links that require explicit recipient approval before calls are permitted.',
+          title: '2. Auth & Consent-Based Invites',
+          body: 'Powered by Firebase Auth (verified email or Google), with emails kept private. Friends connect only via revocable links requiring recipient approval.',
         },
         {
           icon: Mic,
-          title: '3. Microphone & Self-Recitation Speech Recognition',
-          body: 'Microphone access is requested only when you start self-recitation alignment or a Duo audio call. Audio is never stored or sold to third-party trackers.',
+          title: '3. Microphone Usage',
+          body: 'Mic access is used strictly during active recitation and calls, with no audio stored.',
         },
         {
           icon: BookOpen,
-          title: '4. Trusted Quran Sources & User Library',
-          body: 'Quran text across Hafs, Qalun, and Warsh narrations is fetched from trusted public endpoints (King Fahd Complex/Quran.com, AlQuran Cloud, FawazAhmed0 CDN). External book links in the Library remain under user control.',
+          title: '4. Quran Sources & Library',
+          body: 'Verses (Hafs, Qalun, Warsh) load from trusted sources (King Fahd Complex, AlQuran Cloud, FawazAhmed0 CDN). Library links remain user-managed.',
         },
         {
           icon: Database,
-          title: '5. Local Storage & Seamless Automatic Updates',
-          body: 'Your plans, statistics, and library reside locally in browser storage and Service Worker caches for offline reliability. App updates apply automatically in the background without clearing browser cache or reinstalling, keeping your local plans intact.',
+          title: '5. Local Storage & Silent Updates',
+          body: 'Plans reside in browser storage. App updates apply silently in the background without cache clearing or reinstalling.',
         },
         {
           icon: RefreshCw,
-          title: '6. Platform-Compliant Terms of Service',
-          body: 'By using Al-Utrujjah / Assard, you agree to use calling and invite features responsibly for Quran study, complying with linked infrastructure terms (Google Firebase and standard browser policies). You may remove friends, clear plans, or sign out at any time.',
+          title: '6. Terms of Service',
+          body: 'Calling and invite tools are for Quran study in compliance with Google Firebase and browser policies. You may delete friends or local data anytime.',
         },
       ];
 
@@ -96,7 +96,7 @@ export const PrivacyTermsModal: React.FC<PrivacyTermsModalProps> = ({
           <div className="flex items-center gap-2">
             <ShieldCheck className="w-5 h-5 text-[#EAB338]" />
             <h2 className="text-sm sm:text-base font-extrabold">
-              {isAr ? 'سياسة الخصوصية وشروط الاستخدام' : 'Privacy Policy & Terms of Service'}
+              {isAr ? 'الخصوصية وشروط الاستخدام' : 'Privacy & Terms'}
             </h2>
           </div>
           <button
@@ -109,10 +109,10 @@ export const PrivacyTermsModal: React.FC<PrivacyTermsModalProps> = ({
         </div>
 
         <div className="p-4 sm:p-5 overflow-y-auto space-y-3 text-xs sm:text-sm leading-relaxed">
-          <div className="rounded-xl bg-[#ECFDF3] border border-[#86EFAC] px-3.5 py-2.5 text-xs font-bold text-[#15803D]">
+          <div className="rounded-xl bg-[#ECFDF3] border border-[#86EFAC] px-3.5 py-2 text-xs font-bold text-[#15803D]">
             {isAr
-              ? 'مُحدَّث ليتوافق مع سياسات Google / Firebase ومتصفحات الويب ومعايير الخصوصية الصوتية المشفّرة.'
-              : 'Updated for compliance with Google/Firebase, modern browser PWA, and encrypted WebRTC privacy standards.'}
+              ? 'متوافقة مع سياسات Google / Firebase ومتصفحات الويب ومعايير التشفير الصوتي.'
+              : 'Compliant with Google/Firebase, browser PWA, and encrypted WebRTC standards.'}
           </div>
 
           {sections.map((sec) => {
@@ -134,14 +134,14 @@ export const PrivacyTermsModal: React.FC<PrivacyTermsModalProps> = ({
 
         <div className="px-4 sm:px-5 py-3 bg-[#F7F3EB] border-t border-[#DDD2BE] flex items-center justify-between gap-2 shrink-0">
           <span className="text-[11px] font-semibold text-[#84715E]">
-            {isAr ? 'تحديثات تلقائية نشطة · الأداء مُحسَّن' : 'Auto-Updates Active · High Performance'}
+            {isAr ? 'تحديثات تلقائية نشطة' : 'Auto-Updates Active'}
           </span>
           <button
             type="button"
             onClick={onClose}
             className="mustard-gradient-btn px-5 py-1.5 rounded-xl text-xs font-bold text-[#FFFDF9] cursor-pointer"
           >
-            {isAr ? 'موافق وإغلاق' : 'Accept & Close'}
+            {isAr ? 'موافق' : 'Accept'}
           </button>
         </div>
       </div>

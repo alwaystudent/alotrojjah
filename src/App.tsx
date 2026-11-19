@@ -45,8 +45,12 @@ import {
   PhoneCall,
   PhoneOff,
   ShieldCheck,
+  UserPlus,
+  UserCheck,
+  UserX,
+  LogIn,
 } from 'lucide-react';
-import { User, onAuthStateChanged } from 'firebase/auth';
+import { User, onAuthStateChanged, signInWithPopup } from 'firebase/auth';
 import {
   collection,
   doc,
@@ -56,7 +60,7 @@ import {
   updateDoc,
   where,
 } from 'firebase/firestore';
-import { auth, db, OperationType, handleFirestoreError } from './firebase';
+import { auth, db, googleProvider, OperationType, handleFirestoreError } from './firebase';
 import {
   Language,
   PlanType,
@@ -94,7 +98,14 @@ import { PrivacyTermsModal } from './components/PrivacyTermsModal';
 import { getDualDate, getCompactDualDate } from './utils/calendar';
 import { memoryManager } from './utils/memoryCleanup';
 import {
+  FriendInviteDoc,
+  FriendRequestDoc,
   IncomingDuoCall,
+  approveIncomingFriendRequest,
+  declineIncomingFriendRequest,
+  fetchFriendInviteDetails,
+  sendConsentFriendRequest,
+  syncAcceptedOutgoingRequest,
   syncVerifiedUserProfileAndDirectory,
 } from './utils/friendsDirectory';
 import {
@@ -170,6 +181,18 @@ export default function App() {
   const lastRingingCallIdRef = useRef<string | null>(null);
   const [isPrivacyTermsOpen, setIsPrivacyTermsOpen] = useState<boolean>(false);
 
+  // Global Instant Friend-Invite & Approval Popup State (works on any screen)
+  const [inviteModalDoc, setInviteModalDoc] = useState<FriendInviteDoc | null>(null);
+  const [inviteModalLoading, setInviteModalLoading] = useState<boolean>(false);
+  const [inviteModalError, setInviteModalError] = useState<string | null>(null);
+  const [inviteSignInDeferred, setInviteSignInDeferred] = useState<boolean>(false);
+  const [pendingIncomingFriendReqs, setPendingIncomingFriendReqs] = useState<FriendRequestDoc[]>([]);
+  const [newlyAcceptedFriendPopup, setNewlyAcceptedFriendPopup] = useState<{
+    friendUid: string;
+    friendName: string;
+  } | null>(null);
+  const [friendAlertBusy, setFriendAlertBusy] = useState<boolean>(false);
+
   const [activeSection, setActiveSection] = useState<AppSection>(() => {
     if (initialFriendInviteToken || pendingAcceptCallId) return 'duo';
     try {
@@ -203,18 +226,17 @@ export default function App() {
     }
   }, []);
 
-  // Persist current section across pull-to-refresh reloads & clear transient duo triggers on Home
+  // Persist current section across pull-to-refresh reloads & clear only call-answer trigger when leaving Duo
   useEffect(() => {
     try {
       sessionStorage.setItem(STORAGE_KEY_ACTIVE_SECTION, activeSection);
     } catch {
       // ignore
     }
-    if (activeSection !== 'duo') {
-      if (initialFriendInviteToken) setInitialFriendInviteToken('');
-      if (pendingAcceptCallId) setPendingAcceptCallId(null);
+    if (activeSection !== 'duo' && pendingAcceptCallId) {
+      setPendingAcceptCallId(null);
     }
-  }, [activeSection, initialFriendInviteToken, pendingAcceptCallId]);
+  }, [activeSection, pendingAcceptCallId]);
 
   // Prevent silent SW reload from interrupting active Quran recitation sessions
   useEffect(() => {
@@ -334,16 +356,198 @@ export default function App() {
   const dict = t(lang);
   const todayId = getTodayDayId();
 
-  // Global Firebase Auth + Incoming Friend Call Ringing Listener (active on all screens)
+  // Global Firebase Auth + Incoming Friend Call & Friend Request Listeners (active on all screens)
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, async (nextUser) => {
       setAuthUser(nextUser);
       if (nextUser && nextUser.emailVerified) {
-        await syncVerifiedUserProfileAndDirectory(nextUser);
+        try {
+          await syncVerifiedUserProfileAndDirectory(nextUser);
+        } catch (err) {
+          console.warn('Directory sync deferred:', err);
+        }
       }
     });
     return () => unsubAuth();
   }, []);
+
+  // Global listener for incoming pending friend requests & newly accepted outgoing requests
+  useEffect(() => {
+    if (!authUser || !authUser.emailVerified) {
+      setPendingIncomingFriendReqs([]);
+      return;
+    }
+
+    const incomingReqQ = query(
+      collection(db, 'friendRequests'),
+      where('toUid', '==', authUser.uid),
+      where('status', '==', 'pending')
+    );
+    const unsubIncomingReqs = onSnapshot(
+      incomingReqQ,
+      (snap) => {
+        setPendingIncomingFriendReqs(snap.docs.map((d) => d.data() as FriendRequestDoc));
+      },
+      (err) => {
+        handleFirestoreError(err, OperationType.LIST, 'friendRequests');
+      }
+    );
+
+    const outgoingReqQ = query(
+      collection(db, 'friendRequests'),
+      where('fromUid', '==', authUser.uid)
+    );
+    const unsubOutgoingReqs = onSnapshot(
+      outgoingReqQ,
+      async (snap) => {
+        const allOut = snap.docs.map((d) => d.data() as FriendRequestDoc);
+        for (const req of allOut) {
+          if (req.status === 'accepted' && !req.syncedBySender) {
+            try {
+              await syncAcceptedOutgoingRequest(authUser, req);
+              setNewlyAcceptedFriendPopup({
+                friendUid: req.toUid,
+                friendName: req.toName,
+              });
+            } catch (err) {
+              console.warn('Outgoing friend sync notice:', err);
+            }
+          }
+        }
+      },
+      (err) => {
+        handleFirestoreError(err, OperationType.LIST, 'friendRequests');
+      }
+    );
+
+    return () => {
+      unsubIncomingReqs();
+      unsubOutgoingReqs();
+    };
+  }, [authUser]);
+
+  // Automatically resolve shared invite link when signed in & verified -> show instant alert modal
+  useEffect(() => {
+    if (!initialFriendInviteToken) {
+      setInviteModalDoc(null);
+      setInviteModalError(null);
+      setInviteSignInDeferred(false);
+      return;
+    }
+    if (!authUser || !authUser.emailVerified) {
+      setInviteModalDoc(null);
+      return;
+    }
+    setInviteSignInDeferred(false);
+
+    let cancelled = false;
+    const resolveInvite = async () => {
+      setInviteModalLoading(true);
+      setInviteModalError(null);
+      try {
+        const found = await fetchFriendInviteDetails(initialFriendInviteToken);
+        if (cancelled) return;
+        if (!found) {
+          setInviteModalError(
+            lang === 'ar'
+              ? 'رابط الدعوة غير صالح أو تم إلغاؤه.'
+              : 'This invite link is invalid or has been revoked.'
+          );
+          setInviteModalDoc(null);
+        } else if (found.ownerUid === authUser.uid) {
+          setInviteModalError(
+            lang === 'ar'
+              ? 'هذا رابط دعوتك الشخصي — شاركه مع صديقك ليطلب إضافتك.'
+              : 'This is your own invite link — share it with a friend.'
+          );
+          setInviteModalDoc(null);
+        } else {
+          setInviteModalDoc(found);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          console.warn('Invite resolve notice:', err);
+          setInviteModalError(
+            lang === 'ar'
+              ? 'تعذر قراءة رابط الدعوة الآن، حاول مجدداً.'
+              : 'Could not load invite details right now.'
+          );
+        }
+      } finally {
+        if (!cancelled) setInviteModalLoading(false);
+      }
+    };
+
+    resolveInvite();
+    return () => {
+      cancelled = true;
+    };
+  }, [initialFriendInviteToken, authUser, lang]);
+
+  const handleConfirmGlobalInvite = async () => {
+    if (!authUser || !authUser.emailVerified || !inviteModalDoc) return;
+    setFriendAlertBusy(true);
+    setInviteModalError(null);
+    try {
+      const outcome = await sendConsentFriendRequest(authUser, inviteModalDoc);
+      const ownerName = inviteModalDoc.ownerName;
+      setInviteModalDoc(null);
+      setInitialFriendInviteToken('');
+      setActiveSection('duo');
+      if (outcome === 'already_accepted') {
+        setActiveToast({
+          title: lang === 'ar' ? 'تمت الإضافة في السرد الثنائي' : 'Added to Duo Sard',
+          body:
+            lang === 'ar'
+              ? `«${ownerName}» مضاف في قائمة أصدقائك؛ يمكنك الاتصال به الآن.`
+              : `"${ownerName}" is in your friends list and ready for a call.`,
+        });
+      } else {
+        setActiveToast({
+          title: lang === 'ar' ? 'تم إرسال طلب الصداقة' : 'Friend Request Sent',
+          body:
+            lang === 'ar'
+              ? `سيُضاف «${ownerName}» وتظهر أيقونة الاتصال فور موافقته.`
+              : `"${ownerName}" will appear here with the call button once approved.`,
+        });
+      }
+    } catch {
+      setInviteModalError(
+        lang === 'ar'
+          ? 'تعذر إرسال طلب الصداقة. تحقق من الاتصال وحاول مجدداً.'
+          : 'Could not send friend request. Please try again.'
+      );
+    } finally {
+      setFriendAlertBusy(false);
+    }
+  };
+
+  const handleApproveGlobalFriendRequest = async (req: FriendRequestDoc) => {
+    if (!authUser || !authUser.emailVerified) return;
+    setFriendAlertBusy(true);
+    try {
+      await approveIncomingFriendRequest(authUser, req);
+      setActiveSection('duo');
+      setActiveToast({
+        title: lang === 'ar' ? 'تمت إضافة الصديق' : 'Friend Added',
+        body:
+          lang === 'ar'
+            ? `أصبح «${req.fromName}» في قائمة السرد الثنائي — اضغط زر الاتصال للبدء.`
+            : `"${req.fromName}" added to Duo Sard — tap Call to begin.`,
+      });
+    } finally {
+      setFriendAlertBusy(false);
+    }
+  };
+
+  const handleDeclineGlobalFriendRequest = async (req: FriendRequestDoc) => {
+    setFriendAlertBusy(true);
+    try {
+      await declineIncomingFriendRequest(req);
+    } finally {
+      setFriendAlertBusy(false);
+    }
+  };
 
   const handleDeclineIncomingCall = async (targetSessionId: string) => {
     callRingtone.stop();
@@ -536,28 +740,28 @@ export default function App() {
     }
     const title = isPrepAlert
       ? lang === 'ar'
-        ? 'تنبيه استعداد (قبل الموعد بـ 10 دقائق)'
-        : 'Readiness Alert (10 mins before)'
+        ? 'تنبيه استعداد (قبل ١٠ دقائق)'
+        : 'Readiness Alert (10m prior)'
       : dict.notificationTestTitle;
     const body = customPlan
       ? isPrepAlert
         ? lang === 'ar'
-          ? `اقترب موعد ${getPlanTypeLabel(customPlan.planType, lang)}: ${formatCurriculumTitle(
+          ? `اقترب ${getPlanTypeLabel(customPlan.planType, lang)}: ${formatCurriculumTitle(
               customPlan,
               lang
-            )}. يُرجى تجهيز المصحف الشريف أو التطبيق وتهيئة المكان.`
+            )} — جهّز المصحف.`
           : `Upcoming ${getPlanTypeLabel(customPlan.planType, lang)}: ${formatCurriculumTitle(
               customPlan,
               lang
-            )}. Please prepare your Mushaf or app.`
+            )}.`
         : `${getPlanTypeLabel(customPlan.planType, lang)}: ${formatCurriculumTitle(
             customPlan,
             lang
           )} (${customPlan.estimatedAyahs} ${dict.ayahsUnit})`
       : isPrepAlert
       ? lang === 'ar'
-        ? 'تنبيه استعداد تجريبي: اقترب موعد الخطة، يُرجى تجهيز المصحف أو التطبيق.'
-        : 'Test Readiness Alert: plan time is approaching, please prepare your Mushaf or app.'
+        ? 'تنبيه تجريبي: اقترب موعد الخطة، جهّز المصحف.'
+        : 'Test Readiness Alert: prepare your Mushaf.'
       : dict.notificationTestBody;
 
     if (!expandedSardPlanId) {
@@ -587,19 +791,19 @@ export default function App() {
     }
     const title = isPrepAlert
       ? lang === 'ar'
-        ? 'تنبيه استعداد لاختبار تثبيت الحفظ (قبل 10 دقائق)'
-        : 'Readiness Alert: Retention Quiz (10 mins before)'
+        ? 'استعداد لاختبار الحفظ (قبل ١٠ دقائق)'
+        : 'Quiz Readiness (10m prior)'
       : lang === 'ar'
-      ? `تذكير بموعد الاختبار العشوائي: سورة ${quiz.surahNameAr}`
-      : `Retention Quiz Reminder: Surah ${quiz.surahNameEn}`;
+      ? `موعد الاختبار: سورة ${quiz.surahNameAr}`
+      : `Quiz Reminder: Surah ${quiz.surahNameEn}`;
 
     const body = isPrepAlert
       ? lang === 'ar'
-        ? `اقترب موعد الاختبار العشوائي لسورة ${quiz.surahNameAr} (${quiz.frequencyLabelAr}). تهيأ للاختبار.`
-        : `Approaching retention quiz for Surah ${quiz.surahNameEn}. Prepare for testing.`
+        ? `اقترب اختبار سورة ${quiz.surahNameAr} (${quiz.frequencyLabelAr}).`
+        : `Upcoming quiz: Surah ${quiz.surahNameEn}.`
       : lang === 'ar'
-      ? `حان الآن موعد الاختبار العشوائي لتثبيت الحفظ: سورة ${quiz.surahNameAr} (الآيات ${quiz.ayahFrom} - ${quiz.ayahTo}) [${quiz.frequencyLabelAr}].`
-      : `It is now time for the retention quiz: Surah ${quiz.surahNameEn} (${quiz.ayahFrom} - ${quiz.ayahTo}).`;
+      ? `حان اختبار سورة ${quiz.surahNameAr} (${quiz.ayahFrom} - ${quiz.ayahTo}).`
+      : `Time for quiz: Surah ${quiz.surahNameEn} (${quiz.ayahFrom} - ${quiz.ayahTo}).`;
 
     if (!expandedSardPlanId) {
       setActiveToast({ title, body, isPrep: isPrepAlert });
@@ -1914,8 +2118,8 @@ export default function App() {
                           <ChevronDown className="w-3.5 h-3.5 text-[#C88A14]" />
                           <span>
                             {lang === 'ar'
-                              ? `القائمة المنسدلة مطوية (${dayPlans.length} خطط) - اضغط للعرض`
-                              : `Dropdown list collapsed (${dayPlans.length} plans) - click to expand`}
+                              ? `مطوية (${dayPlans.length} خطط) · اضغط للعرض`
+                              : `Collapsed (${dayPlans.length} plans) · Tap to expand`}
                           </span>
                         </div>
                       )}
@@ -2054,6 +2258,270 @@ export default function App() {
           </button>
         </div>
       </nav>
+
+      {/* Instant Friend Invite Approval Modal (Triggered immediately when opening a shared link) */}
+      {!incomingCall &&
+        !inviteSignInDeferred &&
+        (initialFriendInviteToken || inviteModalDoc || inviteModalLoading) && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="w-full max-w-sm rounded-[24px] bg-[#FFFDF9] border-2 border-[#15803D]/70 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="px-4 py-3 bg-[#ECFDF3] border-b border-[#BBF7D0] flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <UserPlus className="w-5 h-5 text-[#15803D] shrink-0" />
+                <h3 className="text-sm sm:text-base font-extrabold text-[#14532D]">
+                  {lang === 'ar' ? 'دعوة صداقة للسرد الثنائي' : 'Duo Sard Friend Invite'}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setInviteModalDoc(null);
+                  setInviteModalError(null);
+                  setInitialFriendInviteToken('');
+                }}
+                className="p-1 rounded-lg hover:bg-[#DCFCE7] text-[#14532D] cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              {!authUser ? (
+                <>
+                  <p className="text-xs sm:text-sm text-[#261C14] leading-relaxed font-semibold">
+                    {lang === 'ar'
+                      ? 'وصلتك دعوة صداقة للسرد الثنائي. سجّل دخولك للموافقة وإضافة الصديق ثم الانتقال للسرد الثنائي.'
+                      : 'You received a Duo Sard friend invite. Sign in to approve and add your friend.'}
+                  </p>
+                  <div className="flex flex-col gap-2">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await signInWithPopup(auth, googleProvider);
+                        } catch {
+                          setInviteSignInDeferred(true);
+                          setActiveSection('duo');
+                        }
+                      }}
+                      className="w-full py-2.5 px-4 rounded-xl bg-[#166534] hover:bg-[#14532D] text-[#FFFDF9] text-xs sm:text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <LogIn className="w-4 h-4" />
+                      <span>{lang === 'ar' ? 'دخول سريع عبر Google للموافقة' : 'Sign in with Google to Approve'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setInviteSignInDeferred(true);
+                        setActiveSection('duo');
+                      }}
+                      className="w-full py-2 px-4 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] text-[#2D2218] text-xs font-bold cursor-pointer hover:bg-[#F7F3EB]"
+                    >
+                      {lang === 'ar' ? 'تسجيل الدخول بالبريد الإلكتروني' : 'Sign in with Email'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setInviteModalDoc(null);
+                        setInitialFriendInviteToken('');
+                      }}
+                      className="w-full py-2 px-4 rounded-xl bg-[#EFE9DC] text-[#5C4B3B] text-xs font-bold cursor-pointer"
+                    >
+                      {lang === 'ar' ? 'إغلاق' : 'Dismiss'}
+                    </button>
+                  </div>
+                </>
+              ) : !authUser.emailVerified ? (
+                <>
+                  <p className="text-xs sm:text-sm text-[#261C14] leading-relaxed font-semibold">
+                    {lang === 'ar'
+                      ? 'فعّل بريدك الإلكتروني من شاشة السرد الثنائي أولاً لتظهر لك بيانات الصديق وتتم الموافقة.'
+                      : 'Verify your email in Duo Sard first to accept this friend invite.'}
+                  </p>
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setInitialFriendInviteToken('')}
+                      className="px-3.5 py-2 rounded-xl bg-[#EFE9DC] text-[#5C4B3B] text-xs font-bold cursor-pointer"
+                    >
+                      {lang === 'ar' ? 'إلغاء' : 'Cancel'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setInviteSignInDeferred(true);
+                        setActiveSection('duo');
+                      }}
+                      className="px-4 py-2 rounded-xl bg-[#166534] text-[#FFFDF9] text-xs font-bold cursor-pointer"
+                    >
+                      {lang === 'ar' ? 'الانتقال للسرد الثنائي' : 'Go to Duo Sard'}
+                    </button>
+                  </div>
+                </>
+              ) : inviteModalLoading ? (
+                <p className="text-xs sm:text-sm text-[#5C4B3B] text-center py-2 font-semibold">
+                  {lang === 'ar' ? 'جاري التحقق من رابط الدعوة...' : 'Verifying invite link...'}
+                </p>
+              ) : inviteModalError ? (
+                <>
+                  <p className="text-xs sm:text-sm text-[#261C14] font-semibold leading-relaxed">
+                    {inviteModalError}
+                  </p>
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setInviteModalError(null);
+                        setInitialFriendInviteToken('');
+                      }}
+                      className="px-4 py-2 rounded-xl bg-[#2D2218] text-[#FFFDF9] text-xs font-bold cursor-pointer"
+                    >
+                      {lang === 'ar' ? 'حسناً' : 'OK'}
+                    </button>
+                  </div>
+                </>
+              ) : inviteModalDoc ? (
+                <>
+                  <p className="text-xs sm:text-sm text-[#261C14] leading-relaxed">
+                    {lang === 'ar'
+                      ? `هل توافق على إرسال طلب إضافة «${inviteModalDoc.ownerName}» إلى أصدقائك في السرد الثنائي؟`
+                      : `Approve sending a Duo Sard friend request to "${inviteModalDoc.ownerName}"?`}
+                  </p>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <button
+                      type="button"
+                      disabled={friendAlertBusy}
+                      onClick={() => {
+                        setInviteModalDoc(null);
+                        setInitialFriendInviteToken('');
+                      }}
+                      className="py-2.5 px-3 rounded-xl bg-[#EFE9DC] hover:bg-[#DDD2BE] text-[#5C4B3B] text-xs font-bold cursor-pointer"
+                    >
+                      {lang === 'ar' ? 'رفض' : 'Decline'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={friendAlertBusy}
+                      onClick={handleConfirmGlobalInvite}
+                      className="py-2.5 px-3 rounded-xl bg-[#166534] hover:bg-[#14532D] text-[#FFFDF9] text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-60"
+                    >
+                      <Check className="w-4 h-4" />
+                      <span>{lang === 'ar' ? 'موافقة وإرسال' : 'Approve & Send'}</span>
+                    </button>
+                  </div>
+                </>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Instant On-Screen Incoming Friend Request Approval Alert (Appears over ANY screen) */}
+      {!incomingCall && !inviteModalDoc && pendingIncomingFriendReqs.length > 0 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          {(() => {
+            const req = pendingIncomingFriendReqs[0];
+            return (
+              <div className="w-full max-w-sm rounded-[24px] bg-[#FFFDF9] border-2 border-[#C88A14] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+                <div className="px-4 py-3 bg-[#FBF3DF] border-b border-[#E5C983] flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <UserPlus className="w-5 h-5 text-[#9E650C] shrink-0" />
+                    <h3 className="text-sm sm:text-base font-extrabold text-[#2D2218]">
+                      {lang === 'ar' ? 'طلب صداقة جديد للسرد الثنائي' : 'New Friend Request'}
+                    </h3>
+                  </div>
+                  {pendingIncomingFriendReqs.length > 1 && (
+                    <span className="px-2 py-0.5 rounded-md bg-[#C88A14] text-[#FFFDF9] text-[10px] font-bold">
+                      +{pendingIncomingFriendReqs.length - 1}
+                    </span>
+                  )}
+                </div>
+
+                <div className="p-5 space-y-4">
+                  <p className="text-xs sm:text-sm text-[#261C14] leading-relaxed">
+                    {lang === 'ar'
+                      ? `يرغب «${req.fromName}» في إضافتك عبر رابط المشاركة للتسميع والسرد الثنائي. هل توافق؟`
+                      : `"${req.fromName}" wants to connect via your invite link for Duo Recitation. Approve?`}
+                  </p>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <button
+                      type="button"
+                      disabled={friendAlertBusy}
+                      onClick={() => handleDeclineGlobalFriendRequest(req)}
+                      className="py-2.5 px-3 rounded-xl bg-[#EFE9DC] hover:bg-[#DDD2BE] text-[#A84A32] text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <UserX className="w-4 h-4" />
+                      <span>{lang === 'ar' ? 'رفض' : 'Decline'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={friendAlertBusy}
+                      onClick={() => handleApproveGlobalFriendRequest(req)}
+                      className="py-2.5 px-3 rounded-xl bg-[#166534] hover:bg-[#14532D] text-[#FFFDF9] text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-60"
+                    >
+                      <Check className="w-4 h-4" />
+                      <span>{lang === 'ar' ? 'موافقة وإضافة' : 'Approve & Add'}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {/* Instant On-Screen Notification When Your Friend Request Was Accepted -> Go to Duo Recitation */}
+      {!incomingCall &&
+        !inviteModalDoc &&
+        pendingIncomingFriendReqs.length === 0 &&
+        newlyAcceptedFriendPopup && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/55 backdrop-blur-xs">
+            <div className="w-full max-w-sm rounded-[24px] bg-[#FFFDF9] border-2 border-[#166534] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+              <div className="px-4 py-3 bg-[#ECFDF3] border-b border-[#BBF7D0] flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <UserCheck className="w-5 h-5 text-[#15803D] shrink-0" />
+                  <h3 className="text-sm sm:text-base font-extrabold text-[#14532D]">
+                    {lang === 'ar' ? 'تمت إضافة الصديق بنجاح' : 'Friend Added'}
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setNewlyAcceptedFriendPopup(null)}
+                  className="p-1 rounded-lg hover:bg-[#DCFCE7] text-[#14532D] cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="p-5 space-y-4">
+                <p className="text-xs sm:text-sm text-[#261C14] leading-relaxed">
+                  {lang === 'ar'
+                    ? `وافق «${newlyAcceptedFriendPopup.friendName}» على طلبك وأصبح الآن في قائمة السرد الثنائي.`
+                    : `"${newlyAcceptedFriendPopup.friendName}" approved your request and is ready in Duo Sard.`}
+                </p>
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setNewlyAcceptedFriendPopup(null)}
+                    className="px-3.5 py-2 rounded-xl bg-[#EFE9DC] text-[#5C4B3B] text-xs font-bold cursor-pointer"
+                  >
+                    {lang === 'ar' ? 'لاحقاً' : 'Later'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewlyAcceptedFriendPopup(null);
+                      setActiveSection('duo');
+                    }}
+                    className="px-4 py-2 rounded-xl bg-[#166534] hover:bg-[#14532D] text-[#FFFDF9] text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <PhoneCall className="w-3.5 h-3.5" />
+                    <span>{lang === 'ar' ? 'الانتقال للسرد الثنائي والاتصال' : 'Open Duo & Call'}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
       {/* Global Incoming Friend Call Ringing Window (Both Sides Call Modal Experience) */}
       {incomingCall && (
@@ -2431,8 +2899,8 @@ export default function App() {
                     <Sparkles className="w-3.5 h-3.5 text-[#C88A14]" />
                     <span>
                       {lang === 'ar'
-                        ? 'تنظيف الذاكرة العشوائية (RAM) وموارد الجهاز'
-                        : 'Device RAM & Resource Cleanup'}
+                        ? 'تنظيف الذاكرة المؤقتة (RAM)'
+                        : 'RAM & Resource Cleanup'}
                     </span>
                   </h3>
                   <p className="text-[11px] text-[#5C4B3B] leading-relaxed">
@@ -2466,13 +2934,13 @@ export default function App() {
                     <span>
                       {lang === 'ar'
                         ? 'التحديث التلقائي الصامت'
-                        : 'Silent Automatic Updates'}
+                        : 'Silent Auto-Updates'}
                     </span>
                   </h3>
                   <p className="text-[11px] text-[#5C4B3B] leading-relaxed">
                     {lang === 'ar'
-                      ? 'يبقى التطبيق محدّثاً تلقائياً في الخلفية دون مسح الذاكرة أو إعادة التثبيت.'
-                      : 'Keeps the app up to date silently in the background without cache clearing.'}
+                      ? 'تحديث تلقائي في الخلفية دون مسح الذاكرة أو إعادة التثبيت.'
+                      : 'Updates silently in background without cache clearing.'}
                   </p>
                 </div>
                 <span className="px-2.5 py-1 rounded-lg bg-[#4A6144]/15 border border-[#4A6144]/30 text-[#4A6144] text-[11px] font-bold shrink-0">
@@ -2486,13 +2954,13 @@ export default function App() {
                   <h3 className="font-bold text-[#15803D] flex items-center gap-1.5 text-xs">
                     <ShieldCheck className="w-4 h-4 shrink-0" />
                     <span>
-                      {lang === 'ar' ? 'سياسة الخصوصية وشروط الاستخدام' : 'Privacy Policy & Terms'}
+                      {lang === 'ar' ? 'الخصوصية وشروط الاستخدام' : 'Privacy & Terms'}
                     </span>
                   </h3>
                   <p className="text-[11px] text-[#5C4B3B] mt-0.5">
                     {lang === 'ar'
-                      ? 'متوافقة مع سياسات المنصات والاتصال المشفر والتحديثات التلقائية.'
-                      : 'Compliant with platform policies, E2EE calling & auto-updates.'}
+                      ? 'متوافقة مع المنصات والاتصال المشفّر والتحديث الصامت.'
+                      : 'Platform, E2EE calling & auto-update compliant.'}
                   </p>
                 </div>
                 <button

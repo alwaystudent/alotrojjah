@@ -84,7 +84,6 @@ import {
   sendConsentFriendRequest,
   approveIncomingFriendRequest,
   declineIncomingFriendRequest,
-  syncAcceptedOutgoingRequest,
   getDisplayNameForUser,
 } from '../utils/friendsDirectory';
 import {
@@ -276,8 +275,8 @@ function mapFirebaseAuthError(
       isProviderDisabled: true,
       message:
         lang === 'ar'
-          ? 'خدمة تسجيل الدخول بالبريد وكلمة المرور غير مفعّلة بعد في مشروع Firebase. يمكنك الدخول فوراً عبر زر "الدخول السريع عبر بريد Google".'
-          : 'Email/Password sign-in is not yet enabled in Firebase Console. Sign in immediately with Google Email.',
+          ? 'الدخول بالبريد غير مفعّل بعد في Firebase. استخدم «الدخول السريع عبر Google».'
+          : 'Email/Password sign-in is disabled. Use Google Sign-In.',
     };
   }
   if (
@@ -288,7 +287,7 @@ function mapFirebaseAuthError(
     return {
       message:
         lang === 'ar'
-          ? 'بيانات البريد الإلكتروني أو كلمة المرور غير صحيحة.'
+          ? 'البريد أو كلمة المرور غير صحيحة.'
           : 'Invalid email or password.',
     };
   }
@@ -296,8 +295,8 @@ function mapFirebaseAuthError(
     return {
       message:
         lang === 'ar'
-          ? 'هذا البريد الإلكتروني مسجل مسبقاً. اختر "تسجيل الدخول" بدلاً من إنشاء حساب جديد.'
-          : 'This email is already registered. Please switch to Sign In.',
+          ? 'هذا البريد مسجل مسبقاً. اختر «تسجيل الدخول».'
+          : 'Email already registered. Switch to Sign In.',
     };
   }
   if (code === 'auth/weak-password') {
@@ -534,9 +533,13 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       setUser(nextUser);
       setAuthReady(true);
       if (nextUser && nextUser.emailVerified) {
-        await syncVerifiedUserProfileAndDirectory(nextUser);
-        const inv = await getOrCreateMyFriendInvite(nextUser);
-        setMyInvite(inv);
+        try {
+          await syncVerifiedUserProfileAndDirectory(nextUser);
+          const inv = await getOrCreateMyFriendInvite(nextUser);
+          setMyInvite(inv);
+        } catch (err) {
+          console.warn('Duo auth profile sync notice:', err);
+        }
       } else {
         setMyInvite(null);
       }
@@ -600,38 +603,12 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     };
   }, [user, friends]);
 
-  // Auto-resolve URL ?invite= / ?friendInvite= token when verified user opens link
+  // Sync invite input if parent passes a token while already mounted in Duo
   useEffect(() => {
-    if (!initialFriendInviteToken || !user || !user.emailVerified) return;
-    setPasteInviteInput(initialFriendInviteToken);
-    let cancelled = false;
-    const inspect = async () => {
-      setInviteLookupBusy(true);
-      const found = await fetchFriendInviteDetails(initialFriendInviteToken);
-      if (!cancelled) {
-        setInviteLookupBusy(false);
-        if (found && found.ownerUid !== user.uid) {
-          setPreviewedInvite(found);
-        } else if (found && found.ownerUid === user.uid) {
-          setFriendFeedback({
-            type: 'err',
-            msg: isAr
-              ? 'هذا رابط دعوتك الشخصي — شاركه مع صديقك ليطلب إضافتك.'
-              : 'This is your own invite link — share it with a friend.',
-          });
-        } else {
-          setFriendFeedback({
-            type: 'err',
-            msg: isAr ? 'رابط الدعوة غير صالح أو تم إلغاؤه.' : 'Invite link is invalid or revoked.',
-          });
-        }
-      }
-    };
-    inspect();
-    return () => {
-      cancelled = true;
-    };
-  }, [initialFriendInviteToken, user, isAr]);
+    if (initialFriendInviteToken) {
+      setPasteInviteInput(initialFriendInviteToken);
+    }
+  }, [initialFriendInviteToken]);
 
   // Real-time Approved Friends List + Consent-Gated Friend Requests Listeners
   useEffect(() => {
@@ -682,14 +659,9 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     );
     const unsubOutgoingReq = onSnapshot(
       outgoingReqQ,
-      async (snap) => {
+      (snap) => {
         const allOut = snap.docs.map((d) => d.data() as FriendRequestDoc);
         setOutgoingPendingRequests(allOut.filter((r) => r.status === 'pending'));
-        for (const req of allOut) {
-          if (req.status === 'accepted' && !req.syncedBySender) {
-            await syncAcceptedOutgoingRequest(user, req);
-          }
-        }
       },
       (err) => {
         handleFirestoreError(err, OperationType.LIST, 'friendRequests');
@@ -1018,8 +990,8 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         setFriendFeedback({
           type: 'ok',
           msg: isAr
-            ? 'تم إصدار رابط دعوة جديد وإلغاء الرابط السابق بنجاح.'
-            : 'New invite link generated and previous link revoked.',
+            ? 'تم إصدار رابط جديد وإلغاء السابق.'
+            : 'New invite link generated; previous revoked.',
         });
       }
     } finally {
@@ -1039,15 +1011,15 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         setFriendFeedback({
           type: 'err',
           msg: isAr
-            ? 'لم يتم العثور على رابط دعوة صالح أو تم إلغاؤه.'
-            : 'Invite link not found or revoked.',
+            ? 'رابط الدعوة غير صالح أو مُلغى.'
+            : 'Invite link invalid or revoked.',
         });
         return;
       }
       if (found.ownerUid === user.uid) {
         setFriendFeedback({
           type: 'err',
-          msg: isAr ? 'لا يمكنك إضافة نفسك بهذا الرابط.' : 'You cannot send a friend request to yourself.',
+          msg: isAr ? 'لا يمكنك إضافة نفسك.' : 'Cannot invite yourself.',
         });
         return;
       }
@@ -1055,12 +1027,19 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         setFriendFeedback({
           type: 'ok',
           msg: isAr
-            ? `«${found.ownerName}» موجود بالفعل في قائمة أصدقائك.`
-            : `"${found.ownerName}" is already in your friends list.`,
+            ? `«${found.ownerName}» مضاف مسبقاً في أصدقائك.`
+            : `"${found.ownerName}" is already a friend.`,
         });
         return;
       }
       setPreviewedInvite(found);
+    } catch {
+      setFriendFeedback({
+        type: 'err',
+        msg: isAr
+          ? 'تعذر التحقق من الرابط، حاول مجدداً.'
+          : 'Could not verify invite link. Please try again.',
+      });
     } finally {
       setInviteLookupBusy(false);
     }
@@ -1076,37 +1055,34 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         setFriendFeedback({
           type: 'ok',
           msg: isAr
-            ? `تم إرسال طلب الصداقة إلى «${previewedInvite.ownerName}». ستتم الإضافة فور موافقته حمايةً لخصوصية الطرفين.`
-            : `Friend request sent to "${previewedInvite.ownerName}". Friend will be added once they approve.`,
+            ? `أُرسل طلب الصداقة إلى «${previewedInvite.ownerName}»؛ سيُضاف عند موافقته.`
+            : `Friend request sent to "${previewedInvite.ownerName}". Added upon approval.`,
         });
       } else if (result === 'already_pending') {
         setFriendFeedback({
           type: 'ok',
           msg: isAr
-            ? `طلب الصداقة المرسل إلى «${previewedInvite.ownerName}» ما زال بانتظار موافقته.`
-            : `Friend request to "${previewedInvite.ownerName}" is already pending approval.`,
+            ? `طلبك إلى «${previewedInvite.ownerName}» بانتظار الموافقة.`
+            : `Request to "${previewedInvite.ownerName}" is pending approval.`,
         });
       } else {
         setFriendFeedback({
           type: 'ok',
           msg: isAr
-            ? `«${previewedInvite.ownerName}» وافق مسبقاً على طلبك.`
-            : `"${previewedInvite.ownerName}" already approved your request.`,
+            ? `تمت إضافة «${previewedInvite.ownerName}» في قائمة أصدقائك.`
+            : `"${previewedInvite.ownerName}" is added to your friends list.`,
         });
       }
       setPreviewedInvite(null);
       setPasteInviteInput('');
       onClearFriendInvite?.();
-      try {
-        const u = new URL(window.location.href);
-        if (u.searchParams.has('friendInvite') || u.searchParams.has('invite')) {
-          u.searchParams.delete('friendInvite');
-          u.searchParams.delete('invite');
-          window.history.replaceState(null, '', u.toString());
-        }
-      } catch {
-        // ignore
-      }
+    } catch {
+      setFriendFeedback({
+        type: 'err',
+        msg: isAr
+          ? 'تعذر إرسال طلب الصداقة. تحقق من الاتصال وحاول مجدداً.'
+          : 'Could not send friend request. Please try again.',
+      });
     } finally {
       setInviteBusy(false);
     }
@@ -1123,6 +1099,11 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
           ? `تمت الموافقة وإضافة «${req.fromName}» إلى قائمة أصدقائك بنجاح.`
           : `Approved and added "${req.fromName}" to your friends list.`,
       });
+    } catch {
+      setFriendFeedback({
+        type: 'err',
+        msg: isAr ? 'تعذر إتمام الإضافة، حاول مجدداً.' : 'Could not add friend. Try again.',
+      });
     } finally {
       setInviteBusy(false);
     }
@@ -1132,6 +1113,11 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     setInviteBusy(true);
     try {
       await declineIncomingFriendRequest(req);
+    } catch {
+      setFriendFeedback({
+        type: 'err',
+        msg: isAr ? 'تعذر رفض الطلب، حاول مجدداً.' : 'Could not decline request.',
+      });
     } finally {
       setInviteBusy(false);
     }
@@ -1923,12 +1909,12 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
               </div>
               <div>
                 <h1 className="text-base sm:text-xl font-extrabold font-display-islamic text-[#261C14]">
-                  {isAr ? 'السرد الثنائي — اتصال مباشر بالأصدقاء' : 'Duo Recitation — Direct Friend Audio'}
+                  {isAr ? 'السرد الثنائي المباشر' : 'Duo Recitation'}
                 </h1>
                 <p className="text-xs text-[#5C4B3B]">
                   {isAr
-                    ? 'سجّل دخولك لمشاركة رابط الدعوة والبدء في التسميع المباشر المشفر'
-                    : 'Sign in to share your friend invite link and place encrypted voice calls'}
+                    ? 'سجّل دخولك لمشاركة رابط الصداقة والاتصال المشفّر'
+                    : 'Sign in to share your friend link and place encrypted calls'}
                 </p>
               </div>
             </div>
@@ -1946,12 +1932,12 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                 </div>
                 <div>
                   <h2 className="text-base font-extrabold text-[#261C14]">
-                    {isAr ? 'تسجيل الدخول بالبريد الإلكتروني' : 'Sign In with Email'}
+                    {isAr ? 'تسجيل الدخول' : 'Sign In'}
                   </h2>
                   <p className="text-xs text-[#5C4B3B]">
                     {isAr
-                      ? 'اتصال مباشر محمي بين الأصدقاء عبر المتصفح'
-                      : 'Protected direct browser-to-browser calls'}
+                      ? 'اتصال مباشر محمي بين الأصدقاء'
+                      : 'Protected direct friend calling'}
                   </p>
                 </div>
               </div>
@@ -2113,29 +2099,29 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                   </h3>
                 </div>
 
-                <ul className="space-y-3 text-xs sm:text-sm text-[#2D2218]">
+                <ul className="space-y-2.5 text-xs sm:text-sm text-[#2D2218]">
                   <li className="flex items-start gap-2.5">
                     <Link2 className="w-4 h-4 text-[#4A6144] shrink-0 mt-0.5" />
                     <span>
                       {isAr
-                        ? 'إضافة الأصدقاء عبر مشاركة رابط دعوة خاص بك ولا تتم الإضافة إلا بعد موافقتك لحماية خصوصيتك.'
-                        : 'Add friends exclusively via shareable invite links requiring explicit approval.'}
+                        ? 'إضافة الأصدقاء عبر رابط دعوة خاص وبموافقة الطرفين.'
+                        : 'Friend invites via personal links with mutual approval.'}
                     </span>
                   </li>
                   <li className="flex items-start gap-2.5">
                     <Lock className="w-4 h-4 text-[#15803D] shrink-0 mt-0.5" />
                     <span>
                       {isAr
-                        ? 'اتصال صوتي مباشر مشفّر (WebRTC E2EE) مع إخفاء الـ IP ومنع تبادل أي ملفات.'
-                        : 'Encrypted direct audio-only calling with TURN IP masking and blocked data channels.'}
+                        ? 'صوت مشفّر (E2EE) مع إخفاء IP ومنع تبادل الملفات.'
+                        : 'Encrypted audio (E2EE) with IP masking and no file transfer.'}
                     </span>
                   </li>
                   <li className="flex items-start gap-2.5">
                     <BookOpen className="w-4 h-4 text-[#C88A14] shrink-0 mt-0.5" />
                     <span>
                       {isAr
-                        ? 'دعم كامل للروايات الثلاث (حفص، قالون، ورش) وتنبيه لحظي بالكلمات المعلّم عليها.'
-                        : 'Supports Hafs, Qalun, and Warsh narrations with real-time word error alerts.'}
+                        ? 'روايات حفص وقالون وورش مع تنبيه لحظي للأخطاء.'
+                        : 'Hafs, Qalun & Warsh narrations with live error alerts.'}
                     </span>
                   </li>
                 </ul>
@@ -2144,8 +2130,8 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
               <div className="space-y-2">
                 <div className="rounded-xl bg-[#FFFDF9]/85 border border-[#DDD2BE] p-3 text-xs text-[#5C4B3B]">
                   {isAr
-                    ? 'تم إلغاء الغرف العامة؛ الاتصال الصوتي يقتصر على أصدقائك المعتمدين فقط.'
-                    : 'Public rooms are disabled; calling is strictly between approved friends.'}
+                    ? 'الاتصال مقتصر على الأصدقاء المعتمدين فقط (دون غرف عامة).'
+                    : 'Private calling strictly between approved friends.'}
                 </div>
                 {onOpenPrivacyTerms && (
                   <button
@@ -2154,7 +2140,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                     className="text-xs font-bold text-[#15803D] hover:underline flex items-center gap-1 cursor-pointer"
                   >
                     <ShieldCheck className="w-3.5 h-3.5" />
-                    <span>{isAr ? 'سياسة الخصوصية وشروط الاستخدام' : 'Privacy Policy & Terms'}</span>
+                    <span>{isAr ? 'الخصوصية وشروط الاستخدام' : 'Privacy & Terms'}</span>
                   </button>
                 )}
               </div>
@@ -2170,12 +2156,12 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
             <Mail className="w-6 h-6" />
           </div>
           <h2 className="text-lg font-extrabold text-[#261C14]">
-            {isAr ? 'يرجى تأكيد بريدك الإلكتروني' : 'Verify Your Email Address'}
+            {isAr ? 'تأكيد البريد الإلكتروني' : 'Verify Your Email'}
           </h2>
           <p className="text-xs sm:text-sm text-[#5C4B3B] leading-relaxed">
             {isAr
-              ? `تم إرسال رابط التفعيل إلى (${user.email}). افتح الرسالة واضغط على رابط التأكيد، ثم اضغط على "تحقق من التفعيل الآن" أدناه.`
-              : `A verification link was sent to (${user.email}). Click the link in your inbox, then tap "Verify Status" below.`}
+              ? `أُرسل رابط التفعيل إلى (${user.email}). افتحه ثم اضغط «تحقق الآن».`
+              : `Verification link sent to (${user.email}). Click it, then tap "Verify Now".`}
           </p>
           {verificationMsg && (
             <div className="rounded-xl bg-[#FBF3DF] border border-[#C88A14] p-2.5 text-xs font-semibold text-[#261C14]">
@@ -2208,10 +2194,10 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       {user && user.emailVerified && !sessionId && (
         <div className="space-y-4">
           {/* Top Soft Green Guidance Banner */}
-          <div className="rounded-2xl bg-[#ECFDF3] border border-[#BBF7D0] px-4 py-3 text-xs sm:text-sm font-bold text-[#15803D] leading-relaxed">
+          <div className="rounded-2xl bg-[#ECFDF3] border border-[#BBF7D0] px-4 py-2.5 text-xs sm:text-sm font-bold text-[#15803D] leading-relaxed">
             {isAr
-              ? 'التوجيه: شارك رابط دعوتك الخاص مع صديقك، وعند موافقته على الطلب سيُضاف وتبدأ مكالمة السرد الثنائي.'
-              : 'Tip: Share your personal invite link with a friend; once approved, start your encrypted Duo voice call.'}
+              ? 'شارك رابط دعوتك مع صديقك، وعند موافقته يمكنك بدء مكالمة السرد الثنائي.'
+              : 'Share your invite link with a friend; once approved, start your Duo voice call.'}
           </div>
 
           {lobbyError && (
@@ -2267,45 +2253,58 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
             </div>
           )}
 
-          {/* Incoming Friend Link Invite Preview Banner (Explicit Approval Required) */}
+          {/* Instant On-Screen Pasted-Invite Confirmation Alert Modal */}
           {previewedInvite && (
-            <div className="rounded-2xl bg-[#FBF3DF] border-2 border-[#C88A14] p-4 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="flex items-start gap-3">
-                <div className="w-10 h-10 rounded-xl bg-[#2D2218] text-[#EAB338] flex items-center justify-center shrink-0">
-                  <UserPlus className="w-5 h-5" />
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+              <div className="w-full max-w-sm rounded-[24px] bg-[#FFFDF9] border-2 border-[#166534] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+                <div className="px-4 py-3 bg-[#ECFDF3] border-b border-[#BBF7D0] flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <UserPlus className="w-5 h-5 text-[#15803D]" />
+                    <h3 className="text-sm sm:text-base font-extrabold text-[#14532D]">
+                      {isAr
+                        ? `دعوة صداقة من «${previewedInvite.ownerName}»`
+                        : `Friend Invite from "${previewedInvite.ownerName}"`}
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPreviewedInvite(null);
+                      onClearFriendInvite?.();
+                    }}
+                    className="p-1 rounded-lg hover:bg-[#DCFCE7] text-[#14532D] cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
                 </div>
-                <div className="space-y-0.5">
-                  <h3 className="text-sm sm:text-base font-extrabold text-[#261C14]">
+                <div className="p-5 space-y-4">
+                  <p className="text-xs sm:text-sm text-[#261C14] leading-relaxed">
                     {isAr
-                      ? `دعوة صداقة من «${previewedInvite.ownerName}»`
-                      : `Friend Invite from "${previewedInvite.ownerName}"`}
-                  </h3>
-                  <p className="text-xs text-[#5C4B3B]">
-                    {isAr
-                      ? 'سيُرسل طلب صداقة إليه؛ ولن تُضافا في قائمة الأصدقاء إلا بعد موافقته الصريحة.'
-                      : 'This sends a friend request. You will be connected once they explicitly approve.'}
+                      ? `هل توافق على إرسال طلب إضافة «${previewedInvite.ownerName}» إلى أصدقائك في السرد الثنائي؟`
+                      : `Approve sending a friend request to "${previewedInvite.ownerName}"?`}
                   </p>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPreviewedInvite(null);
+                        onClearFriendInvite?.();
+                      }}
+                      className="py-2.5 px-3 rounded-xl bg-[#EFE9DC] text-xs font-bold text-[#5C4B3B] cursor-pointer"
+                    >
+                      {isAr ? 'إلغاء' : 'Cancel'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={inviteBusy}
+                      onClick={handleConfirmSendFriendRequest}
+                      className="py-2.5 px-3 rounded-xl bg-[#166534] hover:bg-[#14532D] text-[#FFFDF9] text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-60"
+                    >
+                      <Check className="w-4 h-4" />
+                      <span>{isAr ? 'موافقة وإرسال' : 'Approve & Send'}</span>
+                    </button>
+                  </div>
                 </div>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  disabled={inviteBusy}
-                  onClick={handleConfirmSendFriendRequest}
-                  className="px-4 py-2 rounded-xl bg-[#166534] hover:bg-[#14532D] text-[#FFFDF9] text-xs font-bold cursor-pointer disabled:opacity-60"
-                >
-                  {isAr ? 'إرسال طلب الصداقة' : 'Send Friend Request'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPreviewedInvite(null);
-                    onClearFriendInvite?.();
-                  }}
-                  className="px-3 py-2 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] text-xs font-bold text-[#5C4B3B] cursor-pointer"
-                >
-                  {isAr ? 'إلغاء' : 'Cancel'}
-                </button>
               </div>
             </div>
           )}
@@ -2396,8 +2395,8 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
             </div>
             <p className="text-xs sm:text-sm text-[#5C4B3B]">
               {isAr
-                ? 'أرسل رابطك لصديقك أو الصق رابط دعوته هنا لإرسال طلب الصداقة:'
-                : 'Send your link or paste your friend’s invite link here to send a friend request:'}
+                ? 'أرسل رابطك أو الصق رابط صديقك لإرسال طلب الصداقة:'
+                : 'Share your link or paste your friend’s link below:'}
             </p>
 
             <form onSubmit={handleLookupPastedInvite} className="flex items-center gap-2">
@@ -2537,10 +2536,10 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
             </div>
 
             {friends.length === 0 ? (
-              <div className="rounded-2xl bg-[#FAF7F0] border border-dashed border-[#DDD2BE] p-6 text-center text-xs sm:text-sm text-[#5C4B3B]">
+              <div className="rounded-2xl bg-[#FAF7F0] border border-dashed border-[#DDD2BE] p-5 text-center text-xs sm:text-sm text-[#5C4B3B]">
                 {isAr
-                  ? 'قائمة أصدقائك فارغة حالياً — شارك رابط دعوتك أعلاه، وبمجرد الموافقة سيظهر صديقك هنا.'
-                  : 'Your friends list is empty — share your invite link above to get started.'}
+                  ? 'لا يوجد أصدقاء بعد — شارك رابط دعوتك أعلاه لإضافتهم.'
+                  : 'No friends yet — share your invite link above.'}
               </div>
             ) : (
               <div className="space-y-2.5">
@@ -2819,11 +2818,11 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                 <p className="text-xs sm:text-sm text-[#5C4B3B] leading-relaxed">
                   {amICurrentReciter
                     ? isAr
-                      ? `اتلُ المقرر غيباً، وسيصلك تنبيه لحظي فوري هنا إذا علّم المُسمِّع (${partnerName}) على أي كلمة.`
-                      : `Recite from memory. Any word marked by listener (${partnerName}) will appear instantaneously below.`
+                      ? `اتلُ غيباً؛ سيظهر هنا أي خطأ يعلّم عليه (${partnerName}).`
+                      : `Recite from memory; marked errors by (${partnerName}) appear here.`
                     : isAr
-                    ? 'تم تفعيل إخفاء النص لديك — اضغط على الزر أدناه لعرض المصحف ومتابعة الكلمات.'
-                    : 'Text is hidden locally — tap below to view Mushaf verses.'}
+                    ? 'النص مخفي لديك — اضغط أدناه لعرض المصحف.'
+                    : 'Text hidden — tap below to show verses.'}
                 </p>
 
                 {markedErrors.length > 0 && (
@@ -2900,8 +2899,8 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                 <div className="space-y-0.5">
                   <div className="text-xs sm:text-sm font-extrabold text-[#15803D]">
                     {isAr
-                      ? 'المصحف المتزامن — المس أي كلمة للتنبيه اللحظي على خطأ'
-                      : 'Synced Mushaf — Tap any word to alert reciter'}
+                      ? 'المصحف — المس أي كلمة للتنبيه على خطأ'
+                      : 'Mushaf — Tap any word to mark an error'}
                   </div>
                   <div className="text-[11px] text-[#5C4B3B]">
                     {isAr ? `عدد الأخطاء المسجلة:` : `Marked Errors:`}{' '}
@@ -3521,8 +3520,8 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                 {highPrivacyIpMask && !TURN_SERVER_URL.trim() && (
                   <p className="text-[11px] text-[#9E650C] bg-[#FBF3DF] border border-[#E5C983] rounded-lg px-3 py-1.5 font-semibold">
                     {isAr
-                      ? 'تنبيه: وضع الخصوصية العالية (relay) مفعّل افتراضياً. ضع بيانات خادم TURN في TURN_SERVER_URL أو أطفئه مؤقتاً عند الاختبار.'
-                      : 'Relay mode active by default. Set TURN_SERVER_URL or toggle off for STUN testing.'}
+                      ? 'وضع relay مفعّل: أضف بيانات TURN_SERVER_URL أو أوقفه مؤقتاً عند التجربة.'
+                      : 'Relay mode active: set TURN_SERVER_URL or toggle off for testing.'}
                   </p>
                 )}
               </div>

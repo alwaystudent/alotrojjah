@@ -286,19 +286,47 @@ export async function sendConsentFriendRequest(
   invite: FriendInviteDoc
 ): Promise<'sent' | 'already_pending' | 'already_accepted'> {
   const requestId = `${currentUser.uid}_${invite.ownerUid}`;
+  const reqRef = doc(db, 'friendRequests', requestId);
+  const friendRef = doc(db, 'users', currentUser.uid, 'friends', invite.ownerUid);
   const reqPath = `friendRequests/${requestId}`;
 
   try {
-    const existingSnap = await getDoc(doc(db, 'friendRequests', requestId));
+    const existingSnap = await getDoc(reqRef);
     if (existingSnap.exists()) {
       const prev = existingSnap.data() as FriendRequestDoc;
       if (prev.status === 'pending') return 'already_pending';
-      if (prev.status === 'accepted') return 'already_accepted';
+      if (prev.status === 'accepted') {
+        const friendSnap = await getDoc(friendRef);
+        if (!friendSnap.exists() || !prev.syncedBySender) {
+          const batch = writeBatch(db);
+          if (!friendSnap.exists()) {
+            batch.set(friendRef, {
+              friendUid: invite.ownerUid,
+              friendName: invite.ownerName.slice(0, 80),
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            });
+          } else {
+            batch.update(friendRef, {
+              friendName: invite.ownerName.slice(0, 80),
+              updatedAt: serverTimestamp(),
+            });
+          }
+          if (!prev.syncedBySender) {
+            batch.update(reqRef, {
+              syncedBySender: true,
+              updatedAt: serverTimestamp(),
+            });
+          }
+          await batch.commit();
+        }
+        return 'already_accepted';
+      }
       // If previously declined, delete stale doc so user can re-send a fresh request
-      await deleteDoc(doc(db, 'friendRequests', requestId));
+      await deleteDoc(reqRef);
     }
 
-    await setDoc(doc(db, 'friendRequests', requestId), {
+    await setDoc(reqRef, {
       requestId,
       fromUid: currentUser.uid,
       fromName: getDisplayNameForUser(currentUser),
@@ -321,24 +349,41 @@ export async function approveIncomingFriendRequest(
   currentUser: User,
   req: FriendRequestDoc
 ): Promise<void> {
-  const batch = writeBatch(db);
   const reqRef = doc(db, 'friendRequests', req.requestId);
   const friendRef = doc(db, 'users', currentUser.uid, 'friends', req.fromUid);
 
-  batch.update(reqRef, {
-    status: 'accepted',
-    updatedAt: serverTimestamp(),
-  });
-
-  batch.set(friendRef, {
-    friendUid: req.fromUid,
-    friendName: req.fromName.slice(0, 80),
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  });
-
   try {
-    await batch.commit();
+    const [reqSnap, friendSnap] = await Promise.all([getDoc(reqRef), getDoc(friendRef)]);
+    const batch = writeBatch(db);
+    let hasWrites = false;
+
+    if (reqSnap.exists() && (reqSnap.data() as FriendRequestDoc).status === 'pending') {
+      batch.update(reqRef, {
+        status: 'accepted',
+        updatedAt: serverTimestamp(),
+      });
+      hasWrites = true;
+    }
+
+    if (friendSnap.exists()) {
+      batch.update(friendRef, {
+        friendName: req.fromName.slice(0, 80),
+        updatedAt: serverTimestamp(),
+      });
+      hasWrites = true;
+    } else {
+      batch.set(friendRef, {
+        friendUid: req.fromUid,
+        friendName: req.fromName.slice(0, 80),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      hasWrites = true;
+    }
+
+    if (hasWrites) {
+      await batch.commit();
+    }
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, `friendRequests/${req.requestId}`);
   }
@@ -360,23 +405,37 @@ export async function syncAcceptedOutgoingRequest(
   currentUser: User,
   req: FriendRequestDoc
 ): Promise<void> {
-  const batch = writeBatch(db);
   const friendRef = doc(db, 'users', currentUser.uid, 'friends', req.toUid);
   const reqRef = doc(db, 'friendRequests', req.requestId);
 
-  batch.set(friendRef, {
-    friendUid: req.toUid,
-    friendName: req.toName.slice(0, 80),
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  });
-
-  batch.update(reqRef, {
-    syncedBySender: true,
-    updatedAt: serverTimestamp(),
-  });
-
   try {
+    const [reqSnap, friendSnap] = await Promise.all([getDoc(reqRef), getDoc(friendRef)]);
+    if (reqSnap.exists() && (reqSnap.data() as FriendRequestDoc).syncedBySender && friendSnap.exists()) {
+      return;
+    }
+
+    const batch = writeBatch(db);
+    if (friendSnap.exists()) {
+      batch.update(friendRef, {
+        friendName: req.toName.slice(0, 80),
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      batch.set(friendRef, {
+        friendUid: req.toUid,
+        friendName: req.toName.slice(0, 80),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+
+    if (!reqSnap.exists() || !(reqSnap.data() as FriendRequestDoc).syncedBySender) {
+      batch.update(reqRef, {
+        syncedBySender: true,
+        updatedAt: serverTimestamp(),
+      });
+    }
+
     await batch.commit();
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, `users/${currentUser.uid}/friends/${req.toUid}`);

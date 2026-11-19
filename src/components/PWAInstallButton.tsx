@@ -30,7 +30,7 @@ const InstallGuideModal: React.FC<{
         <div className="flex items-center gap-2">
           <Smartphone className="w-5 h-5 text-[#C88A14]" />
           <h3 className="font-bold text-sm sm:text-base text-[#2D2218]">
-            {lang === 'ar' ? 'إضافة المنصة إلى الشاشة الرئيسية' : 'Add App to Home Screen'}
+            {lang === 'ar' ? 'تثبيت على الشاشة الرئيسية' : 'Add to Home Screen'}
           </h3>
         </div>
         <button
@@ -46,30 +46,30 @@ const InstallGuideModal: React.FC<{
         <div className="space-y-3 text-xs text-[#5C4B3B] leading-relaxed">
           <div className="p-2 rounded-lg bg-[#C88A14]/10 border border-[#C88A14]/20 text-[#9E650C] font-semibold flex items-center gap-1.5">
             <Compass className="w-4 h-4 text-[#C88A14] shrink-0" />
-            <span>{lang === 'ar' ? 'متصفح سفاري (Safari) على آيفون وآيباد' : 'Safari on iPhone & iPad'}</span>
+            <span>{lang === 'ar' ? 'سفاري (iPhone / iPad)' : 'Safari (iPhone / iPad)'}</span>
           </div>
           <div className="flex items-start gap-2.5 bg-[#F7F3EB] p-2.5 rounded-xl border border-[#DDD2BE]">
             <Share2 className="w-4 h-4 text-[#C88A14] shrink-0 mt-0.5" />
             <span>
               {lang === 'ar'
-                ? '1. اضغط على أيقونة "المشاركة" (Share) في شريط المتصفح أسفل الشاشة.'
-                : '1. Tap the Share button in the Safari bottom bar.'}
+                ? '1. اضغط أيقونة «المشاركة» في الشريط السفلي.'
+                : '1. Tap the Share icon at the bottom.'}
             </span>
           </div>
           <div className="flex items-start gap-2.5 bg-[#F7F3EB] p-2.5 rounded-xl border border-[#DDD2BE]">
             <PlusSquare className="w-4 h-4 text-[#C88A14] shrink-0 mt-0.5" />
             <span>
               {lang === 'ar'
-                ? '2. مرر للأعلى واختر "إضافة إلى الشاشة الرئيسية" (Add to Home Screen).'
-                : '2. Scroll and tap "Add to Home Screen".'}
+                ? '2. اختر «إضافة إلى الشاشة الرئيسية».'
+                : '2. Select "Add to Home Screen".'}
             </span>
           </div>
           <div className="flex items-start gap-2.5 bg-[#F7F3EB] p-2.5 rounded-xl border border-[#DDD2BE]">
             <Check className="w-4 h-4 text-[#4A6144] shrink-0 mt-0.5" />
             <span>
               {lang === 'ar'
-                ? '3. اضغط على "إضافة" وسيعمل التطبيق كتطبيق أصلي بتحديثات صامتة.'
-                : '3. Tap "Add" to install with silent background updates.'}
+                ? '3. اضغط «إضافة» للتثبيت بتحديثات صامتة.'
+                : '3. Tap "Add" for silent auto-updates.'}
             </span>
           </div>
         </div>
@@ -79,22 +79,22 @@ const InstallGuideModal: React.FC<{
         <div className="space-y-3 text-xs text-[#5C4B3B] leading-relaxed">
           <div className="p-2 rounded-lg bg-[#C88A14]/10 border border-[#C88A14]/20 text-[#9E650C] font-semibold flex items-center gap-1.5">
             <Globe className="w-4 h-4 text-[#C88A14] shrink-0" />
-            <span>{lang === 'ar' ? 'متصفح سامسونج إنترنت (Samsung Internet)' : 'Samsung Internet Browser'}</span>
+            <span>{lang === 'ar' ? 'Samsung Internet' : 'Samsung Internet'}</span>
           </div>
           <div className="flex items-start gap-2.5 bg-[#F7F3EB] p-2.5 rounded-xl border border-[#DDD2BE]">
             <Download className="w-4 h-4 text-[#C88A14] shrink-0 mt-0.5" />
             <span>
               {lang === 'ar'
-                ? '1. اضغط على زر القائمة (≡) في أسفل يمين المتصفح.'
-                : '1. Tap the menu button (≡) at the bottom corner.'}
+                ? '1. اضغط زر القائمة (≡) أسفل الشاشة.'
+                : '1. Tap the menu (≡) at the bottom.'}
             </span>
           </div>
           <div className="flex items-start gap-2.5 bg-[#F7F3EB] p-2.5 rounded-xl border border-[#DDD2BE]">
             <PlusSquare className="w-4 h-4 text-[#C88A14] shrink-0 mt-0.5" />
             <span>
               {lang === 'ar'
-                ? '2. اختر "إضافة صفحة إلى" ثم "الشاشة الرئيسية".'
-                : '2. Select "Add page to" then "Home screen".'}
+                ? '2. اختر «إضافة صفحة إلى» ثم «الشاشة الرئيسية».'
+                : '2. Tap "Add page to" → "Home screen".'}
             </span>
           </div>
         </div>
@@ -104,14 +104,14 @@ const InstallGuideModal: React.FC<{
         <div className="space-y-3 text-xs text-[#5C4B3B] leading-relaxed">
           <div className="p-2 rounded-lg bg-[#C88A14]/10 border border-[#C88A14]/20 text-[#9E650C] font-semibold flex items-center gap-1.5">
             <Monitor className="w-4 h-4 text-[#C88A14] shrink-0" />
-            <span>{lang === 'ar' ? 'متصفح سفاري على أجهزة ماك (macOS)' : 'Safari on macOS'}</span>
+            <span>{lang === 'ar' ? 'سفاري (macOS)' : 'Safari (macOS)'}</span>
           </div>
           <div className="flex items-start gap-2.5 bg-[#F7F3EB] p-2.5 rounded-xl border border-[#DDD2BE]">
             <Share2 className="w-4 h-4 text-[#C88A14] shrink-0 mt-0.5" />
             <span>
               {lang === 'ar'
-                ? 'من شريط القوائم العلوي: اختر "ملف" (File) ثم "إضافة إلى شريط البرامج" (Add to Dock).'
-                : 'From menu bar: Select "File" then "Add to Dock".'}
+                ? 'من شريط القوائم: «ملف» ثم «إضافة إلى شريط البرامج».'
+                : 'Menu bar: File → Add to Dock.'}
             </span>
           </div>
         </div>
@@ -121,21 +121,21 @@ const InstallGuideModal: React.FC<{
         <div className="space-y-3 text-xs text-[#5C4B3B] leading-relaxed">
           <div className="p-2 rounded-lg bg-[#C88A14]/10 border border-[#C88A14]/20 text-[#9E650C] font-semibold flex items-center gap-1.5">
             <Globe className="w-4 h-4 text-[#C88A14] shrink-0" />
-            <span>{lang === 'ar' ? 'المتصفحات الحديثة (كروم / إيدج / فايرفوكس)' : 'Chrome, Edge, Firefox'}</span>
+            <span>{lang === 'ar' ? 'كروم / إيدج / فايرفوكس' : 'Chrome / Edge / Firefox'}</span>
           </div>
           <div className="flex items-start gap-2.5 bg-[#F7F3EB] p-2.5 rounded-xl border border-[#DDD2BE]">
             <Download className="w-4 h-4 text-[#C88A14] shrink-0 mt-0.5" />
             <span>
               {lang === 'ar'
-                ? '1. اضغط على أيقونة التثبيت ⊕ في شريط العنوان أو قائمة المتصفح (⋮).'
-                : '1. Click the install icon ⊕ in the address bar or menu (⋮).'}
+                ? '1. اضغط أيقونة التثبيت ⊕ أو قائمة المتصفح (⋮).'
+                : '1. Click install ⊕ or browser menu (⋮).'}
             </span>
           </div>
           <div className="flex items-start gap-2.5 bg-[#F7F3EB] p-2.5 rounded-xl border border-[#DDD2BE]">
             <PlusSquare className="w-4 h-4 text-[#C88A14] shrink-0 mt-0.5" />
             <span>
               {lang === 'ar'
-                ? '2. اختر "تثبيت التطبيق" أو "إضافة إلى الشاشة الرئيسية".'
+                ? '2. اختر «تثبيت التطبيق» أو «إضافة للشاشة الرئيسية».'
                 : '2. Choose "Install app" or "Add to Home Screen".'}
             </span>
           </div>
@@ -147,7 +147,7 @@ const InstallGuideModal: React.FC<{
         onClick={onClose}
         className="w-full py-2.5 rounded-xl bg-[#2D2218] text-white text-xs font-bold hover:bg-[#3D2F22] cursor-pointer transition-colors"
       >
-        {lang === 'ar' ? 'تم، فهمت الخطوات' : 'Got it'}
+        {lang === 'ar' ? 'حسناً' : 'Got it'}
       </button>
     </div>
   </div>
@@ -207,14 +207,14 @@ export const SmartPWAInstallAlert: React.FC<{ lang: Language }> = ({ lang }) => 
           </div>
           <div className="min-w-0">
             <p className="text-xs font-extrabold text-[#FFFDF9] truncate">
-              {isAr ? 'أضف «الأترجة» إلى شاشتك الرئيسية' : 'Add Al-Utrujjah to Home Screen'}
+              {isAr ? 'أضف «الأترجة» للشاشة الرئيسية' : 'Add Al-Utrujjah to Home Screen'}
             </p>
             <p className="text-[10.5px] text-[#E6D7BE] flex items-center gap-1 truncate">
               <RefreshCw className="w-2.5 h-2.5 text-[#86EFAC] shrink-0" />
               <span>
                 {isAr
-                  ? 'توفير للمساحة مع تحديثات صامتة تلقائية'
-                  : 'Saves space with silent auto-updates'}
+                  ? 'حفظ مساحة · تحديثات صامتة'
+                  : 'Saves space · Silent auto-updates'}
               </span>
             </p>
           </div>

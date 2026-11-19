@@ -177,8 +177,8 @@ export const RemindersSection: React.FC<RemindersSectionProps> = ({
         <VolumeX className="w-4 h-4 text-[#C88A14] shrink-0" />
         <span className="leading-relaxed">
           {lang === 'ar'
-            ? 'يتم تحويل التنبيهات والأصوات تلقائياً إلى الوضع الصامت أثناء جلسات السرد والحفظ والمراجعة لضمان الخشوع والتركيز دون تشويش.'
-            : 'Alerts and sound chimes are automatically silenced during active recitation, memorization, and quiz sessions to ensure complete focus.'}
+            ? 'تصمت التنبيهات تلقائياً أثناء جلسات السرد والحفظ والمراجعة.'
+            : 'Alerts auto-silence during active recitation and quiz sessions.'}
         </span>
       </div>
 
