@@ -1597,17 +1597,17 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
       : 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col h-dvh bg-[#F7F3EB] text-[#261C14] islamic-pattern-subtle overflow-hidden">
+    <div className="fixed inset-0 z-50 flex flex-col h-dvh bg-[#F4F5EE] text-[#161E19] islamic-pattern-subtle overflow-hidden">
       {/* Compact Top Bar of the Plan Execution Screen (Hidden in Focus Mode) */}
       {!focusMode ? (
-        <header className="px-3 sm:px-6 py-2 bg-[#2D2218] text-[#FFFDF9] border-b border-[#C88A14]/50 flex items-center justify-between gap-2 shrink-0 shadow-xs">
+        <header className="px-3 sm:px-6 py-2 bg-[#0E5C3E] text-[#FFFFFF] border-b border-[#96701E]/50 flex items-center justify-between gap-2 shrink-0 shadow-xs">
           <div className="flex items-center gap-2 text-xs sm:text-sm font-bold min-w-0">
-            <BookOpen className="w-4 h-4 text-[#EAB338] shrink-0" />
-            <span className="font-display-islamic text-base sm:text-lg text-[#FFFDF9] truncate">
+            <BookOpen className="w-4 h-4 text-[#E6C25A] shrink-0" />
+            <span className="font-display-islamic text-base sm:text-lg text-[#FFFFFF] truncate">
               {formatCurriculumTitle(plan, lang)}
             </span>
-            <span className="text-[#84715E] shrink-0">·</span>
-            <span className="text-xs text-[#EAB338] shrink-0">
+            <span className="text-[#6A766E] shrink-0">·</span>
+            <span className="text-xs text-[#E6C25A] shrink-0">
               {getPlanTypeLabel(plan.planType, lang)}
             </span>
           </div>
@@ -1625,7 +1625,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                   onClick={() => setSelectedRiwayah(rw.id)}
                   className={`px-2 py-1 rounded-lg text-[11px] font-bold transition-colors cursor-pointer ${
                     selectedRiwayah === rw.id
-                      ? 'bg-[#EAB338] text-[#2D2218]'
+                      ? 'bg-[#E6C25A] text-[#0E5C3E]'
                       : 'text-[#E6D7BE] hover:text-white'
                   }`}
                 >
@@ -1639,7 +1639,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
               className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/10 border border-white/15 text-[11px] text-[#E6D7BE]"
               title={lang === 'ar' ? 'تم تحويل التنبيهات إلى الوضع الصامت تلقائياً أثناء الجلسة لمنع الإزعاج' : 'Alerts are automatically muted during this session'}
             >
-              <VolumeX className="w-3.5 h-3.5 text-[#EAB338]" />
+              <VolumeX className="w-3.5 h-3.5 text-[#E6C25A]" />
               <span>{lang === 'ar' ? 'التنبيهات صامتة' : 'Alerts Muted'}</span>
             </div>
 
@@ -1647,23 +1647,23 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
             <button
               type="button"
               onClick={() => setFocusMode(true)}
-              className="px-3 py-1.5 rounded-xl bg-[#C88A14] hover:bg-[#DCA026] text-[#2D2218] font-bold text-xs sm:text-sm flex items-center gap-1.5 shadow-xs transition-all cursor-pointer ring-1 ring-[#FFFDF9]/40"
+              className="px-3 py-1.5 rounded-xl bg-[#96701E] hover:bg-[#DCA026] text-[#0E5C3E] font-bold text-xs sm:text-sm flex items-center gap-1.5 shadow-xs transition-all cursor-pointer ring-1 ring-[#FFFFFF]/40"
               title={dict.focusModeLabel}
             >
-              <Eye className="w-4 h-4 text-[#2D2218]" />
+              <Eye className="w-4 h-4 text-[#0E5C3E]" />
               <span>{lang === 'ar' ? 'وضع التركيز' : 'Focus Mode'}</span>
             </button>
 
             {actualPageRange.endPage > actualPageRange.startPage ? (
               <div
                 dir="rtl"
-                className="flex items-center gap-1 bg-white/10 px-2 py-1 rounded-lg border border-white/15 text-xs text-[#FFFDF9]"
+                className="flex items-center gap-1 bg-white/10 px-2 py-1 rounded-lg border border-white/15 text-xs text-[#FFFFFF]"
               >
                 <button
                   type="button"
                   disabled={currentPage <= actualPageRange.startPage}
                   onClick={() => goToMushafPage(currentPage - 1)}
-                  className="p-0.5 disabled:opacity-35 hover:text-[#EAB338] cursor-pointer"
+                  className="p-0.5 disabled:opacity-35 hover:text-[#E6C25A] cursor-pointer"
                   title={dict.prevPageBtn}
                 >
                   <ChevronRight className="w-3.5 h-3.5" />
@@ -1672,11 +1672,11 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                 <select
                   value={currentPage}
                   onChange={(e) => goToMushafPage(Number(e.target.value))}
-                  className="bg-transparent text-[#FFFDF9] font-bold text-xs focus:outline-none cursor-pointer px-1"
+                  className="bg-transparent text-[#FFFFFF] font-bold text-xs focus:outline-none cursor-pointer px-1"
                   aria-label="ترتيب صفحات الورد"
                 >
                   {orderedPlanPages.map((pageNum, idx) => (
-                    <option key={pageNum} value={pageNum} className="bg-[#2D2218] text-[#FFFDF9]">
+                    <option key={pageNum} value={pageNum} className="bg-[#0E5C3E] text-[#FFFFFF]">
                       {`صفحة ${toArabicNumerals(idx + 1)} من ${toArabicNumerals(
                         totalPlanPages
                       )} (ص ${toArabicNumerals(pageNum)})`}
@@ -1688,7 +1688,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                   type="button"
                   disabled={currentPage >= actualPageRange.endPage}
                   onClick={() => goToMushafPage(currentPage + 1)}
-                  className="p-0.5 disabled:opacity-35 hover:text-[#EAB338] cursor-pointer"
+                  className="p-0.5 disabled:opacity-35 hover:text-[#E6C25A] cursor-pointer"
                   title={dict.nextPageBtn}
                 >
                   <ChevronLeft className="w-3.5 h-3.5" />
@@ -1709,7 +1709,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                 stopListeningSession();
                 onClose();
               }}
-              className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-semibold text-[#FFFDF9] transition-colors cursor-pointer flex items-center gap-1"
+              className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-semibold text-[#FFFFFF] transition-colors cursor-pointer flex items-center gap-1"
             >
               <X className="w-3.5 h-3.5" />
               <span>{lang === 'ar' ? 'رجوع' : 'Back'}</span>
@@ -1718,20 +1718,20 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
         </header>
       ) : (
         /* Floating clear status badge & Exit button in Focus Mode */
-        <div className="fixed top-3 end-3 z-50 flex items-center gap-2 bg-[#2D2218]/95 backdrop-blur-md px-3.5 py-1.5 rounded-2xl border border-[#EAB338] shadow-lg">
+        <div className="fixed top-3 end-3 z-50 flex items-center gap-2 bg-[#0E5C3E]/95 backdrop-blur-md px-3.5 py-1.5 rounded-2xl border border-[#E6C25A] shadow-lg">
           <div className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-[#EAB338] animate-pulse"></span>
-            <span className="text-xs font-bold text-[#EAB338]">
+            <span className="w-2 h-2 rounded-full bg-[#E6C25A] animate-pulse"></span>
+            <span className="text-xs font-bold text-[#E6C25A]">
               {dict.focusModeActiveBadge} · ص {toArabicNumerals(currentPage)}
             </span>
           </div>
           <button
             type="button"
             onClick={() => setFocusMode(false)}
-            className="px-2.5 py-1 rounded-xl bg-white/15 hover:bg-white/25 text-[#FFFDF9] text-xs font-bold transition-all cursor-pointer flex items-center gap-1 border border-white/25"
+            className="px-2.5 py-1 rounded-xl bg-white/15 hover:bg-white/25 text-[#FFFFFF] text-xs font-bold transition-all cursor-pointer flex items-center gap-1 border border-white/25"
             title={lang === 'ar' ? 'الخروج من وضع التركيز وإظهار الواجهات' : 'Exit Focus Mode'}
           >
-            <EyeOff className="w-3.5 h-3.5 text-[#EAB338]" />
+            <EyeOff className="w-3.5 h-3.5 text-[#E6C25A]" />
             <span>{lang === 'ar' ? 'إنهاء التركيز' : 'Exit Focus'}</span>
           </button>
         </div>
@@ -1744,15 +1744,15 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
         ref={mushafScrollContainerRef}
         className="basis-2/3 flex-1 min-h-[64dvh] overflow-y-auto px-2.5 py-2.5 sm:px-6 sm:py-4"
       >
-        <div className="w-full mx-auto min-h-full rounded-2xl sm:rounded-3xl bg-[#FFFDF7] border-2 border-[#C88A14]/60 shadow-sm p-3.5 sm:p-7 bg-gradient-to-b from-[#FFFDF9] to-[#FAF4E6] flex flex-col justify-between">
+        <div className="w-full mx-auto min-h-full rounded-2xl sm:rounded-3xl bg-[#FFFDF7] border-2 border-[#96701E]/60 shadow-sm p-3.5 sm:p-7 bg-gradient-to-b from-[#FFFFFF] to-[#FAF4E6] flex flex-col justify-between">
           <div>
             {/* Mushaf Page Header Marginalia (Always RTL for authentic Mushaf order) */}
             <div
               dir="rtl"
-              className="flex flex-wrap items-center justify-between gap-2 pb-2 mb-3.5 border-b border-[#DFD2B8] text-xs font-display-islamic font-bold text-[#5C4B3B]"
+              className="flex flex-wrap items-center justify-between gap-2 pb-2 mb-3.5 border-b border-[#DFD2B8] text-xs font-display-islamic font-bold text-[#4B5650]"
             >
               <span>{ayahGroups[0] ? `سُورَةُ ${ayahGroups[0].surahNameAr}` : ''}</span>
-              <span className="text-[#C88A14]">
+              <span className="text-[#96701E]">
                 {totalPlanPages > 1
                   ? `الورقة ${toArabicNumerals(currentPlanPageOrder)} من ${toArabicNumerals(
                       totalPlanPages
@@ -1764,7 +1764,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                   value={selectedRiwayah}
                   onChange={(e) => setSelectedRiwayah(e.target.value as QuranRiwayah)}
                   aria-label="الرواية"
-                  className="sm:hidden px-2 py-0.5 rounded-lg bg-[#F6E9C8] border border-[#C88A14]/40 text-[11px] font-bold text-[#2D2218]"
+                  className="sm:hidden px-2 py-0.5 rounded-lg bg-[#F5ECD4] border border-[#96701E]/40 text-[11px] font-bold text-[#0E5C3E]"
                 >
                   {RIWAYAH_OPTIONS.map((rw) => (
                     <option key={rw.id} value={rw.id}>
@@ -1779,7 +1779,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
             </div>
 
             {loadingPage ? (
-              <div className="py-16 text-center text-base font-display-islamic font-bold text-[#5C4B3B]">
+              <div className="py-16 text-center text-base font-display-islamic font-bold text-[#4B5650]">
                 جاري استجلاب الآيات بالرسم العثماني...
               </div>
             ) : (
@@ -1808,11 +1808,11 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                     <React.Fragment key={`${group.surahNumber}-${group.ayahNumber}`}>
                       {(group.isFirstAyahOfSurah || gIdx === 0) && (
                         <div className="my-3 sm:my-4 text-center space-y-2 select-none">
-                          <div className="py-1 px-5 mx-auto max-w-xs rounded-xl bg-[#F6E9C8]/90 border border-[#C88A14] text-base sm:text-lg font-display-islamic font-bold text-[#2D2218] shadow-2xs">
+                          <div className="py-1 px-5 mx-auto max-w-xs rounded-xl bg-[#F5ECD4]/90 border border-[#96701E] text-base sm:text-lg font-display-islamic font-bold text-[#0E5C3E] shadow-2xs">
                             سُورَةُ {group.surahNameAr}
                           </div>
                           {group.surahNumber !== 9 && (
-                            <div className="font-uthmani text-lg sm:text-2xl text-[#2D2218] font-display-islamic pt-0.5">
+                            <div className="font-uthmani text-lg sm:text-2xl text-[#0E5C3E] font-display-islamic pt-0.5">
                               بِسْمِ ٱللَّهِ ٱلرَّحْمَـٰنِ ٱلرَّحِيمِ
                             </div>
                           )}
@@ -1852,18 +1852,18 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                                   isRecited
                                     ? wasHintedMistake
                                       ? 'text-[#A84A32] bg-[#A84A32]/12 border border-[#A84A32]/30'
-                                      : 'text-[#261C14] bg-[#4A6144]/12'
+                                      : 'text-[#161E19] bg-[#0E6340]/12'
                                     : isCurrent && !revealAllPreview
                                     ? lastMismatchSpoken
                                       ? 'bg-[#A84A32]/20 border-2 border-dashed border-[#A84A32] text-transparent select-none min-w-[68px] cursor-pointer animate-pulse'
-                                      : 'bg-[#C88A14]/20 border-2 border-dashed border-[#C88A14] text-transparent select-none min-w-[68px] cursor-pointer'
-                                    : 'text-[#84715E]/70 bg-[#EFE9DC]/50'
+                                      : 'bg-[#96701E]/20 border-2 border-dashed border-[#96701E] text-transparent select-none min-w-[68px] cursor-pointer'
+                                    : 'text-[#6A766E]/70 bg-[#EAF0E7]/50'
                                 }`}
                               >
                                 {isRecited || revealAllPreview ? word.textUthmani : '••••'}
                               </span>
                               {word.isLastWordInAyah && (isRecited || revealAllPreview) && (
-                                <span className="font-uthmani text-base sm:text-xl mx-1 select-none text-[#C88A14]">
+                                <span className="font-uthmani text-base sm:text-xl mx-1 select-none text-[#96701E]">
                                   ﴿{toArabicNumerals(group.ayahNumber)}﴾
                                 </span>
                               )}
@@ -1910,21 +1910,21 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                                     ? hideInBlindRep
                                       ? lastMismatchSpoken
                                         ? 'bg-[#A84A32]/20 border-2 border-dashed border-[#A84A32] text-transparent select-none min-w-[64px] animate-pulse'
-                                        : 'bg-[#C88A14]/25 border-2 border-dashed border-[#C88A14] text-transparent select-none min-w-[64px]'
-                                      : 'bg-[#C88A14] text-[#FFFDF9] shadow-2xs'
+                                        : 'bg-[#96701E]/25 border-2 border-dashed border-[#96701E] text-transparent select-none min-w-[64px]'
+                                      : 'bg-[#96701E] text-[#FFFFFF] shadow-2xs'
                                     : isWordSpokenInRep || isPastRepAyah
-                                    ? 'text-[#3B5934] bg-[#4A6144]/12'
+                                    ? 'text-[#3B5934] bg-[#0E6340]/12'
                                     : isCurrentRepAyah
                                     ? hideInBlindRep
-                                      ? 'bg-[#EFE9DC]/60 text-transparent select-none'
-                                      : 'bg-[#FBF5E6] text-[#261C14] border-b border-[#C88A14]/40'
-                                    : 'text-[#84715E]/60'
+                                      ? 'bg-[#EAF0E7]/60 text-transparent select-none'
+                                      : 'bg-[#FBF5E6] text-[#161E19] border-b border-[#96701E]/40'
+                                    : 'text-[#6A766E]/60'
                                 }`}
                               >
                                 {isCurrentRepAyah && hideInBlindRep ? '••••' : word.textUthmani}
                               </span>
                               {word.isLastWordInAyah && (
-                                <span className="font-uthmani text-base sm:text-xl text-[#C88A14] mx-1 select-none">
+                                <span className="font-uthmani text-base sm:text-xl text-[#96701E] mx-1 select-none">
                                   ﴿{toArabicNumerals(group.ayahNumber)}﴾
                                 </span>
                               )}
@@ -1955,17 +1955,17 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                                   ? isCurrentQuestion
                                     ? lastMismatchSpoken
                                       ? 'bg-[#A84A32]/30 text-transparent border-2 border-dashed border-[#A84A32] min-w-[64px] text-center select-none animate-pulse'
-                                      : 'bg-[#C88A14] text-transparent border-2 border-[#2D2218] min-w-[64px] text-center select-none'
-                                    : 'bg-[#EFE9DC] text-transparent border border-dashed border-[#84715E]/60 min-w-[50px] select-none'
+                                      : 'bg-[#96701E] text-transparent border-2 border-[#0E5C3E] min-w-[64px] text-center select-none'
+                                    : 'bg-[#EAF0E7] text-transparent border border-dashed border-[#6A766E]/60 min-w-[50px] select-none'
                                   : isSolved
-                                  ? 'bg-[#4A6144]/20 text-[#3B5934] font-bold'
-                                  : 'text-[#261C14]'
+                                  ? 'bg-[#0E6340]/20 text-[#3B5934] font-bold'
+                                  : 'text-[#161E19]'
                               }`}
                             >
                               {isQuizBlank && quizStarted && !isSolved ? '••••' : word.textUthmani}
                             </span>
                             {word.isLastWordInAyah && (
-                              <span className="font-uthmani text-base sm:text-xl text-[#C88A14] mx-1 select-none">
+                              <span className="font-uthmani text-base sm:text-xl text-[#96701E] mx-1 select-none">
                                 ﴿{toArabicNumerals(group.ayahNumber)}﴾
                               </span>
                             )}
@@ -1977,13 +1977,13 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                 })}
 
                 {plan.planType === 'sard' && !revealAllPreview && currentWordIndex === 0 && (
-                  <div className="my-6 p-4 rounded-2xl bg-[#F6E9C8]/45 border border-dashed border-[#C88A14]/60 text-center space-y-1">
-                    <p className="font-display-islamic font-bold text-sm sm:text-base text-[#2D2218]">
+                  <div className="my-6 p-4 rounded-2xl bg-[#F5ECD4]/45 border border-dashed border-[#96701E]/60 text-center space-y-1">
+                    <p className="font-display-islamic font-bold text-sm sm:text-base text-[#0E5C3E]">
                       {lang === 'ar'
                         ? 'الآيات والكلمات مخفية — ابدأ السرد بالميكروفون وستظهر كل كلمة وآية فور تطابق قراءتك معها'
                         : 'Verses and words are hidden — start reciting into the microphone and each word will appear as it matches your voice'}
                     </p>
-                    <p className="text-xs text-[#5C4B3B]">
+                    <p className="text-xs text-[#4B5650]">
                       {lang === 'ar'
                         ? `الآية الحالية: سورة ${
                             ayahGroups[0]?.surahNameAr || ''
@@ -2008,13 +2008,13 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                 type="button"
                 disabled={currentPage <= actualPageRange.startPage}
                 onClick={() => goToMushafPage(currentPage - 1)}
-                className="px-3 py-1 rounded-lg bg-[#F7F3EB] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-[#2D2218] font-bold disabled:opacity-40 cursor-pointer flex items-center gap-1"
+                className="px-3 py-1 rounded-lg bg-[#F4F5EE] hover:bg-[#EAF0E7] border border-[#C5CEBF] text-[#0E5C3E] font-bold disabled:opacity-40 cursor-pointer flex items-center gap-1"
               >
-                <ChevronRight className="w-3.5 h-3.5 text-[#C88A14]" />
+                <ChevronRight className="w-3.5 h-3.5 text-[#96701E]" />
                 <span>الصفحة السابقة</span>
               </button>
 
-              <span className="font-display-islamic font-bold text-[#5C4B3B]">
+              <span className="font-display-islamic font-bold text-[#4B5650]">
                 صفحة {toArabicNumerals(currentPlanPageOrder)} من {toArabicNumerals(totalPlanPages)}{' '}
                 (ص {toArabicNumerals(currentPage)})
               </span>
@@ -2023,10 +2023,10 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                 type="button"
                 disabled={currentPage >= actualPageRange.endPage}
                 onClick={() => goToMushafPage(currentPage + 1)}
-                className="px-3 py-1 rounded-lg bg-[#F7F3EB] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-[#2D2218] font-bold disabled:opacity-40 cursor-pointer flex items-center gap-1"
+                className="px-3 py-1 rounded-lg bg-[#F4F5EE] hover:bg-[#EAF0E7] border border-[#C5CEBF] text-[#0E5C3E] font-bold disabled:opacity-40 cursor-pointer flex items-center gap-1"
               >
                 <span>الصفحة التالية</span>
-                <ChevronLeft className="w-3.5 h-3.5 text-[#C88A14]" />
+                <ChevronLeft className="w-3.5 h-3.5 text-[#96701E]" />
               </button>
             </div>
           )}
@@ -2037,13 +2037,13 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
           2. FOCUS MODE FLOATING CONTROLS (Floating minimal bar with Evaluation, Finish & Cancel)
          ================================================================================= */}
       {focusMode ? (
-        <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-50 bg-[#2D2218]/95 backdrop-blur-md px-3.5 py-2 rounded-2xl border border-[#C88A14]/50 shadow-2xl flex flex-wrap items-center justify-center gap-2 max-w-[96vw] animate-in fade-in slide-in-from-bottom-2 duration-150">
+        <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-50 bg-[#0E5C3E]/95 backdrop-blur-md px-3.5 py-2 rounded-2xl border border-[#96701E]/50 shadow-2xl flex flex-wrap items-center justify-center gap-2 max-w-[96vw] animate-in fade-in slide-in-from-bottom-2 duration-150">
           {/* Micro Mic button */}
           <button
             type="button"
             onClick={toggleMicrophoneSession}
             className={`p-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1 shrink-0 ${
-              isListening ? 'bg-[#A84A32] text-white animate-pulse' : 'bg-[#C88A14] text-white'
+              isListening ? 'bg-[#A84A32] text-white animate-pulse' : 'bg-[#96701E] text-white'
             }`}
             title={isListening ? dict.stopSardBtn : dict.startSardBtn}
           >
@@ -2051,8 +2051,8 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
           </button>
 
           {/* Completion Date Display (Replaces evaluation table) */}
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 text-xs font-mono-tabular text-[#FFFDF9] border border-white/15 shrink-0">
-            <Calendar className="w-3.5 h-3.5 text-[#EAB338]" />
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 text-xs font-mono-tabular text-[#FFFFFF] border border-white/15 shrink-0">
+            <Calendar className="w-3.5 h-3.5 text-[#E6C25A]" />
             <span>{currentDualDate.hijriDate} · {currentDualDate.gregorianDate}</span>
           </div>
 
@@ -2069,9 +2069,9 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                   className={`px-2 py-0.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
                     isSelected
                       ? opt.id === 'muthabbat'
-                        ? 'bg-[#4A6144] text-white shadow-xs'
+                        ? 'bg-[#0E6340] text-white shadow-xs'
                         : opt.id === 'mutaraddid'
-                        ? 'bg-[#C88A14] text-white shadow-xs'
+                        ? 'bg-[#96701E] text-white shadow-xs'
                         : 'bg-[#A84A32] text-white shadow-xs'
                       : 'bg-white/10 text-white/80 hover:bg-white/20 hover:text-white'
                   }`}
@@ -2087,7 +2087,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
           <button
             type="button"
             onClick={handleExplicitFinishPlan}
-            className="mustard-gradient-btn px-4 py-1.5 rounded-xl text-[#FFFDF9] text-xs font-bold shadow-xs hover:brightness-110 transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
+            className="mustard-gradient-btn px-4 py-1.5 rounded-xl text-[#FFFFFF] text-xs font-bold shadow-xs hover:brightness-110 transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
             title={lang === 'ar' ? 'إتمام الخطة واعتماد التاريخ' : 'Complete Plan'}
           >
             <CheckCircle2 className="w-3.5 h-3.5 text-white" />
@@ -2101,7 +2101,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
               stopListeningSession();
               onClose();
             }}
-            className="px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-[#FFFDF9] text-xs font-semibold cursor-pointer shrink-0"
+            className="px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-[#FFFFFF] text-xs font-semibold cursor-pointer shrink-0"
             title={dict.cancelBtn}
           >
             <X className="w-3.5 h-3.5" />
@@ -2111,10 +2111,10 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
           <button
             type="button"
             onClick={() => setFocusMode(false)}
-            className="px-2.5 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 border border-white/25 text-[#EAB338] hover:text-white text-xs font-bold transition-all cursor-pointer flex items-center gap-1 shrink-0"
+            className="px-2.5 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 border border-white/25 text-[#E6C25A] hover:text-white text-xs font-bold transition-all cursor-pointer flex items-center gap-1 shrink-0"
             title={lang === 'ar' ? 'الخروج من وضع التركيز' : 'Exit Focus Mode'}
           >
-            <EyeOff className="w-3.5 h-3.5 text-[#EAB338]" />
+            <EyeOff className="w-3.5 h-3.5 text-[#E6C25A]" />
             <span className="text-[11px] font-bold">{lang === 'ar' ? 'إلغاء التركيز' : 'Exit Focus'}</span>
           </button>
         </div>
@@ -2122,12 +2122,12 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
         /* =================================================================================
             3. REGULAR COMPACT CONTROL & EVALUATION DOCK (1/3 OF SCREEN — `max-h-[34dvh]`)
            ================================================================================= */
-        <div className="shrink-0 max-h-[34dvh] overflow-y-auto px-3 py-2 sm:px-5 sm:py-2.5 earthy-gradient-banner text-[#FFFDF9] border-t border-[#C88A14]/50 shadow-lg">
+        <div className="shrink-0 max-h-[34dvh] overflow-y-auto px-3 py-2 sm:px-5 sm:py-2.5 earthy-gradient-banner text-[#FFFFFF] border-t border-[#96701E]/50 shadow-lg">
         <div className="w-full mx-auto space-y-2">
           {/* Thin Progress Bar */}
           <div className="w-full h-1 rounded-full bg-black/30 overflow-hidden">
             <div
-              className="h-full bg-[#EAB338] transition-all duration-200"
+              className="h-full bg-[#E6C25A] transition-all duration-200"
               style={{ width: `${progressPct}%` }}
             />
           </div>
@@ -2144,7 +2144,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                     className={`px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-xs shrink-0 ${
                       isListening
                         ? 'bg-[#A84A32] hover:bg-[#8E3B25] text-white'
-                        : 'mustard-gradient-btn text-[#FFFDF9]'
+                        : 'mustard-gradient-btn text-[#FFFFFF]'
                     }`}
                   >
                     {isListening ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
@@ -2154,7 +2154,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                   <div className="flex items-center gap-1.5 text-[11px] sm:text-xs text-[#E6D7BE] truncate">
                     <Sparkles
                       className={`w-3.5 h-3.5 shrink-0 transition-transform ${
-                        voiceActive ? 'text-[#EAB338] scale-125' : 'text-[#E6D7BE]/45'
+                        voiceActive ? 'text-[#E6C25A] scale-125' : 'text-[#E6D7BE]/45'
                       }`}
                     />
                     {lastMismatchSpoken ? (
@@ -2193,7 +2193,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                     <button
                       type="button"
                       onClick={handleRevealCurrentWordHint}
-                      className="px-2.5 py-1 rounded-lg bg-white/15 hover:bg-white/25 border border-white/20 text-[11px] font-bold text-[#EAB338] cursor-pointer flex items-center gap-1"
+                      className="px-2.5 py-1 rounded-lg bg-white/15 hover:bg-white/25 border border-white/20 text-[11px] font-bold text-[#E6C25A] cursor-pointer flex items-center gap-1"
                       title={
                         lang === 'ar'
                           ? 'كشف الكلمة الحالية عند النسيان'
@@ -2210,7 +2210,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                     onClick={() => setRevealAllPreview((p) => !p)}
                     className={`px-2 py-1 rounded-lg text-[11px] font-semibold border cursor-pointer ${
                       revealAllPreview
-                        ? 'bg-[#C88A14] text-[#FFFDF9] border-[#EAB338]'
+                        ? 'bg-[#96701E] text-[#FFFFFF] border-[#E6C25A]'
                         : 'bg-black/25 text-[#E6D7BE] border-white/15 hover:text-white'
                     }`}
                   >
@@ -2223,7 +2223,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                       : 'Preview'}
                   </button>
 
-                  <span className="text-xs font-mono-tabular text-[#EAB338] font-bold px-1">
+                  <span className="text-xs font-mono-tabular text-[#E6C25A] font-bold px-1">
                     {currentWordIndex}/{flatWords.length}
                   </span>
 
@@ -2254,10 +2254,10 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
           {plan.planType === 'new_memorization' && (
             <div className="space-y-2">
               {onOpenSmartMemorization && (
-                <div className="p-2 rounded-xl bg-[#C88A14]/20 border border-[#EAB338]/40 flex items-center justify-between gap-2 text-xs">
+                <div className="p-2 rounded-xl bg-[#96701E]/20 border border-[#E6C25A]/40 flex items-center justify-between gap-2 text-xs">
                   <div className="flex items-center gap-2">
-                    <Brain className="w-4 h-4 text-[#EAB338] shrink-0" />
-                    <span className="font-bold text-[#FFFDF9]">
+                    <Brain className="w-4 h-4 text-[#E6C25A] shrink-0" />
+                    <span className="font-bold text-[#FFFFFF]">
                       {lang === 'ar'
                         ? 'نظام إدارة خطة الحفظ الذكي (3 مراحل متتالية وصارمة)'
                         : 'Smart Quran Memorization System (3 Strict Stages)'}
@@ -2283,7 +2283,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                     className={`px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-xs shrink-0 ${
                       isListening
                         ? 'bg-[#A84A32] text-white'
-                        : 'mustard-gradient-btn text-[#FFFDF9]'
+                        : 'mustard-gradient-btn text-[#FFFFFF]'
                     }`}
                   >
                     {isListening ? (
@@ -2313,7 +2313,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                         setAyahWordOffset(0);
                       }
                     }}
-                    className="px-2.5 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 border border-white/20 text-xs font-bold text-[#FFFDF9] cursor-pointer shrink-0"
+                    className="px-2.5 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 border border-white/20 text-xs font-bold text-[#FFFFFF] cursor-pointer shrink-0"
                   >
                     {lang === 'ar'
                       ? `تكرار (${currentAyahRepCount + 1}/${targetReps})`
@@ -2323,7 +2323,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                   <div className="flex items-center gap-1 text-[11px] sm:text-xs text-[#E6D7BE] truncate">
                     <Sparkles
                       className={`w-3.5 h-3.5 shrink-0 transition-transform ${
-                        voiceActive ? 'text-[#EAB338] scale-125' : 'text-[#E6D7BE]/45'
+                        voiceActive ? 'text-[#E6C25A] scale-125' : 'text-[#E6D7BE]/45'
                       }`}
                     />
                     {lastMismatchSpoken ? (
@@ -2356,7 +2356,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                   <button
                     type="button"
                     onClick={handleRevealCurrentWordHint}
-                    className="px-2 py-1 rounded-lg bg-white/15 hover:bg-white/25 border border-white/20 text-[11px] font-bold text-[#EAB338] cursor-pointer flex items-center gap-1"
+                    className="px-2 py-1 rounded-lg bg-white/15 hover:bg-white/25 border border-white/20 text-[11px] font-bold text-[#E6C25A] cursor-pointer flex items-center gap-1"
                   >
                     <HelpCircle className="w-3 h-3" />
                     <span>{lang === 'ar' ? 'كشف كلمة' : 'Hint'}</span>
@@ -2375,7 +2375,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                         }}
                         className={`px-2 py-0.5 rounded-md text-xs font-mono-tabular font-bold cursor-pointer ${
                           targetReps === rNum
-                            ? 'bg-[#C88A14] text-[#FFFDF9]'
+                            ? 'bg-[#96701E] text-[#FFFFFF]'
                             : 'text-[#E6D7BE]'
                         }`}
                       >
@@ -2384,7 +2384,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                     ))}
                   </div>
 
-                  <span className="text-xs font-mono-tabular text-[#EAB338] font-bold">
+                  <span className="text-xs font-mono-tabular text-[#E6C25A] font-bold">
                     {activeAyahIdx + 1}/{ayahGroups.length}
                   </span>
 
@@ -2423,7 +2423,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                     className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-xs ${
                       isListening
                         ? 'bg-[#A84A32] text-white'
-                        : 'mustard-gradient-btn text-[#FFFDF9]'
+                        : 'mustard-gradient-btn text-[#FFFFFF]'
                     }`}
                   >
                     {isListening ? (
@@ -2456,7 +2456,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                       onClick={() => setQuizLevel(lvl.id)}
                       className={`px-2 py-0.5 rounded-lg text-[11px] font-bold cursor-pointer ${
                         quizLevel === lvl.id
-                          ? 'bg-[#C88A14] text-[#FFFDF9]'
+                          ? 'bg-[#96701E] text-[#FFFFFF]'
                           : 'bg-black/25 text-[#E6D7BE] hover:text-white'
                       }`}
                     >
@@ -2467,7 +2467,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                   <button
                     type="button"
                     onClick={() => setShowExtraControls((s) => !s)}
-                    className="px-2 py-0.5 rounded-lg bg-white/10 hover:bg-white/20 text-[11px] text-[#EAB338] flex items-center gap-1 cursor-pointer"
+                    className="px-2 py-0.5 rounded-lg bg-white/10 hover:bg-white/20 text-[11px] text-[#E6C25A] flex items-center gap-1 cursor-pointer"
                   >
                     <SlidersHorizontal className="w-3 h-3" />
                     <span>{lang === 'ar' ? 'النمط' : 'Mode'}</span>
@@ -2509,11 +2509,11 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                         setCurrentQuizStep((s) => s + 1);
                       }
                     }}
-                    className="px-2 py-0.5 rounded-lg bg-white/15 hover:bg-white/25 text-[11px] font-semibold text-[#FFFDF9] cursor-pointer"
+                    className="px-2 py-0.5 rounded-lg bg-white/15 hover:bg-white/25 text-[11px] font-semibold text-[#FFFFFF] cursor-pointer"
                   >
                     {lang === 'ar' ? 'كشف' : 'Reveal'}
                   </button>
-                  <span className="font-mono-tabular text-[#EAB338] font-bold">
+                  <span className="font-mono-tabular text-[#E6C25A] font-bold">
                     {solvedQuizIndices.length}/{quizQuestions.length}
                   </span>
                 </div>
@@ -2534,7 +2534,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                       onClick={() => setQuizFormat(fmt.id)}
                       className={`px-2 py-0.5 rounded-lg text-[11px] font-semibold cursor-pointer ${
                         quizFormat === fmt.id
-                          ? 'bg-[#FFFDF9] text-[#2D2218]'
+                          ? 'bg-[#FFFFFF] text-[#0E5C3E]'
                           : 'bg-black/25 text-[#E6D7BE]'
                       }`}
                     >
@@ -2556,7 +2556,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                         className={`py-1 px-2 rounded-xl font-uthmani text-base sm:text-lg transition-all cursor-pointer border text-center truncate ${
                           isWrong
                             ? 'bg-[#A84A32] text-white border-[#A84A32]'
-                            : 'bg-[#FFFDF9] text-[#261C14] border-[#C88A14] hover:bg-[#F6E9C8]'
+                            : 'bg-[#FFFFFF] text-[#161E19] border-[#96701E] hover:bg-[#F5ECD4]'
                         }`}
                       >
                         {choice}
@@ -2570,15 +2570,15 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
 
           {/* Reading Completed Banner */}
           {(progressPct === 100 || (flatWords.length > 0 && currentWordIndex >= flatWords.length)) && (
-            <div className="p-2 rounded-xl bg-[#4A6144]/90 border border-[#88B87E] text-white text-xs font-semibold flex items-center justify-between gap-2 shadow-xs animate-in fade-in duration-200">
+            <div className="p-2 rounded-xl bg-[#0E6340]/90 border border-[#88B87E] text-white text-xs font-semibold flex items-center justify-between gap-2 shadow-xs animate-in fade-in duration-200">
               <div className="flex items-center gap-1.5">
-                <Sparkles className="w-4 h-4 text-[#EAB338] shrink-0" />
+                <Sparkles className="w-4 h-4 text-[#E6C25A] shrink-0" />
                 <span>{dict.readingDonePrompt}</span>
               </div>
               <button
                 type="button"
                 onClick={handleExplicitFinishPlan}
-                className="px-2.5 py-1 rounded-lg bg-white text-[#2D2218] text-xs font-bold hover:bg-[#F6E9C8] transition-colors cursor-pointer shrink-0"
+                className="px-2.5 py-1 rounded-lg bg-white text-[#0E5C3E] text-xs font-bold hover:bg-[#F5ECD4] transition-colors cursor-pointer shrink-0"
               >
                 {dict.finishPlanManualBtn}
               </button>
@@ -2592,18 +2592,18 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
           <div className="pt-2 border-t border-white/15 flex flex-wrap items-center justify-between gap-2.5">
             {/* Completion Date Display (Replaces evaluation table) */}
             <div className="flex items-center gap-2">
-              <span className="text-[11px] font-bold text-[#EAB338]">
+              <span className="text-[11px] font-bold text-[#E6C25A]">
                 {lang === 'ar' ? 'تاريخ الإنجاز:' : 'Completion Date:'}
               </span>
-              <div className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-white/10 text-xs font-mono-tabular text-[#FFFDF9] border border-white/15">
-                <Calendar className="w-3.5 h-3.5 text-[#EAB338]" />
+              <div className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-white/10 text-xs font-mono-tabular text-[#FFFFFF] border border-white/15">
+                <Calendar className="w-3.5 h-3.5 text-[#E6C25A]" />
                 <span>{currentDualDate.hijriDate} · {currentDualDate.gregorianDate}</span>
               </div>
             </div>
 
             {/* Direct Evaluation Rating Buttons (ممتاز، جيد جداً، يحتاج تثبيت) */}
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-[11px] font-bold text-[#EAB338]">
+              <span className="text-[11px] font-bold text-[#E6C25A]">
                 {lang === 'ar' ? 'التقييم:' : 'Rating:'}
               </span>
               <div className="flex items-center gap-1">
@@ -2618,9 +2618,9 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                       className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
                         isSelected
                           ? opt.id === 'muthabbat'
-                            ? 'bg-[#4A6144] text-white shadow-xs'
+                            ? 'bg-[#0E6340] text-white shadow-xs'
                             : opt.id === 'mutaraddid'
-                            ? 'bg-[#C88A14] text-white shadow-xs'
+                            ? 'bg-[#96701E] text-white shadow-xs'
                             : 'bg-[#A84A32] text-white shadow-xs'
                           : 'bg-white/10 text-white/80 hover:bg-white/20 hover:text-white'
                       }`}
@@ -2643,10 +2643,10 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
               <button
                 type="button"
                 onClick={() => setFocusMode(true)}
-                className="px-3 py-1.5 rounded-xl bg-[#C88A14]/30 hover:bg-[#C88A14]/50 border border-[#EAB338] text-[#FFFDF9] text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                className="px-3 py-1.5 rounded-xl bg-[#96701E]/30 hover:bg-[#96701E]/50 border border-[#E6C25A] text-[#FFFFFF] text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
                 title={dict.focusModeLabel}
               >
-                <Eye className="w-3.5 h-3.5 text-[#EAB338]" />
+                <Eye className="w-3.5 h-3.5 text-[#E6C25A]" />
                 <span>{lang === 'ar' ? 'وضع التركيز' : 'Focus Mode'}</span>
               </button>
 
@@ -2654,7 +2654,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
               <button
                 type="button"
                 onClick={handleExplicitFinishPlan}
-                className="px-4 py-1.5 rounded-xl mustard-gradient-btn hover:brightness-110 text-[#FFFDF9] text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                className="px-4 py-1.5 rounded-xl mustard-gradient-btn hover:brightness-110 text-[#FFFFFF] text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
                 title={lang === 'ar' ? 'إتمام الخطة واعتماد التاريخ' : 'Complete Plan'}
               >
                 <CheckCircle2 className="w-3.5 h-3.5 text-white" />
@@ -2667,7 +2667,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
                   stopListeningSession();
                   onClose();
                 }}
-                className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-[#FFFDF9] text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1"
+                className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-[#FFFFFF] text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1"
               >
                 <X className="w-3.5 h-3.5" />
                 <span>{dict.cancelBtn}</span>
@@ -2676,8 +2676,8 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
           </div>
 
           {speechError && (
-            <div className="p-1.5 rounded-lg bg-black/30 border border-[#EAB338]/40 text-xs text-[#F6E9C8] flex items-center gap-1.5">
-              <AlertCircle className="w-3.5 h-3.5 text-[#EAB338] shrink-0" />
+            <div className="p-1.5 rounded-lg bg-black/30 border border-[#E6C25A]/40 text-xs text-[#F5ECD4] flex items-center gap-1.5">
+              <AlertCircle className="w-3.5 h-3.5 text-[#E6C25A] shrink-0" />
               <span>{speechError}</span>
             </div>
           )}

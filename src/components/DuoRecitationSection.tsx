@@ -2101,7 +2101,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       {/* STEP 1: NOT SIGNED IN -> AUTH GATE */}
       {!user && (
         <div className="space-y-3">
-          <div className="gold-card-surface rounded-[20px] border border-[#E6D19E] border-t-[3px] border-t-[#C88A14] p-3.5 sm:p-4 shadow-xs flex items-center justify-between gap-3">
+          <div className="gold-card-surface frame-card-gold rounded-[20px] p-3.5 sm:p-4 flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-2xl bg-[#F6E9C8] border border-[#E5C983] flex items-center justify-center text-[#9E650C] shrink-0">
                 <PhoneCall className="w-5 h-5" />
@@ -2124,7 +2124,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div className="rounded-2xl bg-[#FFFDF9] border border-[#DDD2BE] p-5 shadow-xs space-y-4">
+            <div className="rounded-2xl bg-[#FFFDF9] frame-card-ivory p-5 space-y-4">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-xl bg-[#F6E9C8] text-[#9E650C] flex items-center justify-center">
                   <Mail className="w-5 h-5" />
@@ -2287,7 +2287,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
               </form>
             </div>
 
-            <div className="olive-card-surface rounded-2xl border border-[#C8D4C2] p-5 shadow-xs flex flex-col justify-between gap-4">
+            <div className="olive-card-surface frame-card-olive rounded-2xl p-5 flex flex-col justify-between gap-4">
               <div className="space-y-3.5">
                 <div className="flex items-center gap-2.5">
                   <div className="w-9 h-9 rounded-xl bg-[#4A6144]/15 text-[#4A6144] flex items-center justify-center">
@@ -2511,7 +2511,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
           {/* Balanced Lobby Grid: Invite Link + Add Friend side-by-side on large screens, Friends below */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
             {/* LOBBY CARD 1: Welcome + Personal Invite Link + Copy / Share / Sign Out */}
-            <div className="rounded-[20px] bg-[#FFFDF9] border border-[#DDD2BE] p-3.5 sm:p-4 shadow-xs flex flex-col justify-between gap-2.5">
+            <div className="rounded-[20px] bg-[#FFFDF9] frame-card-ivory p-3.5 sm:p-4 flex flex-col justify-between gap-2.5">
               <div className="flex flex-wrap items-start justify-between gap-2.5">
                 <div className="space-y-0.5 min-w-0">
                   <h2 className="text-lg sm:text-xl font-extrabold text-[#261C14] truncate">
@@ -2587,7 +2587,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
             </div>
 
             {/* LOBBY CARD 2: Invite a Friend by Link */}
-            <div className="rounded-[20px] bg-[#FFFDF9] border border-[#DDD2BE] p-3.5 sm:p-4 shadow-xs flex flex-col justify-between gap-2.5">
+            <div className="rounded-[20px] bg-[#FFFDF9] frame-card-ivory p-3.5 sm:p-4 flex flex-col justify-between gap-2.5">
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
                   <UserPlus className="w-4 h-4 text-[#15803D]" />
@@ -2699,7 +2699,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
             </div>
 
             {/* LOBBY CARD 3: Connected Friends + One-Tap Curriculum Picker + Voice Call */}
-            <div className="lg:col-span-2 rounded-[20px] bg-[#FFFDF9] border border-[#DDD2BE] p-3.5 sm:p-4 shadow-xs space-y-2.5">
+            <div className="lg:col-span-2 rounded-[20px] bg-[#FFFDF9] frame-card-ivory p-3.5 sm:p-4 space-y-2.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <Users className="w-4 h-4 text-[#15803D]" />
@@ -2757,7 +2757,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                   return (
                     <div
                       key={fr.friendUid}
-                      className="rounded-2xl bg-[#FAF7F0] border border-[#E5DEC9] p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                      className="rounded-2xl bg-[#FAF7F0] border border-[#DED2BE] shadow-2xs p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors hover:border-[#C9BA9F]"
                     >
                       <div className="flex items-center justify-between sm:justify-start gap-3">
                         <div className="w-11 h-11 rounded-2xl bg-[#E8F2EC] border border-[#BBF7D0] text-[#15803D] flex items-center justify-center shrink-0">
@@ -2890,7 +2890,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
           )}
 
           {/* Compact Top Status & Action Bar */}
-          <div className="rounded-[20px] bg-[#FFFDF9] border border-[#DDD2BE] p-3.5 shadow-xs space-y-2">
+          <div className="rounded-[20px] bg-[#FFFDF9] frame-card-ivory p-3.5 space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm font-bold">
                 <Radio
@@ -3057,7 +3057,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
 
           {/* Main Reading Area: Hidden Reciter Screen OR Listener Interactive Word-Tap Mushaf */}
           {shouldHideVersesForMe ? (
-            <div className="rounded-[20px] bg-[#FFFDF9] border border-[#DDD2BE] p-4 sm:p-5 shadow-xs flex flex-col justify-between gap-3.5">
+            <div className="rounded-[20px] bg-[#FFFDF9] frame-card-ivory p-4 sm:p-5 flex flex-col justify-between gap-3.5">
               <div className="flex flex-col items-center justify-center text-center py-3 space-y-2 max-w-md mx-auto">
                 <div className="w-12 h-12 rounded-xl bg-[#FAF7F0] border border-[#E5DEC9] flex items-center justify-center text-[#15803D]">
                   <EyeOff className="w-6 h-6" />
@@ -3150,7 +3150,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
             </div>
           ) : (
             /* Listener Interactive Word-Tap Mushaf Screen */
-            <div className="rounded-[20px] bg-[#FFFDF9] border border-[#DDD2BE] p-3.5 sm:p-4 shadow-xs space-y-3">
+            <div className="rounded-[20px] bg-[#FFFDF9] frame-card-ivory p-3.5 sm:p-4 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-[#EFE9DC]">
                 <div className="space-y-0.5">
                   <div className="text-xs sm:text-sm font-extrabold text-[#15803D]">

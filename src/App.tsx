@@ -49,6 +49,8 @@ import {
   UserCheck,
   UserX,
   LogIn,
+  Menu,
+  Info,
 } from 'lucide-react';
 import { User, onAuthStateChanged, signInWithPopup } from 'firebase/auth';
 import {
@@ -181,6 +183,9 @@ export default function App() {
   const lastRingingCallIdRef = useRef<string | null>(null);
   const [isPrivacyTermsOpen, setIsPrivacyTermsOpen] = useState<boolean>(false);
   const [privacyTermsTab, setPrivacyTermsTab] = useState<'privacy' | 'terms'>('privacy');
+  const [isSideMenuOpen, setIsSideMenuOpen] = useState<boolean>(false);
+  const [isAboutOpen, setIsAboutOpen] = useState<boolean>(false);
+  const appVersion = '1.0.0';
 
   // Global Instant Friend-Invite & Approval Popup State (works on any screen)
   const [inviteModalDoc, setInviteModalDoc] = useState<FriendInviteDoc | null>(null);
@@ -1364,35 +1369,47 @@ export default function App() {
   return (
     <div
       dir={lang === 'ar' ? 'rtl' : 'ltr'}
-      className="w-full min-w-full min-h-screen flex flex-col bg-[#F7F3EB] text-[#261C14] islamic-pattern-subtle overflow-x-hidden pb-20 sm:pb-24"
+      className="w-full min-w-full min-h-screen flex flex-col bg-[#F7F3EB] text-[#261C14] islamic-pattern-subtle overflow-x-hidden pb-16 sm:pb-[68px]"
     >
       {/* Clean Top Bar in Original Warm Parchment, Umber & Mustard Gold Theme */}
-      <header className="w-full sticky top-0 z-30 bg-[#FFFDF9]/95 backdrop-blur-md border-b border-[#DDD2BE] shadow-xs">
+      <header className="w-full sticky top-0 z-30 bg-[#FFFDF9]/95 backdrop-blur-md border-b-[1.5px] border-[#C9BA9F] shadow-xs">
         <div className="w-full px-3 sm:px-6 lg:px-10 py-2 sm:py-2.5 flex items-center justify-between gap-2 flex-nowrap">
-          {/* Start: Original App Logo & Brand Name */}
-          <a
-            href="#home"
-            onClick={(e) => {
-              e.preventDefault();
-              setActiveSection('home');
-            }}
-            className="flex items-center gap-2.5 shrink-0 group cursor-pointer focus:outline-none"
-            title={dict.brandTitle}
-          >
-            <img
-              src="/icon.svg"
-              alt={dict.brandTitle}
-              className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl border border-[#EAB338]/70 shadow-sm object-cover group-hover:scale-105 transition-transform shrink-0"
-            />
-            <div className="flex flex-col min-w-0">
-              <span className="text-lg sm:text-2xl font-extrabold font-display-islamic leading-none text-[#2D2218] tracking-tight whitespace-nowrap">
-                {dict.brandTitle}
-              </span>
-              <span className="text-[10px] font-bold text-[#8B6514] mt-0.5 hidden sm:block truncate">
-                {dict.brandSubtitle}
-              </span>
-            </div>
-          </a>
+          {/* Start: Side Menu Drawer Trigger + App Logo & Brand Name */}
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0 min-w-0">
+            <button
+              type="button"
+              onClick={() => setIsSideMenuOpen(true)}
+              aria-label={lang === 'ar' ? 'فتح القائمة الجانبية' : 'Open Side Menu'}
+              title={lang === 'ar' ? 'القائمة الجانبية' : 'Side Menu'}
+              className="p-2 rounded-xl bg-[#F7F3EB] hover:bg-[#EFE9DC] border-[1.5px] border-[#C6B28D] hover:border-[#B87D10] text-[#2D2218] transition-all cursor-pointer flex items-center justify-center shadow-2xs shrink-0"
+            >
+              <Menu className="w-4 h-4 sm:w-5 sm:h-5 text-[#9E6A0C]" />
+            </button>
+
+            <a
+              href="#home"
+              onClick={(e) => {
+                e.preventDefault();
+                setActiveSection('home');
+              }}
+              className="flex items-center gap-2.5 shrink-0 group cursor-pointer focus:outline-none"
+              title={dict.brandTitle}
+            >
+              <img
+                src="/icon.svg"
+                alt={dict.brandTitle}
+                className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl border border-[#EAB338]/70 shadow-sm object-cover group-hover:scale-105 transition-transform shrink-0"
+              />
+              <div className="flex flex-col min-w-0">
+                <span className="text-lg sm:text-2xl font-extrabold font-display-islamic leading-none text-[#2D2218] tracking-tight whitespace-nowrap">
+                  {dict.brandTitle}
+                </span>
+                <span className="text-[10px] font-bold text-[#8B6514] mt-0.5 hidden sm:block truncate">
+                  {dict.brandSubtitle}
+                </span>
+              </div>
+            </a>
+          </div>
 
           {/* Center (Desktop): Harmonious Single-Line Date */}
           <div className="hidden md:flex items-center justify-center">
@@ -1522,10 +1539,10 @@ export default function App() {
       )}
 
       {/* Main Content Container */}
-      <main className="flex-1 w-full px-3 sm:px-6 lg:px-10 py-3 sm:py-4 space-y-4">
+      <main className="flex-1 w-full px-3 sm:px-6 lg:px-10 pt-3 sm:pt-4 pb-1.5 sm:pb-2 space-y-4">
         {/* HOME VIEW — Original Warm Umber, Parchment, Mustard Gold & Olive Theme (NO Tables Shown on Home!) */}
         {activeSection === 'home' && (
-          <section className="max-w-5xl mx-auto space-y-4 sm:space-y-5">
+          <section className="max-w-5xl mx-auto space-y-4">
             {/* Compact Centered Title & Greeting */}
             <div className="flex flex-col items-center text-center pt-0.5 pb-0.5 space-y-1.5">
               <h1 className="text-2xl sm:text-3xl font-extrabold font-display-islamic text-[#2D2218] leading-tight">
@@ -1549,7 +1566,7 @@ export default function App() {
               </p>
             </div>
 
-            {/* Compact Short Guiding Compass Pill-Strip (Date-Strip Width, Reduced Height) */}
+            {/* Compact Short Guiding Compass Pill-Strip (Date-Strip Width, Reduced Height, Subtle Border) */}
             <div className="w-[265px] sm:w-[300px] max-w-full mx-auto rounded-full bg-[#FFFDF9] border border-[#DDD2BE] px-3 py-0.5 sm:py-1 flex items-center justify-center gap-1.5 shadow-2xs">
               <div className="w-4 h-4 rounded-full bg-[#F6E9C8] text-[#9E6A0C] flex items-center justify-center shrink-0">
                 <Compass className="w-2.5 h-2.5" />
@@ -1562,8 +1579,8 @@ export default function App() {
             {/* Balanced Feature Cards Grid (1 Compact Top Action Strip + 2x2 Evenly Distributed Cards) */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-stretch">
               {/* Card 1 (TOP): Add Quran Plans — Sleek Horizontal Strip */}
-              <div className="sm:col-span-2 gold-card-surface rounded-[20px] border border-[#E6D19E] border-t-[3px] border-t-[#C88A14] p-3.5 sm:p-4 relative overflow-hidden shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <svg className="w-20 h-20 absolute -bottom-5 -end-5 text-[#C88A14]/10 pointer-events-none" viewBox="0 0 96 96" fill="none" aria-hidden="true">
+              <div className="group sm:col-span-2 gold-card-surface frame-card-gold rounded-[20px] p-3.5 sm:p-4 relative overflow-hidden flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <svg className="w-20 h-20 absolute -bottom-5 -end-5 text-[#C88A14]/15 group-hover:text-[#C88A14]/25 group-hover:scale-105 transition-all duration-300 pointer-events-none" viewBox="0 0 96 96" fill="none" aria-hidden="true">
                   <rect x="20" y="20" width="56" height="56" rx="4" stroke="currentColor" strokeWidth="2" />
                   <rect x="20" y="20" width="56" height="56" rx="4" transform="rotate(45 48 48)" stroke="currentColor" strokeWidth="2" />
                 </svg>
@@ -1607,8 +1624,8 @@ export default function App() {
               </div>
 
               {/* Card 2: Self-Paced Sard & Smart Memorization (Original Olive Green) */}
-              <div className="olive-card-surface rounded-[20px] border border-[#C8D4C2] border-t-[3px] border-t-[#4A6144] p-3.5 sm:p-4 relative overflow-hidden shadow-xs flex flex-col justify-between gap-2.5">
-                <svg className="w-20 h-20 absolute -bottom-5 -end-5 text-[#4A6144]/10 pointer-events-none" viewBox="0 0 96 96" fill="none" aria-hidden="true">
+              <div className="group olive-card-surface frame-card-olive rounded-[20px] p-3.5 sm:p-4 relative overflow-hidden flex flex-col justify-between gap-2.5">
+                <svg className="w-20 h-20 absolute -bottom-5 -end-5 text-[#4A6144]/15 group-hover:text-[#4A6144]/25 group-hover:scale-105 transition-all duration-300 pointer-events-none" viewBox="0 0 96 96" fill="none" aria-hidden="true">
                   <rect x="20" y="20" width="56" height="56" rx="4" stroke="currentColor" strokeWidth="2" />
                   <rect x="20" y="20" width="56" height="56" rx="4" transform="rotate(45 48 48)" stroke="currentColor" strokeWidth="2" />
                 </svg>
@@ -1666,8 +1683,8 @@ export default function App() {
               </div>
 
               {/* Card 2b: Browser P2P Duo Recitation (Zero Server Load) */}
-              <div className="gold-card-surface rounded-[20px] border border-[#E6D19E] border-t-[3px] border-t-[#C88A14] p-3.5 sm:p-4 relative overflow-hidden shadow-xs flex flex-col justify-between gap-2.5">
-                <svg className="w-20 h-20 absolute -bottom-5 -end-5 text-[#C88A14]/10 pointer-events-none" viewBox="0 0 96 96" fill="none" aria-hidden="true">
+              <div className="group gold-card-surface frame-card-gold rounded-[20px] p-3.5 sm:p-4 relative overflow-hidden flex flex-col justify-between gap-2.5">
+                <svg className="w-20 h-20 absolute -bottom-5 -end-5 text-[#C88A14]/15 group-hover:text-[#C88A14]/25 group-hover:scale-105 transition-all duration-300 pointer-events-none" viewBox="0 0 96 96" fill="none" aria-hidden="true">
                   <rect x="20" y="20" width="56" height="56" rx="4" stroke="currentColor" strokeWidth="2" />
                   <rect x="20" y="20" width="56" height="56" rx="4" transform="rotate(45 48 48)" stroke="currentColor" strokeWidth="2" />
                 </svg>
@@ -1711,8 +1728,8 @@ export default function App() {
               </div>
 
               {/* Card 3: Weekly Schedule (Original Warm Umber & Gold) */}
-              <div className="umber-card-surface rounded-[20px] border border-[#DDD2BE] border-t-[3px] border-t-[#2D2218] p-3.5 sm:p-4 relative overflow-hidden shadow-xs flex flex-col justify-between gap-2.5">
-                <svg className="w-20 h-20 absolute -bottom-5 -end-5 text-[#2D2218]/10 pointer-events-none" viewBox="0 0 96 96" fill="none" aria-hidden="true">
+              <div className="group umber-card-surface frame-card-umber rounded-[20px] p-3.5 sm:p-4 relative overflow-hidden flex flex-col justify-between gap-2.5">
+                <svg className="w-20 h-20 absolute -bottom-5 -end-5 text-[#2D2218]/15 group-hover:text-[#2D2218]/25 group-hover:scale-105 transition-all duration-300 pointer-events-none" viewBox="0 0 96 96" fill="none" aria-hidden="true">
                   <rect x="20" y="20" width="56" height="56" rx="4" stroke="currentColor" strokeWidth="2" />
                   <rect x="20" y="20" width="56" height="56" rx="4" transform="rotate(45 48 48)" stroke="currentColor" strokeWidth="2" />
                 </svg>
@@ -1756,8 +1773,8 @@ export default function App() {
               </div>
 
               {/* Card 5: Mutun & Daily Adhkar (Olive & Warm Parchment) */}
-              <div className="olive-card-surface rounded-[20px] border border-[#C8D4C2] border-t-[3px] border-t-[#4A6144] p-3.5 sm:p-4 relative overflow-hidden shadow-xs flex flex-col justify-between gap-2.5">
-                <svg className="w-20 h-20 absolute -bottom-5 -end-5 text-[#4A6144]/10 pointer-events-none" viewBox="0 0 96 96" fill="none" aria-hidden="true">
+              <div className="group olive-card-surface frame-card-olive rounded-[20px] p-3.5 sm:p-4 relative overflow-hidden flex flex-col justify-between gap-2.5">
+                <svg className="w-20 h-20 absolute -bottom-5 -end-5 text-[#4A6144]/15 group-hover:text-[#4A6144]/25 group-hover:scale-105 transition-all duration-300 pointer-events-none" viewBox="0 0 96 96" fill="none" aria-hidden="true">
                   <rect x="20" y="20" width="56" height="56" rx="4" stroke="currentColor" strokeWidth="2" />
                   <rect x="20" y="20" width="56" height="56" rx="4" transform="rotate(45 48 48)" stroke="currentColor" strokeWidth="2" />
                 </svg>
@@ -1801,8 +1818,8 @@ export default function App() {
               </div>
             </div>
 
-            {/* Compact Separated Privacy Policy & Terms Links below Home Cards & above Bottom Nav */}
-            <div className="pt-0.5 pb-1 flex items-center justify-center gap-6 text-[11px] font-bold">
+            {/* Compact Separated Privacy Policy & Terms Links directly above Bottom Nav (Zero excess bottom gap) */}
+            <div className="pt-0 pb-0 flex items-center justify-center gap-6 text-[11px] font-bold">
               <button
                 type="button"
                 onClick={() => {
@@ -3334,6 +3351,245 @@ export default function App() {
 
       {/* Single Space-Saving Smart PWA Alert (Shown ONCE only when not installed) */}
       <SmartPWAInstallAlert lang={lang} />
+
+      {/* Slide-out Side Navigation Drawer (الأقسام الرئيسية + حول التطبيق + رقم الإصدار — بدون اتصل بنا) */}
+      {isSideMenuOpen && (
+        <div
+          className="fixed inset-0 z-60 flex bg-black/50 backdrop-blur-xs"
+          onClick={() => setIsSideMenuOpen(false)}
+        >
+          <aside
+            dir={lang === 'ar' ? 'rtl' : 'ltr'}
+            onClick={(e) => e.stopPropagation()}
+            aria-label={lang === 'ar' ? 'القائمة الجانبية' : 'Side Navigation Menu'}
+            className="w-72 sm:w-80 max-w-[85vw] h-full bg-[#FFFDF9] border-e-[1.5px] border-[#C5B49A] shadow-2xl flex flex-col justify-between overflow-y-auto animate-in fade-in duration-150"
+          >
+            <div>
+              {/* Drawer Header */}
+              <div className="px-4 py-3.5 bg-[#2D2218] text-[#FFFDF9] flex items-center justify-between gap-2 border-b-[1.5px] border-[#C88A14]/40">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <img
+                    src="/icon.svg"
+                    alt={dict.brandTitle}
+                    className="w-9 h-9 rounded-xl border border-[#EAB338]/70 object-cover shrink-0"
+                  />
+                  <div className="min-w-0">
+                    <div className="text-base font-extrabold font-display-islamic leading-tight truncate">
+                      {dict.brandTitle}
+                    </div>
+                    <div className="text-[10px] font-semibold text-[#EAB338] truncate">
+                      {dict.brandSubtitle}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsSideMenuOpen(false)}
+                  aria-label={lang === 'ar' ? 'إغلاق القائمة' : 'Close menu'}
+                  className="p-1.5 rounded-lg bg-[#FFFDF9]/10 hover:bg-[#FFFDF9]/20 text-[#FFFDF9] cursor-pointer shrink-0"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Main App Sections */}
+              <div className="p-3 space-y-1">
+                <div className="px-2.5 py-1 text-[11px] font-extrabold text-[#84715E]">
+                  {lang === 'ar' ? 'الأقسام الرئيسية' : 'Main Sections'}
+                </div>
+
+                {(
+                  [
+                    { id: 'home', label: dict.navHome, Icon: Home },
+                    { id: 'today', label: dict.navToday, Icon: BookOpen },
+                    { id: 'duo', label: dict.navDuo, Icon: Users },
+                    { id: 'schedule', label: dict.navSchedule, Icon: CalendarDays },
+                    { id: 'mutun', label: dict.navMutun, Icon: BookMarked },
+                    { id: 'analytics', label: dict.navAnalytics, Icon: BarChart3 },
+                    { id: 'reminders', label: dict.navReminders, Icon: Bell },
+                  ] as const
+                ).map((item) => {
+                  const Icon = item.Icon;
+                  const isActive = activeSection === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => {
+                        setActiveSection(item.id);
+                        setIsSideMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-colors cursor-pointer ${
+                        isActive
+                          ? 'bg-[#2D2218] text-[#EAB338] shadow-xs'
+                          : 'text-[#2D2218] hover:bg-[#F7F3EB] hover:text-[#9E650C]'
+                      }`}
+                    >
+                      <Icon
+                        className={`w-4 h-4 shrink-0 ${
+                          isActive ? 'text-[#EAB338]' : 'text-[#C88A14]'
+                        }`}
+                      />
+                      <span className="truncate">{item.label}</span>
+                    </button>
+                  );
+                })}
+
+                <div className="pt-2 mt-2 border-t border-[#E5DEC9] space-y-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsSideMenuOpen(false);
+                      handleOpenAddModal(todayId);
+                    }}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs sm:text-sm font-bold text-[#9E650C] bg-[#FBF3DF] hover:bg-[#F6E9C8] border border-[#E5C983] transition-colors cursor-pointer"
+                  >
+                    <PlusCircle className="w-4 h-4 shrink-0 text-[#B87D10]" />
+                    <span className="truncate">{dict.homeCardAddTitle}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsSideMenuOpen(false);
+                      setConfirmDeleteAll(false);
+                      setIsSettingsOpen(true);
+                    }}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs sm:text-sm font-bold text-[#2D2218] hover:bg-[#F7F3EB] transition-colors cursor-pointer"
+                  >
+                    <Settings className="w-4 h-4 shrink-0 text-[#C88A14]" />
+                    <span className="truncate">{lang === 'ar' ? 'الإعدادات' : 'Settings'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsSideMenuOpen(false);
+                      setIsAboutOpen(true);
+                    }}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs sm:text-sm font-bold text-[#2D2218] hover:bg-[#F7F3EB] transition-colors cursor-pointer"
+                  >
+                    <Info className="w-4 h-4 shrink-0 text-[#4A6144]" />
+                    <span className="truncate">
+                      {lang === 'ar' ? 'حول التطبيق' : 'About App'}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsSideMenuOpen(false);
+                      setPrivacyTermsTab('privacy');
+                      setIsPrivacyTermsOpen(true);
+                    }}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs sm:text-sm font-bold text-[#15803D] hover:bg-[#ECFDF3] transition-colors cursor-pointer"
+                  >
+                    <ShieldCheck className="w-4 h-4 shrink-0 text-[#15803D]" />
+                    <span className="truncate">
+                      {lang === 'ar' ? 'الخصوصية وشروط الاستخدام' : 'Privacy & Terms'}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Drawer Footer: About Summary & App Version ONLY (No Contact Us) */}
+            <div className="p-3.5 bg-[#F7F3EB] border-t-[1.5px] border-[#DDD2BE] space-y-2">
+              <div className="rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] p-3 space-y-1">
+                <div className="flex items-center justify-between gap-2 text-xs font-extrabold text-[#2D2218]">
+                  <span className="flex items-center gap-1.5">
+                    <Info className="w-3.5 h-3.5 text-[#4A6144]" />
+                    <span>{lang === 'ar' ? 'حول التطبيق' : 'About App'}</span>
+                  </span>
+                  <span className="font-mono-tabular text-[11px] font-bold text-[#9E650C]">
+                    v{appVersion}
+                  </span>
+                </div>
+                <p className="text-[11px] text-[#5C4B3B] leading-relaxed">
+                  {lang === 'ar'
+                    ? 'مشكاة السرد لتنظيم الورد اليومي والمراجعة والاختبارات بالروايات المعتمدة، مع سرد ثنائي صوتي مشفّر.'
+                    : 'Mishkat Al-Sard for daily Quran review, smart quizzes across narrations, and encrypted Duo recitation.'}
+                </p>
+              </div>
+              <div className="flex items-center justify-between text-[11px] font-bold text-[#84715E] px-1">
+                <span>{lang === 'ar' ? 'رقم الإصدار' : 'Version'}</span>
+                <span className="font-mono-tabular text-[#2D2218]">{appVersion}</span>
+              </div>
+            </div>
+          </aside>
+        </div>
+      )}
+
+      {/* About Application Modal (حول التطبيق + رقم الإصدار بدون اتصل بنا) */}
+      {isAboutOpen && (
+        <div
+          className="fixed inset-0 z-70 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4"
+          onClick={() => setIsAboutOpen(false)}
+        >
+          <div
+            dir={lang === 'ar' ? 'rtl' : 'ltr'}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-2xl bg-[#FFFDF9] border-[1.5px] border-[#C5B49A] shadow-2xl overflow-hidden text-[#261C14] animate-in fade-in zoom-in-95 duration-150"
+          >
+            <div className="px-4 py-3.5 bg-[#2D2218] text-[#FFFDF9] flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Info className="w-5 h-5 text-[#EAB338]" />
+                <h2 className="text-sm sm:text-base font-extrabold">
+                  {lang === 'ar' ? 'حول التطبيق' : 'About Mishkat Al-Sard'}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAboutOpen(false)}
+                className="p-1.5 rounded-lg bg-[#FFFDF9]/10 hover:bg-[#FFFDF9]/20 text-[#FFFDF9] cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-3.5 text-xs sm:text-sm leading-relaxed">
+              <div className="flex items-center gap-3">
+                <img
+                  src="/icon.svg"
+                  alt={dict.brandTitle}
+                  className="w-12 h-12 rounded-2xl border-[1.5px] border-[#C88A14]/70 shadow-xs shrink-0"
+                />
+                <div>
+                  <h3 className="text-base font-extrabold font-display-islamic text-[#2D2218]">
+                    {dict.brandTitle}
+                  </h3>
+                  <p className="text-xs font-bold text-[#9E650C]">{dict.brandSubtitle}</p>
+                </div>
+              </div>
+
+              <div className="rounded-xl bg-[#F7F3EB] border border-[#DDD2BE] p-3.5 space-y-1.5 text-xs text-[#5C4B3B]">
+                <p>
+                  {lang === 'ar'
+                    ? 'منصة متخصصة في تيسير حفظ القرآن الكريم ومراجعته وفق جدول أسبوعي مرن، ودعم الروايات المعتمدة (حفص، قالون، ورش)، والاختبارات الذكية، والمتون والأذكار، والسرد الثنائي الصوتي المباشر المشفّر.'
+                    : 'A dedicated Quran memorization & review companion supporting flexible weekly plans, Hafs/Qalun/Warsh narrations, smart quizzes, Mutun & Adhkar, and encrypted Duo voice recitation.'}
+                </p>
+              </div>
+
+              <div className="rounded-xl bg-[#FBF3DF] border border-[#E5C983] px-3.5 py-2.5 flex items-center justify-between text-xs font-bold">
+                <span className="text-[#2D2218]">
+                  {lang === 'ar' ? 'رقم الإصدار الحالي' : 'Current Version'}
+                </span>
+                <span className="font-mono-tabular text-[#9E650C]">v{appVersion}</span>
+              </div>
+
+              <div className="flex justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={() => setIsAboutOpen(false)}
+                  className="mustard-gradient-btn px-5 py-1.5 rounded-xl text-xs font-bold text-[#FFFDF9] cursor-pointer"
+                >
+                  {lang === 'ar' ? 'إغلاق' : 'Close'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Privacy Policy & Platform Terms Modal */}
       <PrivacyTermsModal
