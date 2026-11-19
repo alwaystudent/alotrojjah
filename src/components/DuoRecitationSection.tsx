@@ -59,6 +59,8 @@ import {
   UserX,
   Award,
   Radio,
+  Volume2,
+  Volume1,
   X,
 } from 'lucide-react';
 import { auth, db, googleProvider, OperationType, handleFirestoreError } from '../firebase';
@@ -200,17 +202,21 @@ function parseMarkedErrorToken(token: string): {
 
 function buildRtcConfiguration(highPrivacyRelay: boolean): RTCConfiguration {
   const iceServers: RTCIceServer[] = [];
+  const turnUrl = TURN_SERVER_URL.trim();
 
-  if (TURN_SERVER_URL.trim()) {
+  if (turnUrl) {
     iceServers.push({
-      urls: TURN_SERVER_URL.trim(),
+      urls: turnUrl,
       ...(TURN_USERNAME.trim() ? { username: TURN_USERNAME.trim() } : {}),
       ...(TURN_CREDENTIAL.trim() ? { credential: TURN_CREDENTIAL.trim() } : {}),
     });
   }
 
-  // Only include direct STUN servers when high-privacy IP masking (relay-only) is turned off
-  if (!highPrivacyRelay) {
+  // Enforce strict TURN relay IP masking only when a TURN server is configured;
+  // otherwise use encrypted DTLS-SRTP STUN routing so live voice connects immediately.
+  const effectiveRelayOnly = highPrivacyRelay && Boolean(turnUrl);
+
+  if (!effectiveRelayOnly) {
     iceServers.push(
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
@@ -220,7 +226,8 @@ function buildRtcConfiguration(highPrivacyRelay: boolean): RTCConfiguration {
 
   return {
     iceServers,
-    iceTransportPolicy: highPrivacyRelay ? 'relay' : 'all',
+    iceTransportPolicy: effectiveRelayOnly ? 'relay' : 'all',
+    iceCandidatePoolSize: 2,
   };
 }
 
@@ -242,17 +249,22 @@ function generateEphemeralSessionId(): string {
   return `SARD-${suffix}`;
 }
 
-function waitForIceComplete(pc: RTCPeerConnection, timeoutMs = 1800): Promise<void> {
+function waitForIceComplete(pc: RTCPeerConnection, timeoutMs = 3500): Promise<void> {
   if (pc.iceGatheringState === 'complete') {
     return Promise.resolve();
   }
   return new Promise((resolve) => {
     let settled = false;
+    let candidateSettleTimer: ReturnType<typeof setTimeout> | null = null;
     const done = () => {
       if (settled) return;
       settled = true;
       pc.removeEventListener('icegatheringstatechange', onStateChange);
+      pc.removeEventListener('icecandidate', onCandidate);
       clearTimeout(timer);
+      if (candidateSettleTimer !== null) {
+        clearTimeout(candidateSettleTimer);
+      }
       resolve();
     };
     const onStateChange = () => {
@@ -260,7 +272,21 @@ function waitForIceComplete(pc: RTCPeerConnection, timeoutMs = 1800): Promise<vo
         done();
       }
     };
+    const onCandidate = (event: RTCPeerConnectionIceEvent) => {
+      if (!event.candidate) {
+        done();
+        return;
+      }
+      const cand = event.candidate.candidate || '';
+      if (
+        (cand.includes('typ srflx') || cand.includes('typ relay')) &&
+        candidateSettleTimer === null
+      ) {
+        candidateSettleTimer = setTimeout(done, 600);
+      }
+    };
     pc.addEventListener('icegatheringstatechange', onStateChange);
+    pc.addEventListener('icecandidate', onCandidate);
     const timer = setTimeout(done, timeoutMs);
   });
 }
@@ -455,6 +481,8 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     'idle' | 'ringing' | 'connecting' | 'connected' | 'declined' | 'disconnected' | 'ended'
   >('idle');
   const [isMicMuted, setIsMicMuted] = useState<boolean>(false);
+  const [speakerMode, setSpeakerMode] = useState<'speaker' | 'earpiece'>('speaker');
+  const [needsAudioUnlock, setNeedsAudioUnlock] = useState<boolean>(false);
   const [micLevel, setMicLevel] = useState<number>(0);
   const [copiedInvite, setCopiedInvite] = useState<boolean>(false);
   const [callElapsedSeconds, setCallElapsedSeconds] = useState<number>(0);
@@ -476,7 +504,9 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   // Refs for WebRTC / Streams / Listeners (Strict Audio-Only — zero RTCDataChannel)
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const remoteStreamRef = useRef<MediaStream | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
+  const speakerModeRef = useRef<'speaker' | 'earpiece'>('speaker');
   const audioCtxRef = useRef<AudioContext | null>(null);
   const meterRafRef = useRef<number | null>(null);
   const unsubSessionRef = useRef<(() => void) | null>(null);
@@ -753,6 +783,17 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       });
       localStreamRef.current = null;
     }
+    if (remoteStreamRef.current) {
+      remoteStreamRef.current.getTracks().forEach((track) => {
+        try {
+          track.enabled = false;
+          track.stop();
+        } catch {
+          // ignore
+        }
+      });
+      remoteStreamRef.current = null;
+    }
     if (remoteAudioRef.current) {
       const remoteObj = remoteAudioRef.current.srcObject as MediaStream | null;
       if (remoteObj && typeof remoteObj.getTracks === 'function') {
@@ -768,6 +809,9 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       remoteAudioRef.current.srcObject = null;
     }
     remoteAnswerAppliedRef.current = false;
+    speakerModeRef.current = 'speaker';
+    setSpeakerMode('speaker');
+    setNeedsAudioUnlock(false);
     setMicLevel(0);
     setIsMicMuted(false);
     setOutgoingCallTargetName(null);
@@ -1262,18 +1306,129 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     if (typeof data.pageTo === 'number') setPageTo(data.pageTo);
   };
 
+  const applyAudioOutputMode = async (
+    mode: 'speaker' | 'earpiece',
+    targetEl?: HTMLAudioElement | null
+  ) => {
+    const audioEl = targetEl ?? remoteAudioRef.current;
+    if (!audioEl) return;
+
+    audioEl.muted = false;
+    audioEl.volume = mode === 'earpiece' ? 0.42 : 1.0;
+
+    const sinkCapableEl = audioEl as HTMLAudioElement & {
+      setSinkId?: (sinkId: string) => Promise<void>;
+    };
+    if (
+      typeof sinkCapableEl.setSinkId === 'function' &&
+      typeof navigator !== 'undefined' &&
+      navigator.mediaDevices?.enumerateDevices
+    ) {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const outputs = devices.filter((d) => d.kind === 'audiooutput');
+        if (outputs.length > 0) {
+          const preferred =
+            mode === 'speaker'
+              ? outputs.find((d) =>
+                  /speaker|external|default|مكبر/i.test(d.label || d.deviceId)
+                ) || outputs.find((d) => d.deviceId === 'default')
+              : outputs.find((d) =>
+                  /earpiece|handset|receiver|communications|سماعة/i.test(d.label || d.deviceId)
+                );
+          if (preferred?.deviceId) {
+            await sinkCapableEl.setSinkId(preferred.deviceId);
+          }
+        }
+      } catch {
+        // Browsers without setSinkId permission fall back to volume scaling cleanly
+      }
+    }
+
+    if (audioEl.srcObject) {
+      audioEl
+        .play()
+        .then(() => {
+          setNeedsAudioUnlock(false);
+        })
+        .catch(() => {
+          setNeedsAudioUnlock(true);
+        });
+    }
+  };
+
+  const syncRemoteAudioTracksToMediaElement = (
+    event?: RTCTrackEvent,
+    pcInstance?: RTCPeerConnection | null
+  ) => {
+    const activePc = pcInstance ?? pcRef.current;
+    const stream = remoteStreamRef.current || new MediaStream();
+    const collectedAudioTracks: MediaStreamTrack[] = [];
+
+    if (event?.streams?.[0]) {
+      collectedAudioTracks.push(...event.streams[0].getAudioTracks());
+    }
+    if (event?.track && event.track.kind === 'audio') {
+      collectedAudioTracks.push(event.track);
+    }
+    if (activePc) {
+      activePc.getReceivers().forEach((receiver) => {
+        if (receiver.track && receiver.track.kind === 'audio') {
+          collectedAudioTracks.push(receiver.track);
+        }
+      });
+    }
+
+    let trackAdded = false;
+    collectedAudioTracks.forEach((audioTrack) => {
+      if (audioTrack.readyState === 'ended') return;
+      audioTrack.enabled = true;
+      const alreadyAttached = stream
+        .getAudioTracks()
+        .some((existing) => existing.id === audioTrack.id);
+      if (!alreadyAttached) {
+        stream.addTrack(audioTrack);
+        trackAdded = true;
+      }
+    });
+
+    if (stream.getAudioTracks().length === 0) return;
+
+    remoteStreamRef.current = stream;
+    const audioEl = remoteAudioRef.current;
+    if (audioEl) {
+      if (audioEl.srcObject !== stream || trackAdded) {
+        audioEl.srcObject = stream;
+      }
+      audioEl.muted = false;
+      applyAudioOutputMode(speakerModeRef.current, audioEl);
+    }
+  };
+
+  useEffect(() => {
+    if (!sessionId || !remoteAudioRef.current || !remoteStreamRef.current) return;
+    const el = remoteAudioRef.current;
+    if (el.srcObject !== remoteStreamRef.current) {
+      el.srcObject = remoteStreamRef.current;
+    }
+    applyAudioOutputMode(speakerModeRef.current, el);
+  }, [sessionId, peerConnState]);
+
   const setupPeerConnection = (stream: MediaStream): RTCPeerConnection => {
     const pc = new RTCPeerConnection(buildRtcConfiguration(highPrivacyRef.current));
     pcRef.current = pc;
 
     stream.getAudioTracks().forEach((track) => {
+      track.enabled = true;
       pc.addTrack(track, stream);
     });
 
     pc.ontrack = (event) => {
-      if (remoteAudioRef.current && event.streams[0]) {
-        remoteAudioRef.current.srcObject = event.streams[0];
-        remoteAudioRef.current.play().catch(() => {});
+      syncRemoteAudioTracksToMediaElement(event, pc);
+      if (event.track && event.track.kind === 'audio') {
+        event.track.onunmute = () => {
+          syncRemoteAudioTracksToMediaElement(event, pc);
+        };
       }
     };
 
@@ -1286,15 +1441,28 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       }
     };
 
+    pc.oniceconnectionstatechange = () => {
+      const iceState = pc.iceConnectionState;
+      if (iceState === 'connected' || iceState === 'completed') {
+        syncRemoteAudioTracksToMediaElement(undefined, pc);
+      }
+    };
+
     pc.onconnectionstatechange = () => {
       const state = pc.connectionState;
       if (state === 'connected') {
         callRingtone.stop();
         setOutgoingCallTargetName(null);
         setPeerConnState('connected');
+        syncRemoteAudioTracksToMediaElement(undefined, pc);
       } else if (state === 'connecting' || state === 'new') {
         setPeerConnState((prev) => (prev === 'ringing' ? prev : 'connecting'));
-      } else if (state === 'disconnected' || state === 'failed' || state === 'closed') {
+      } else if (state === 'disconnected') {
+        // Transient network hiccup — allow ICE to recover without tearing down immediately
+        setPeerConnState((prev) =>
+          prev === 'ended' || prev === 'declined' ? prev : 'connecting'
+        );
+      } else if (state === 'failed' || state === 'closed') {
         callRingtone.stop();
         setPeerConnState((prev) =>
           prev === 'ended' || prev === 'declined' ? prev : 'disconnected'
@@ -1353,7 +1521,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
 
       const offer = await pc.createOffer({ offerToReceiveAudio: true });
       await pc.setLocalDescription(offer);
-      await waitForIceComplete(pc, 1800);
+      await waitForIceComplete(pc, 3500);
 
       const finalDesc = pc.localDescription;
       if (!finalDesc || !finalDesc.sdp) {
@@ -1541,7 +1709,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
 
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
-      await waitForIceComplete(pc, 1800);
+      await waitForIceComplete(pc, 3500);
 
       const finalAnswer = pc.localDescription;
       if (!finalAnswer || !finalAnswer.sdp) {
@@ -1739,6 +1907,17 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       track.enabled = !nextMuted;
     });
     setIsMicMuted(nextMuted);
+    if (remoteAudioRef.current?.srcObject) {
+      remoteAudioRef.current.play().catch(() => {});
+    }
+  };
+
+  const handleToggleSpeakerMode = () => {
+    const nextMode: 'speaker' | 'earpiece' =
+      speakerMode === 'speaker' ? 'earpiece' : 'speaker';
+    speakerModeRef.current = nextMode;
+    setSpeakerMode(nextMode);
+    applyAudioOutputMode(nextMode);
   };
 
   const handleSelectAyahSync = (ayahNum: number) => {
@@ -1917,11 +2096,12 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   }
 
   return (
-    <section className="max-w-4xl mx-auto space-y-4">
+    <section className="max-w-5xl mx-auto space-y-4">
+      <audio ref={remoteAudioRef} autoPlay playsInline className="sr-only" />
       {/* STEP 1: NOT SIGNED IN -> AUTH GATE */}
       {!user && (
-        <div className="space-y-4">
-          <div className="gold-card-surface rounded-[24px] border border-[#E6D19E] border-t-[3px] border-t-[#C88A14] p-4 sm:p-5 shadow-xs flex items-center justify-between gap-3">
+        <div className="space-y-3">
+          <div className="gold-card-surface rounded-[20px] border border-[#E6D19E] border-t-[3px] border-t-[#C88A14] p-3.5 sm:p-4 shadow-xs flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-2xl bg-[#F6E9C8] border border-[#E5C983] flex items-center justify-center text-[#9E650C] shrink-0">
                 <PhoneCall className="w-5 h-5" />
@@ -2209,18 +2389,18 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         </div>
       )}
 
-      {/* STEP 3: VERIFIED USER LOBBY (MATCHING SCREENSHOT 3 CLEANLY) */}
+      {/* STEP 3: VERIFIED USER LOBBY */}
       {user && user.emailVerified && !sessionId && (
         <div className="space-y-4">
           {/* Top Soft Green Guidance Banner */}
-          <div className="rounded-2xl bg-[#ECFDF3] border border-[#BBF7D0] px-4 py-2.5 text-xs sm:text-sm font-bold text-[#15803D] leading-relaxed">
+          <div className="rounded-xl bg-[#ECFDF3] border border-[#BBF7D0] px-3.5 py-2 text-xs sm:text-sm font-bold text-[#15803D] leading-snug">
             {isAr
               ? 'شارك رابط دعوتك مع صديقك، وعند موافقته يمكنك بدء مكالمة السرد الثنائي.'
               : 'Share your invite link with a friend; once approved, start your Duo voice call.'}
           </div>
 
           {lobbyError && (
-            <div className="rounded-xl bg-[#FBF3DF] border border-[#C88A14] p-3.5 text-xs sm:text-sm text-[#261C14] flex items-start gap-2.5">
+            <div className="rounded-xl bg-[#FBF3DF] border border-[#C88A14] p-3 text-xs sm:text-sm text-[#261C14] flex items-start gap-2.5">
               <AlertCircle className="w-4 h-4 text-[#C88A14] shrink-0 mt-0.5" />
               <p className="font-semibold">{lobbyError}</p>
             </div>
@@ -2328,240 +2508,250 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
             </div>
           )}
 
-          {/* LOBBY CARD 1: Welcome + Personal Invite Link + Copy / Share / Sign Out */}
-          <div className="rounded-[24px] bg-[#FFFDF9] border border-[#DDD2BE] p-4 sm:p-5 shadow-xs space-y-3">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="space-y-1">
-                <h2 className="text-xl sm:text-2xl font-extrabold text-[#261C14]">
-                  {isAr
-                    ? `مرحباً، ${getDisplayNameForUser(user)}`
-                    : `Welcome, ${getDisplayNameForUser(user)}`}
-                </h2>
-                <p className="text-xs sm:text-sm font-semibold text-[#5C4B3B]">
-                  {isAr ? 'رابط دعوتك الخاص للأصدقاء:' : 'Your personal friend invite link:'}
-                </p>
-              </div>
+          {/* Balanced Lobby Grid: Invite Link + Add Friend side-by-side on large screens, Friends below */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
+            {/* LOBBY CARD 1: Welcome + Personal Invite Link + Copy / Share / Sign Out */}
+            <div className="rounded-[20px] bg-[#FFFDF9] border border-[#DDD2BE] p-3.5 sm:p-4 shadow-xs flex flex-col justify-between gap-2.5">
+              <div className="flex flex-wrap items-start justify-between gap-2.5">
+                <div className="space-y-0.5 min-w-0">
+                  <h2 className="text-lg sm:text-xl font-extrabold text-[#261C14] truncate">
+                    {isAr
+                      ? `مرحباً، ${getDisplayNameForUser(user)}`
+                      : `Welcome, ${getDisplayNameForUser(user)}`}
+                  </h2>
+                  <p className="text-xs font-semibold text-[#5C4B3B]">
+                    {isAr ? 'رابط دعوتك الخاص للأصدقاء:' : 'Your personal friend invite link:'}
+                  </p>
+                </div>
 
-              <div className="flex items-center gap-2 shrink-0">
-                {notifPerm !== 'granted' && notifPerm !== 'unsupported' && (
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {notifPerm !== 'granted' && notifPerm !== 'unsupported' && (
+                    <button
+                      type="button"
+                      onClick={handleEnableBackgroundCallAlerts}
+                      className="px-2.5 py-1.5 rounded-xl bg-[#4A6144] hover:bg-[#3B4F36] text-[#FFFDF9] text-xs font-bold flex items-center gap-1 cursor-pointer"
+                    >
+                      <BellRing className="w-3.5 h-3.5" />
+                      <span>{isAr ? 'تفعيل الرنين' : 'Ring Alerts'}</span>
+                    </button>
+                  )}
                   <button
                     type="button"
-                    onClick={handleEnableBackgroundCallAlerts}
-                    className="px-3 py-2 rounded-xl bg-[#4A6144] hover:bg-[#3B4F36] text-[#FFFDF9] text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                    onClick={handleSignOut}
+                    className="px-3 py-1.5 rounded-xl bg-[#FFFDF9] hover:bg-[#F7F3EB] border border-[#DDD2BE] text-xs font-bold text-[#261C14] flex items-center gap-1.5 cursor-pointer transition-colors"
                   >
-                    <BellRing className="w-3.5 h-3.5" />
-                    <span>{isAr ? 'تفعيل الرنين' : 'Ring Alerts'}</span>
+                    <LogOut className="w-3.5 h-3.5 text-[#5C4B3B]" />
+                    <span>{isAr ? 'تسجيل الخروج' : 'Sign Out'}</span>
                   </button>
-                )}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="text"
+                  readOnly
+                  dir="ltr"
+                  value={personalInviteUrl || (isAr ? 'جاري التوليد...' : 'Generating...')}
+                  className="flex-1 min-w-[170px] px-3 py-2 rounded-xl bg-[#FAF7F0] border border-[#DDD2BE] text-xs font-mono-tabular text-[#5C4B3B] select-all truncate"
+                />
                 <button
                   type="button"
-                  onClick={handleSignOut}
-                  className="px-3.5 py-2 rounded-xl bg-[#FFFDF9] hover:bg-[#F7F3EB] border border-[#DDD2BE] text-xs font-bold text-[#261C14] flex items-center gap-1.5 cursor-pointer transition-colors"
+                  onClick={handleCopyInviteLink}
+                  className="px-3 py-2 rounded-xl bg-[#FFFDF9] hover:bg-[#F7F3EB] border border-[#DDD2BE] text-xs font-bold text-[#261C14] flex items-center gap-1.5 cursor-pointer"
                 >
-                  <LogOut className="w-4 h-4 text-[#5C4B3B]" />
-                  <span>{isAr ? 'تسجيل الخروج' : 'Sign Out'}</span>
+                  {copiedInvite ? (
+                    <Check className="w-3.5 h-3.5 text-[#15803D]" />
+                  ) : (
+                    <Copy className="w-3.5 h-3.5 text-[#5C4B3B]" />
+                  )}
+                  <span>{copiedInvite ? (isAr ? 'نُسخ الرابط' : 'Copied') : isAr ? 'نسخ الرابط' : 'Copy Link'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSharePersonalInvite}
+                  className="px-3 py-2 rounded-xl bg-[#ECFDF3] hover:bg-[#DCFCE7] border border-[#BBF7D0] text-xs font-extrabold text-[#15803D] flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Share2 className="w-3.5 h-3.5" />
+                  <span>{isAr ? 'مشاركة' : 'Share'}</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={inviteBusy}
+                  onClick={handleRegenerateInvite}
+                  title={isAr ? 'إصدار رابط جديد وإلغاء السابق' : 'Regenerate & revoke previous link'}
+                  className="p-2 rounded-xl bg-[#F7F3EB] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-[#9E650C] cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${inviteBusy ? 'animate-spin' : ''}`} />
                 </button>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 pt-1">
-              <input
-                type="text"
-                readOnly
-                dir="ltr"
-                value={personalInviteUrl || (isAr ? 'جاري التوليد...' : 'Generating...')}
-                className="flex-1 min-w-[200px] px-3 py-2 rounded-xl bg-[#FAF7F0] border border-[#DDD2BE] text-xs font-mono-tabular text-[#5C4B3B] select-all truncate"
-              />
-              <button
-                type="button"
-                onClick={handleCopyInviteLink}
-                className="px-3.5 py-2 rounded-xl bg-[#FFFDF9] hover:bg-[#F7F3EB] border border-[#DDD2BE] text-xs font-bold text-[#261C14] flex items-center gap-1.5 cursor-pointer"
-              >
-                {copiedInvite ? (
-                  <Check className="w-3.5 h-3.5 text-[#15803D]" />
-                ) : (
-                  <Copy className="w-3.5 h-3.5 text-[#5C4B3B]" />
-                )}
-                <span>{copiedInvite ? (isAr ? 'نُسخ الرابط' : 'Copied') : isAr ? 'نسخ الرابط' : 'Copy Link'}</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleSharePersonalInvite}
-                className="px-3.5 py-2 rounded-xl bg-[#ECFDF3] hover:bg-[#DCFCE7] border border-[#BBF7D0] text-xs font-extrabold text-[#15803D] flex items-center gap-1.5 cursor-pointer"
-              >
-                <Share2 className="w-3.5 h-3.5" />
-                <span>{isAr ? 'مشاركة' : 'Share'}</span>
-              </button>
-              <button
-                type="button"
-                disabled={inviteBusy}
-                onClick={handleRegenerateInvite}
-                title={isAr ? 'إصدار رابط جديد وإلغاء السابق' : 'Regenerate & revoke previous link'}
-                className="p-2 rounded-xl bg-[#F7F3EB] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-[#9E650C] cursor-pointer disabled:opacity-50"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${inviteBusy ? 'animate-spin' : ''}`} />
-              </button>
-            </div>
-          </div>
-
-          {/* LOBBY CARD 2: Invite a Friend by Link */}
-          <div className="rounded-[24px] bg-[#FFFDF9] border border-[#DDD2BE] p-4 sm:p-5 shadow-xs space-y-3">
-            <div className="flex items-center gap-2">
-              <UserPlus className="w-5 h-5 text-[#15803D]" />
-              <h3 className="text-base sm:text-lg font-extrabold text-[#261C14]">
-                {isAr ? 'دعوة صديق عبر الرابط' : 'Invite a Friend via Link'}
-              </h3>
-            </div>
-            <p className="text-xs sm:text-sm text-[#5C4B3B]">
-              {isAr
-                ? 'أرسل رابطك أو الصق رابط صديقك لإرسال طلب الصداقة:'
-                : 'Share your link or paste your friend’s link below:'}
-            </p>
-
-            <form onSubmit={handleLookupPastedInvite} className="flex items-center gap-2">
-              <div className="relative flex-1">
-                <Link2 className="w-4 h-4 text-[#84715E] absolute top-1/2 -translate-y-1/2 end-3 pointer-events-none" />
-                <input
-                  type="text"
-                  value={pasteInviteInput}
-                  onChange={(e) => setPasteInviteInput(e.target.value)}
-                  dir="ltr"
-                  placeholder="https://.../?invite=..."
-                  className="w-full ps-3 pe-9 py-2.5 rounded-2xl bg-[#FAF7F0] border border-[#DDD2BE] text-xs sm:text-sm text-[#261C14] focus:outline-none focus:border-[#15803D]"
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={inviteLookupBusy || !pasteInviteInput.trim()}
-                className="px-5 py-2.5 rounded-2xl bg-[#166534] hover:bg-[#14532D] text-[#FFFDF9] text-xs sm:text-sm font-extrabold cursor-pointer disabled:opacity-50 shrink-0 transition-colors"
-              >
-                {inviteLookupBusy
-                  ? isAr
-                    ? 'جاري...'
-                    : '...'
-                  : isAr
-                  ? 'إرسال'
-                  : 'Send'}
-              </button>
-            </form>
-
-            {friendFeedback && (
-              <div
-                className={`rounded-xl p-3 text-xs font-semibold border ${
-                  friendFeedback.type === 'ok'
-                    ? 'bg-[#ECFDF3] border-[#86EFAC] text-[#15803D]'
-                    : 'bg-[#FBF3DF] border-[#C88A14] text-[#261C14]'
-                }`}
-              >
-                {friendFeedback.msg}
-              </div>
-            )}
-
-            {/* Pending Incoming Approval Requests (Privacy Consent Gate) */}
-            {incomingRequests.length > 0 && (
-              <div className="rounded-xl bg-[#FBF3DF] border-2 border-[#C88A14] p-3.5 space-y-2.5">
-                <div className="text-xs font-extrabold text-[#261C14] flex items-center gap-1.5">
-                  <ShieldCheck className="w-4 h-4 text-[#C88A14]" />
-                  <span>
-                    {isAr
-                      ? `طلبات صداقة بانتظار موافقتك (${incomingRequests.length})`
-                      : `Pending Friend Requests (${incomingRequests.length})`}
-                  </span>
+            {/* LOBBY CARD 2: Invite a Friend by Link */}
+            <div className="rounded-[20px] bg-[#FFFDF9] border border-[#DDD2BE] p-3.5 sm:p-4 shadow-xs flex flex-col justify-between gap-2.5">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <UserPlus className="w-4 h-4 text-[#15803D]" />
+                  <h3 className="text-base font-extrabold text-[#261C14]">
+                    {isAr ? 'دعوة صديق عبر الرابط' : 'Invite a Friend via Link'}
+                  </h3>
                 </div>
-                <div className="space-y-2">
-                  {incomingRequests.map((req) => (
-                    <div
-                      key={req.requestId}
-                      className="rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] p-3 flex flex-wrap items-center justify-between gap-2"
-                    >
-                      <span className="text-xs sm:text-sm font-bold text-[#261C14]">
-                        {req.fromName}
-                      </span>
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          disabled={inviteBusy}
-                          onClick={() => handleApproveRequest(req)}
-                          className="px-3 py-1.5 rounded-lg bg-[#166534] hover:bg-[#14532D] text-[#FFFDF9] text-xs font-bold flex items-center gap-1 cursor-pointer"
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                          <span>{isAr ? 'موافقة وإضافة' : 'Approve'}</span>
-                        </button>
-                        <button
-                          type="button"
-                          disabled={inviteBusy}
-                          onClick={() => handleDeclineRequest(req)}
-                          className="px-3 py-1.5 rounded-lg bg-[#F7F3EB] hover:bg-[#EFE9DC] text-[#A84A32] text-xs font-bold flex items-center gap-1 cursor-pointer"
-                        >
-                          <UserX className="w-3.5 h-3.5" />
-                          <span>{isAr ? 'رفض' : 'Decline'}</span>
-                        </button>
+                <p className="text-xs text-[#5C4B3B]">
+                  {isAr
+                    ? 'أرسل رابطك أو الصق رابط صديقك لإرسال طلب الصداقة:'
+                    : 'Share your link or paste your friend’s link below:'}
+                </p>
+              </div>
+
+              <form onSubmit={handleLookupPastedInvite} className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Link2 className="w-4 h-4 text-[#84715E] absolute top-1/2 -translate-y-1/2 end-3 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={pasteInviteInput}
+                    onChange={(e) => setPasteInviteInput(e.target.value)}
+                    dir="ltr"
+                    placeholder="https://.../?invite=..."
+                    className="w-full ps-3 pe-9 py-2 rounded-xl bg-[#FAF7F0] border border-[#DDD2BE] text-xs sm:text-sm text-[#261C14] focus:outline-none focus:border-[#15803D]"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={inviteLookupBusy || !pasteInviteInput.trim()}
+                  className="px-4 py-2 rounded-xl bg-[#166534] hover:bg-[#14532D] text-[#FFFDF9] text-xs sm:text-sm font-extrabold cursor-pointer disabled:opacity-50 shrink-0 transition-colors"
+                >
+                  {inviteLookupBusy
+                    ? isAr
+                      ? 'جاري...'
+                      : '...'
+                    : isAr
+                    ? 'إرسال'
+                    : 'Send'}
+                </button>
+              </form>
+
+              {friendFeedback && (
+                <div
+                  className={`rounded-xl p-2.5 text-xs font-semibold border ${
+                    friendFeedback.type === 'ok'
+                      ? 'bg-[#ECFDF3] border-[#86EFAC] text-[#15803D]'
+                      : 'bg-[#FBF3DF] border-[#C88A14] text-[#261C14]'
+                  }`}
+                >
+                  {friendFeedback.msg}
+                </div>
+              )}
+
+              {/* Pending Incoming Approval Requests (Privacy Consent Gate) */}
+              {incomingRequests.length > 0 && (
+                <div className="rounded-xl bg-[#FBF3DF] border-2 border-[#C88A14] p-3 space-y-2">
+                  <div className="text-xs font-extrabold text-[#261C14] flex items-center gap-1.5">
+                    <ShieldCheck className="w-4 h-4 text-[#C88A14]" />
+                    <span>
+                      {isAr
+                        ? `طلبات صداقة بانتظار موافقتك (${incomingRequests.length})`
+                        : `Pending Friend Requests (${incomingRequests.length})`}
+                    </span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {incomingRequests.map((req) => (
+                      <div
+                        key={req.requestId}
+                        className="rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] p-2.5 flex flex-wrap items-center justify-between gap-2"
+                      >
+                        <span className="text-xs sm:text-sm font-bold text-[#261C14]">
+                          {req.fromName}
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            disabled={inviteBusy}
+                            onClick={() => handleApproveRequest(req)}
+                            className="px-3 py-1.5 rounded-lg bg-[#166534] hover:bg-[#14532D] text-[#FFFDF9] text-xs font-bold flex items-center gap-1 cursor-pointer"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            <span>{isAr ? 'موافقة وإضافة' : 'Approve'}</span>
+                          </button>
+                          <button
+                            type="button"
+                            disabled={inviteBusy}
+                            onClick={() => handleDeclineRequest(req)}
+                            className="px-3 py-1.5 rounded-lg bg-[#F7F3EB] hover:bg-[#EFE9DC] text-[#A84A32] text-xs font-bold flex items-center gap-1 cursor-pointer"
+                          >
+                            <UserX className="w-3.5 h-3.5" />
+                            <span>{isAr ? 'رفض' : 'Decline'}</span>
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {outgoingPendingRequests.length > 0 && (
-              <div className="text-xs text-[#5C4B3B] bg-[#FAF7F0] border border-[#E5DEC9] rounded-xl px-3 py-2">
-                {isAr
-                  ? `طلبات صادرة بانتظار موافقة أصحابها: ${outgoingPendingRequests
-                      .map((r) => r.toName)
-                      .join('، ')}`
-                  : `Awaiting approval from: ${outgoingPendingRequests.map((r) => r.toName).join(', ')}`}
-              </div>
-            )}
-          </div>
-
-          {/* LOBBY CARD 3: Connected Friends + One-Tap Curriculum Picker + Voice Call */}
-          <div className="rounded-[24px] bg-[#FFFDF9] border border-[#DDD2BE] p-4 sm:p-5 shadow-xs space-y-3.5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <Users className="w-5 h-5 text-[#15803D]" />
-                <h3 className="text-base sm:text-lg font-extrabold text-[#261C14]">
-                  {isAr ? 'الأصدقاء المتصلون' : 'Connected Friends'}
-                </h3>
-              </div>
-              <span className="text-xs font-bold text-[#5C4B3B]">
-                {isAr
-                  ? `${toArabicDigits(onlineFriendsCount)} متصل الآن من ${toArabicDigits(
-                      friends.length
-                    )}`
-                  : `${onlineFriendsCount} online of ${friends.length}`}
-              </span>
+              {outgoingPendingRequests.length > 0 && (
+                <div className="text-xs text-[#5C4B3B] bg-[#FAF7F0] border border-[#E5DEC9] rounded-xl px-3 py-2">
+                  {isAr
+                    ? `طلبات صادرة بانتظار موافقة أصحابها: ${outgoingPendingRequests
+                        .map((r) => r.toName)
+                        .join('، ')}`
+                    : `Awaiting approval from: ${outgoingPendingRequests.map((r) => r.toName).join(', ')}`}
+                </div>
+              )}
             </div>
 
-            {/* Compact Current Riwayah, Curriculum & Privacy Bar */}
-            <div className="rounded-xl bg-[#FAF7F0] border border-[#E5DEC9] px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2 text-xs min-w-0">
-                <BookOpen className="w-4 h-4 text-[#C88A14] shrink-0" />
-                <span className="font-bold text-[#261C14] truncate">{lobbyCurriculumSummary}</span>
-                {highPrivacyIpMask && (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#ECFDF3] border border-[#86EFAC] text-[#15803D] text-[10px] font-bold shrink-0">
-                    <Lock className="w-2.5 h-2.5" />
-                    <span>{isAr ? 'إخفاء IP' : 'IP Masked'}</span>
-                  </span>
-                )}
+            {/* LOBBY CARD 3: Connected Friends + One-Tap Curriculum Picker + Voice Call */}
+            <div className="lg:col-span-2 rounded-[20px] bg-[#FFFDF9] border border-[#DDD2BE] p-3.5 sm:p-4 shadow-xs space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Users className="w-4 h-4 text-[#15803D]" />
+                  <h3 className="text-base font-extrabold text-[#261C14]">
+                    {isAr ? 'الأصدقاء المتصلون' : 'Connected Friends'}
+                  </h3>
+                </div>
+                <span className="text-xs font-bold text-[#5C4B3B]">
+                  {isAr
+                    ? `${toArabicDigits(onlineFriendsCount)} متصل الآن من ${toArabicDigits(
+                        friends.length
+                      )}`
+                    : `${onlineFriendsCount} online of ${friends.length}`}
+                </span>
               </div>
-              <button
-                type="button"
-                onClick={() => setShowCurriculumModal(true)}
-                className="px-3 py-1.5 rounded-lg bg-[#FFFDF9] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-xs font-bold text-[#261C14] flex items-center gap-1.5 cursor-pointer shrink-0"
-              >
-                <SlidersHorizontal className="w-3.5 h-3.5 text-[#C88A14]" />
-                <span>{isAr ? 'الرواية والمقرر' : 'Narration & Curriculum'}</span>
-              </button>
-            </div>
 
-            {friends.length === 0 ? (
-              <div className="rounded-2xl bg-[#FAF7F0] border border-dashed border-[#DDD2BE] p-5 text-center text-xs sm:text-sm text-[#5C4B3B]">
-                {isAr
-                  ? 'لا يوجد أصدقاء بعد — شارك رابط دعوتك أعلاه لإضافتهم.'
-                  : 'No friends yet — share your invite link above.'}
+              {/* Compact Current Riwayah, Curriculum & Privacy Bar */}
+              <div className="rounded-xl bg-[#FAF7F0] border border-[#E5DEC9] px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-xs min-w-0">
+                  <BookOpen className="w-4 h-4 text-[#C88A14] shrink-0" />
+                  <span className="font-bold text-[#261C14] truncate">{lobbyCurriculumSummary}</span>
+                  {highPrivacyIpMask && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#ECFDF3] border border-[#86EFAC] text-[#15803D] text-[10px] font-bold shrink-0">
+                      <Lock className="w-2.5 h-2.5" />
+                      <span>{isAr ? 'إخفاء IP' : 'IP Masked'}</span>
+                    </span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowCurriculumModal(true)}
+                  className="px-3 py-1.5 rounded-lg bg-[#FFFDF9] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-xs font-bold text-[#261C14] flex items-center gap-1.5 cursor-pointer shrink-0"
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5 text-[#C88A14]" />
+                  <span>{isAr ? 'الرواية والمقرر' : 'Narration & Curriculum'}</span>
+                </button>
               </div>
-            ) : (
-              <div className="space-y-2.5">
+
+              {friends.length === 0 ? (
+                <div className="rounded-xl bg-[#FAF7F0] border border-dashed border-[#DDD2BE] p-3.5 text-center text-xs sm:text-sm text-[#5C4B3B]">
+                  {isAr
+                    ? 'لا يوجد أصدقاء بعد — شارك رابط دعوتك أعلاه لإضافتهم.'
+                    : 'No friends yet — share your invite link above.'}
+                </div>
+              ) : (
+                <div
+                  className={
+                    friends.length > 1
+                      ? 'grid grid-cols-1 md:grid-cols-2 gap-2.5'
+                      : 'space-y-2'
+                  }
+                >
                 {friends.map((fr) => {
                   const isOnline = Boolean(friendPresenceMap[fr.friendUid]?.online);
                   return (
@@ -2642,31 +2832,30 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
               </div>
             )}
 
-            {/* Footer Compliance Link */}
-            <div className="pt-2 border-t border-[#EFE9DC] flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#84715E]">
-              <span className="flex items-center gap-1 text-[#15803D] font-bold">
-                <Lock className="w-3 h-3" />
-                <span>{isAr ? 'اتصال صوتي مشفّر ومؤمّن (E2EE)' : 'Encrypted Audio-Only (E2EE)'}</span>
-              </span>
-              {onOpenPrivacyTerms && (
-                <button
-                  type="button"
-                  onClick={onOpenPrivacyTerms}
-                  className="font-bold text-[#5C4B3B] hover:text-[#15803D] hover:underline cursor-pointer"
-                >
-                  {isAr ? 'سياسة الخصوصية وشروط الاستخدام' : 'Privacy Policy & Terms'}
-                </button>
-              )}
+              {/* Footer Compliance Link */}
+              <div className="pt-2 border-t border-[#EFE9DC] flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#84715E]">
+                <span className="flex items-center gap-1 text-[#15803D] font-bold">
+                  <Lock className="w-3 h-3" />
+                  <span>{isAr ? 'اتصال صوتي مشفّر ومؤمّن (E2EE)' : 'Encrypted Audio-Only (E2EE)'}</span>
+                </span>
+                {onOpenPrivacyTerms && (
+                  <button
+                    type="button"
+                    onClick={onOpenPrivacyTerms}
+                    className="font-bold text-[#5C4B3B] hover:text-[#15803D] hover:underline cursor-pointer"
+                  >
+                    {isAr ? 'سياسة الخصوصية وشروط الاستخدام' : 'Privacy Policy & Terms'}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* STEP 4: ACTIVE CALL VIEW (MATCHING SCREENSHOT 2 + SCREENSHOT 1 MODAL) */}
+      {/* STEP 4: ACTIVE CALL VIEW */}
       {user && user.emailVerified && sessionId && (
-        <div className="space-y-4">
-          <audio ref={remoteAudioRef} autoPlay playsInline className="hidden" />
-
+        <div className="space-y-3">
           {/* Outgoing Ringing Overlay Modal */}
           {peerConnState === 'ringing' && outgoingCallTargetName && (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
@@ -2700,8 +2889,8 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
             </div>
           )}
 
-          {/* Compact Top Status & Action Bar (Matching Screenshot 2) */}
-          <div className="rounded-[22px] bg-[#FFFDF9] border border-[#DDD2BE] p-4 shadow-xs space-y-2.5">
+          {/* Compact Top Status & Action Bar */}
+          <div className="rounded-[20px] bg-[#FFFDF9] border border-[#DDD2BE] p-3.5 shadow-xs space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm font-bold">
                 <Radio
@@ -2766,7 +2955,21 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
               </div>
             </div>
 
-            {/* 4 Clean Controls Matching Screenshot 2 */}
+            {/* Clean Controls Bar (Mute, Speaker/Earpiece, Curriculum, Swap Roles, Rate & End) */}
+            {needsAudioUnlock && (
+              <button
+                type="button"
+                onClick={() => syncRemoteAudioTracksToMediaElement()}
+                className="w-full py-2 px-3 rounded-xl bg-[#ECFDF3] hover:bg-[#DCFCE7] border border-[#86EFAC] text-[#15803D] text-xs font-extrabold flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Volume2 className="w-4 h-4 shrink-0" />
+                <span>
+                  {isAr
+                    ? 'اضغط هنا لتشغيل الصوت الوارد من الطرف الآخر'
+                    : 'Tap to enable incoming call audio'}
+                </span>
+              </button>
+            )}
             <div className="flex flex-wrap items-center gap-2 pt-1">
               <button
                 type="button"
@@ -2787,6 +2990,40 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                     />
                   </span>
                 )}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleToggleSpeakerMode}
+                title={
+                  isAr
+                    ? speakerMode === 'speaker'
+                      ? 'التبديل إلى السماعة'
+                      : 'التبديل إلى مكبر الصوت'
+                    : speakerMode === 'speaker'
+                    ? 'Switch to Earpiece'
+                    : 'Switch to Speaker'
+                }
+                className={`px-3.5 py-2 rounded-2xl border text-xs sm:text-sm font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${
+                  speakerMode === 'speaker'
+                    ? 'bg-[#ECFDF3] hover:bg-[#DCFCE7] border-[#86EFAC] text-[#15803D]'
+                    : 'bg-[#FAF7F0] hover:bg-[#EFE9DC] border-[#DDD2BE] text-[#261C14]'
+                }`}
+              >
+                {speakerMode === 'speaker' ? (
+                  <Volume2 className="w-4 h-4" />
+                ) : (
+                  <Volume1 className="w-4 h-4" />
+                )}
+                <span>
+                  {speakerMode === 'speaker'
+                    ? isAr
+                      ? 'مكبر الصوت'
+                      : 'Speaker'
+                    : isAr
+                    ? 'السماعة'
+                    : 'Earpiece'}
+                </span>
               </button>
 
               <button
@@ -2820,10 +3057,10 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
 
           {/* Main Reading Area: Hidden Reciter Screen OR Listener Interactive Word-Tap Mushaf */}
           {shouldHideVersesForMe ? (
-            <div className="rounded-[24px] bg-[#FFFDF9] border border-[#DDD2BE] p-5 sm:p-6 shadow-xs min-h-[54vh] flex flex-col justify-between gap-6">
-              <div className="flex-1 flex flex-col items-center justify-center text-center py-6 space-y-3 max-w-md mx-auto">
-                <div className="w-16 h-16 rounded-2xl bg-[#FAF7F0] border border-[#E5DEC9] flex items-center justify-center text-[#15803D]">
-                  <EyeOff className="w-8 h-8" />
+            <div className="rounded-[20px] bg-[#FFFDF9] border border-[#DDD2BE] p-4 sm:p-5 shadow-xs flex flex-col justify-between gap-3.5">
+              <div className="flex flex-col items-center justify-center text-center py-3 space-y-2 max-w-md mx-auto">
+                <div className="w-12 h-12 rounded-xl bg-[#FAF7F0] border border-[#E5DEC9] flex items-center justify-center text-[#15803D]">
+                  <EyeOff className="w-6 h-6" />
                 </div>
                 <h2 className="text-lg sm:text-xl font-extrabold text-[#261C14]">
                   {amICurrentReciter
@@ -2913,8 +3150,8 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
             </div>
           ) : (
             /* Listener Interactive Word-Tap Mushaf Screen */
-            <div className="rounded-[24px] bg-[#FFFDF9] border border-[#DDD2BE] p-4 sm:p-5 shadow-xs space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#EFE9DC]">
+            <div className="rounded-[20px] bg-[#FFFDF9] border border-[#DDD2BE] p-3.5 sm:p-4 shadow-xs space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-[#EFE9DC]">
                 <div className="space-y-0.5">
                   <div className="text-xs sm:text-sm font-extrabold text-[#15803D]">
                     {isAr
@@ -3347,27 +3584,33 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                         <label className="block text-[11px] font-bold text-[#5C4B3B] mb-1">
                           {isAr ? 'من الآية' : 'From'}
                         </label>
-                        <input
-                          type="number"
-                          min={1}
-                          max={currentSurahInfo.ayahCount}
+                        <select
                           value={ayahFrom}
-                          onChange={(e) =>
-                            setAyahFrom(
-                              Math.max(1, Math.min(Number(e.target.value) || 1, currentSurahInfo.ayahCount))
-                            )
-                          }
+                          onChange={(e) => {
+                            const v = Math.max(
+                              1,
+                              Math.min(Number(e.target.value) || 1, currentSurahInfo.ayahCount)
+                            );
+                            setAyahFrom(v);
+                            if (ayahTo < v) setAyahTo(v);
+                          }}
                           className="w-full px-2.5 py-2 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] text-xs font-mono-tabular font-bold"
-                        />
+                        >
+                          {Array.from(
+                            { length: currentSurahInfo.ayahCount },
+                            (_, idx) => idx + 1
+                          ).map((num) => (
+                            <option key={num} value={num}>
+                              {isAr ? toArabicDigits(num) : num}
+                            </option>
+                          ))}
+                        </select>
                       </div>
                       <div>
                         <label className="block text-[11px] font-bold text-[#5C4B3B] mb-1">
                           {isAr ? 'إلى الآية' : 'To'}
                         </label>
-                        <input
-                          type="number"
-                          min={ayahFrom}
-                          max={currentSurahInfo.ayahCount}
+                        <select
                           value={ayahTo}
                           onChange={(e) =>
                             setAyahTo(
@@ -3378,7 +3621,16 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                             )
                           }
                           className="w-full px-2.5 py-2 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] text-xs font-mono-tabular font-bold"
-                        />
+                        >
+                          {Array.from(
+                            { length: Math.max(1, currentSurahInfo.ayahCount - ayahFrom + 1) },
+                            (_, idx) => ayahFrom + idx
+                          ).map((num) => (
+                            <option key={num} value={num}>
+                              {isAr ? toArabicDigits(num) : num}
+                            </option>
+                          ))}
+                        </select>
                       </div>
                     </div>
                   </div>
@@ -3391,27 +3643,31 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                       <label className="block text-[11px] font-bold text-[#5C4B3B] mb-1">
                         {isAr ? 'من الصفحة (١–٦٠٤)' : 'From Page (1–604)'}
                       </label>
-                      <input
-                        type="number"
-                        min={1}
-                        max={604}
+                      <select
                         value={pageFrom}
                         onChange={(e) => {
                           const v = Math.max(1, Math.min(604, Number(e.target.value) || 1));
                           setPageFrom(v);
-                          if (pageTo < v) setPageTo(v);
+                          if (pageTo < v) {
+                            setPageTo(v);
+                          } else if (pageTo > Math.min(604, v + 9)) {
+                            setPageTo(Math.min(604, v + 9));
+                          }
                         }}
                         className="w-full px-3 py-2 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] text-xs font-mono-tabular font-bold"
-                      />
+                      >
+                        {Array.from({ length: 604 }, (_, idx) => idx + 1).map((p) => (
+                          <option key={p} value={p}>
+                            {isAr ? `صفحة ${toArabicDigits(p)}` : `Page ${p}`}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                     <div>
                       <label className="block text-[11px] font-bold text-[#5C4B3B] mb-1">
                         {isAr ? 'إلى الصفحة (حد ١٠)' : 'To Page (max 10)'}
                       </label>
-                      <input
-                        type="number"
-                        min={pageFrom}
-                        max={Math.min(604, pageFrom + 9)}
+                      <select
                         value={pageTo}
                         onChange={(e) =>
                           setPageTo(
@@ -3422,7 +3678,16 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                           )
                         }
                         className="w-full px-3 py-2 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] text-xs font-mono-tabular font-bold"
-                      />
+                      >
+                        {Array.from(
+                          { length: Math.max(1, Math.min(604, pageFrom + 9) - pageFrom + 1) },
+                          (_, idx) => pageFrom + idx
+                        ).map((p) => (
+                          <option key={p} value={p}>
+                            {isAr ? `صفحة ${toArabicDigits(p)}` : `Page ${p}`}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   </div>
                 )}
@@ -3539,8 +3804,8 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                 {highPrivacyIpMask && !TURN_SERVER_URL.trim() && (
                   <p className="text-[11px] text-[#9E650C] bg-[#FBF3DF] border border-[#E5C983] rounded-lg px-3 py-1.5 font-semibold">
                     {isAr
-                      ? 'وضع relay مفعّل: أضف بيانات TURN_SERVER_URL أو أوقفه مؤقتاً عند التجربة.'
-                      : 'Relay mode active: set TURN_SERVER_URL or toggle off for testing.'}
+                      ? 'توجيه مشفّر تلقائي لضمان عمل الصوت فوراً؛ أضف TURN_SERVER_URL لإجبار التمرير عبر خادم وسيط.'
+                      : 'Encrypted STUN fallback is active so audio works immediately; set TURN_SERVER_URL to enforce strict relay.'}
                   </p>
                 )}
               </div>

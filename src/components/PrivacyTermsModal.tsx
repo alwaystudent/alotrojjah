@@ -1,86 +1,134 @@
-import React from 'react';
-import { X, ShieldCheck, Lock, Mic, Database, RefreshCw, BookOpen } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import {
+  X,
+  ShieldCheck,
+  Lock,
+  Mic,
+  Database,
+  RefreshCw,
+  BookOpen,
+  FileCheck2,
+  Scale,
+} from 'lucide-react';
 import { Language } from '@/src/data/quranData';
 
 interface PrivacyTermsModalProps {
   lang: Language;
   isOpen: boolean;
   onClose: () => void;
+  initialTab?: 'privacy' | 'terms';
 }
 
 export const PrivacyTermsModal: React.FC<PrivacyTermsModalProps> = ({
   lang,
   isOpen,
   onClose,
+  initialTab = 'privacy',
 }) => {
+  const [activeTab, setActiveTab] = useState<'privacy' | 'terms'>(initialTab);
+
+  useEffect(() => {
+    if (isOpen) {
+      setActiveTab(initialTab);
+    }
+  }, [isOpen, initialTab]);
+
   if (!isOpen) return null;
   const isAr = lang === 'ar';
 
-  const sections = isAr
+  const privacySections = isAr
     ? [
         {
           icon: Lock,
-          title: '١. سرية الاتصال الصوتي (WebRTC E2EE)',
-          body: 'مكالمات السرد الثنائي مشفّرة (DTLS-SRTP) بالصوت فقط مع تعطيل تبادل الملفات (RTCDataChannel). يمرّر وضع الخصوصية الصوت عبر خادم TURN لإخفاء IP، وتُغلق مسارات الميكروفون فور إنهاء المكالمة دون تسجيل.',
+          title: '١. تشفير الاتصال الصوتي وحماية الـ IP (WebRTC E2EE)',
+          body: 'تعتمد مكالمات السرد الثنائي على التشفير المباشر (DTLS-SRTP) بالصوت فقط مع تعطيل قنوات تبادل الملفات (RTCDataChannel) تماماً. عند تفعيل وضع الخصوصية العالية وإعداد خادم TURN تُخفى عناوين الـ IP، وتُغلق مسارات الميكروفون وتُحذف بيانات الجلسة فور إنهائها دون أي تسجيل صوتي.',
         },
         {
           icon: ShieldCheck,
-          title: '٢. المصادقة وإضافة الأصدقاء بالموافقة',
-          body: 'الدخول عبر Firebase Auth (البريد الموثّق أو Google)، ويُحفظ البريد في سجل خاص بالمالك فقط. إضافة الأصدقاء تتم عبر رابط شخصي قابل للإلغاء وبموافقة المستلم.',
+          title: '٢. حسابات المستخدمين وإضافة الأصدقاء (Google & Firebase)',
+          body: 'يتم تسجيل الدخول عبر Firebase Authentication (البريد الإلكتروني الموثّق أو حساب Google) وفق سياسة بيانات مستخدمي خدمات Google API، مع حفظ بيانات الحساب والخطط في قواعد آمنة تقتصر صلاحية الوصول فيها على أصحابها. لا تُضاف أي جهة اتصال إلا عبر رابط دعوة قابل للإلغاء وبموافقة صريحة من الطرفين.',
         },
         {
           icon: Mic,
-          title: '٣. الميكروفون والتسميع',
-          body: 'يُستخدم الميكروفون أثناء جلسات التلاوة والمكالمات فقط، ولا تُحفظ أي تسجيلات صوتية.',
-        },
-        {
-          icon: BookOpen,
-          title: '٤. مصادر المصحف والمكتبة',
-          body: 'تُجلب الآيات (حفص، قالون، ورش) من مصادر موثوقة (مجمع الملك فهد، موقع آية، AlQuran Cloud)، وتخضع روابط المكتبة لاختيار المستخدم.',
+          title: '٣. إذن الميكروفون والإشعارات',
+          body: 'يُطلب إذن الميكروفون حصراً أثناء التلاوة أو المكالمات الصوتية المباشرة، وإذن الإشعارات الاختياري للتنبيه بمواعيد الورد أو المكالمات الواردة، ولا يتم تسجيل أو تخزين أي صوت على الخوادم.',
         },
         {
           icon: Database,
-          title: '٥. التخزين المحلي والتحديث الصامت',
-          body: 'تُحفظ خططك محلياً في المتصفح، ويحدَّث التطبيق تلقائياً في الخلفية دون مسح البيانات أو إعادة التثبيت.',
-        },
-        {
-          icon: RefreshCw,
-          title: '٦. شروط الاستخدام',
-          body: 'استخدام المكالمات والروابط مخصص لتدارس القرآن الكريم وفق سياسات Google Firebase والمتصفحات، مع حق حذف البيانات أو الأصدقاء في أي وقت.',
+          title: '٤. التخزين المحلي والتحديث الصامت (PWA)',
+          body: 'تُحفظ خططك وجداولك وتقارير الحفظ محلياً داخل متصفحك (LocalStorage / IndexedDB) لضمان السرعة والعمل دون اتصال، مع تطبيق التحديثات تلقائياً في الخلفية دون مسح بياناتك.',
         },
       ]
     : [
         {
           icon: Lock,
-          title: '1. Encrypted Audio & IP Masking',
-          body: 'Duo calls use strict audio-only WebRTC (DTLS-SRTP) with data channels disabled. High Privacy routes audio via TURN to mask IPs, and mic tracks purge immediately on hang-up with zero recording.',
+          title: '1. Encrypted Voice Calls & IP Protection (WebRTC E2EE)',
+          body: 'Duo Recitation uses strict audio-only DTLS-SRTP encryption with RTCDataChannel file transfer disabled. When High Privacy Mode and a TURN relay are configured, peer IP addresses are masked, and mic tracks close immediately on hang-up with zero server audio recording.',
         },
         {
           icon: ShieldCheck,
-          title: '2. Auth & Consent-Based Invites',
-          body: 'Powered by Firebase Auth (verified email or Google), with emails kept private. Friends connect only via revocable links requiring recipient approval.',
+          title: '2. Accounts & Consent-Based Friends (Google & Firebase)',
+          body: 'Authentication runs via Firebase Auth (verified email or Google Sign-In) aligned with the Google API Services User Data Policy. Account data is strictly owner-scoped via Firestore security rules, and friends connect only via revocable invite links with mutual approval.',
         },
         {
           icon: Mic,
-          title: '3. Microphone Usage',
-          body: 'Mic access is used strictly during active recitation and calls, with no audio stored.',
-        },
-        {
-          icon: BookOpen,
-          title: '4. Quran Sources & Library',
-          body: 'Verses (Hafs, Qalun, Warsh) load from trusted sources (King Fahd Complex, AlQuran Cloud, FawazAhmed0 CDN). Library links remain user-managed.',
+          title: '3. Microphone & Notification Permissions',
+          body: 'Microphone access is used exclusively during active recitation or live calls. Optional browser notifications alert you for scheduled plans or incoming calls. No audio is ever recorded or stored.',
         },
         {
           icon: Database,
-          title: '5. Local Storage & Silent Updates',
-          body: 'Plans reside in browser storage. App updates apply silently in the background without cache clearing or reinstalling.',
+          title: '4. Local Storage & Silent PWA Updates',
+          body: 'Your schedules, plans, and memorization reports remain in browser storage for fast offline-ready access, while silent background updates keep the app current without clearing your data.',
+        },
+      ];
+
+  const termsSections = isAr
+    ? [
+        {
+          icon: Scale,
+          title: '١. نطاق الاستخدام المشروع والالتزام بسياسات المنصات',
+          body: 'منصة «مشكاة السرد» مخصصة لمراجعة القرآن الكريم وتدارس الروايات المعتمدة، ويلتزم المستخدم بعدم إساءة استخدام روابط الدعوة أو نظام الإشارات الصوتية أو إرسال رسائل مزعجة، وذلك وفق شروط خدمة Google وFirebase ومعايير متصفحات الويب.',
+        },
+        {
+          icon: BookOpen,
+          title: '٢. حقوق النصوص القرآنية والمصادر الخارجية',
+          body: 'تُعرض الآيات بروايات حفص وقالون وورش عبر واجهات برمجية ومصادر قرآنية موثوقة (مجمع الملك فهد، موقع آية، AlQuran Cloud). أما الروابط والملفات التي يضيفها المستخدم داخل المكتبة فتخضع لاختياره ومسؤوليته مع احترام حقوق الملكية الفكرية.',
         },
         {
           icon: RefreshCw,
-          title: '6. Terms of Service',
-          body: 'Calling and invite tools are for Quran study in compliance with Google Firebase and browser policies. You may delete friends or local data anytime.',
+          title: '٣. توفر الخدمة والتعديلات التلقائية',
+          body: 'تُحدّث الواجهة ومصادر القراءة تلقائياً لتحسين الأداء والاستقرار دون الحاجة لإعادة التثبيت، مع إمكانية تعليق الجلسات الصوتية أو تقييد الروابط عند رصد أي استخدام مخالف.',
+        },
+        {
+          icon: FileCheck2,
+          title: '٤. التحكم بالبيانات والحذف الفوري',
+          body: 'يحق للمستخدم في أي وقت إزالة أي صديق، أو إلغاء رابط الدعوة وإصدار رابط جديد، أو مسح بيانات الخطط المحلية بالكامل من صفحة الإعدادات، أو تسجيل الخروج متى شاء.',
+        },
+      ]
+    : [
+        {
+          icon: Scale,
+          title: '1. Acceptable Use & Platform Compliance',
+          body: 'Mishkat Al-Sard is built for Quran memorization and peer recitation. Users agree not to misuse invite links, voice signaling, or notifications, in full compliance with Google, Firebase, and modern web browser policies.',
+        },
+        {
+          icon: BookOpen,
+          title: '2. Quranic Text Sources & Library Content',
+          body: 'Hafs, Qalun, and Warsh texts load from verified Quranic APIs (King Fahd Complex, AlQuran Cloud, Ayah CDN). Any external library links added by the user remain under user choice and copyright responsibility.',
+        },
+        {
+          icon: RefreshCw,
+          title: '3. Service Availability & Automatic Updates',
+          body: 'Updates roll out seamlessly in the background for reliability and security without manual reinstallation. Abusive invites or signaling attempts may be restricted to protect users.',
+        },
+        {
+          icon: FileCheck2,
+          title: '4. User Data Control & Deletion',
+          body: 'You may remove any friend, revoke and regenerate invite links, wipe local schedules/plans from Settings, or sign out at any time.',
         },
       ];
+
+  const activeList = activeTab === 'privacy' ? privacySections : termsSections;
 
   return (
     <div
@@ -90,13 +138,13 @@ export const PrivacyTermsModal: React.FC<PrivacyTermsModalProps> = ({
       <div
         dir={isAr ? 'rtl' : 'ltr'}
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-2xl max-h-[86vh] flex flex-col rounded-2xl bg-[#FFFDF9] border border-[#DDD2BE] shadow-2xl overflow-hidden text-[#261C14]"
+        className="w-full max-w-2xl max-h-[88vh] flex flex-col rounded-2xl bg-[#FFFDF9] border border-[#DDD2BE] shadow-2xl overflow-hidden text-[#261C14]"
       >
         <div className="px-4 sm:px-5 py-3.5 bg-[#2D2218] text-[#FFFDF9] flex items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-2">
             <ShieldCheck className="w-5 h-5 text-[#EAB338]" />
             <h2 className="text-sm sm:text-base font-extrabold">
-              {isAr ? 'الخصوصية وشروط الاستخدام' : 'Privacy & Terms'}
+              {isAr ? 'سياسة الخصوصية وشروط الاستخدام' : 'Privacy Policy & Terms of Use'}
             </h2>
           </div>
           <button
@@ -108,14 +156,42 @@ export const PrivacyTermsModal: React.FC<PrivacyTermsModalProps> = ({
           </button>
         </div>
 
+        {/* Clean Switch Tabs between Privacy Policy and Terms of Use */}
+        <div className="px-4 pt-3 pb-1 bg-[#FFFDF9] shrink-0">
+          <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-[#F7F3EB] border border-[#E5DEC9]">
+            <button
+              type="button"
+              onClick={() => setActiveTab('privacy')}
+              className={`py-2 px-3 rounded-lg text-xs font-extrabold cursor-pointer transition-colors ${
+                activeTab === 'privacy'
+                  ? 'bg-[#2D2218] text-[#EAB338] shadow-2xs'
+                  : 'text-[#5C4B3B] hover:text-[#261C14]'
+              }`}
+            >
+              {isAr ? 'سياسة الخصوصية' : 'Privacy Policy'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('terms')}
+              className={`py-2 px-3 rounded-lg text-xs font-extrabold cursor-pointer transition-colors ${
+                activeTab === 'terms'
+                  ? 'bg-[#2D2218] text-[#EAB338] shadow-2xs'
+                  : 'text-[#5C4B3B] hover:text-[#261C14]'
+              }`}
+            >
+              {isAr ? 'شروط الاستخدام' : 'Terms of Use'}
+            </button>
+          </div>
+        </div>
+
         <div className="p-4 sm:p-5 overflow-y-auto space-y-3 text-xs sm:text-sm leading-relaxed">
           <div className="rounded-xl bg-[#ECFDF3] border border-[#86EFAC] px-3.5 py-2 text-xs font-bold text-[#15803D]">
             {isAr
-              ? 'متوافقة مع سياسات Google / Firebase ومتصفحات الويب ومعايير التشفير الصوتي.'
-              : 'Compliant with Google/Firebase, browser PWA, and encrypted WebRTC standards.'}
+              ? 'متوافقة مع سياسات Google وFirebase، ومعايير تشفير الويب (WebRTC DTLS-SRTP)، وأذونات المتصفح وتطبيقات الويب.'
+              : 'Compliant with Google/Firebase policies, WebRTC DTLS-SRTP encryption, and modern browser PWA permission standards.'}
           </div>
 
-          {sections.map((sec) => {
+          {activeList.map((sec) => {
             const Icon = sec.icon;
             return (
               <div
@@ -134,14 +210,14 @@ export const PrivacyTermsModal: React.FC<PrivacyTermsModalProps> = ({
 
         <div className="px-4 sm:px-5 py-3 bg-[#F7F3EB] border-t border-[#DDD2BE] flex items-center justify-between gap-2 shrink-0">
           <span className="text-[11px] font-semibold text-[#84715E]">
-            {isAr ? 'تحديثات تلقائية نشطة' : 'Auto-Updates Active'}
+            {isAr ? 'آخر تحديث: ٢٠٢٦ · تحديثات تلقائية نشطة' : 'Updated 2026 · Auto-Updates Active'}
           </span>
           <button
             type="button"
             onClick={onClose}
             className="mustard-gradient-btn px-5 py-1.5 rounded-xl text-xs font-bold text-[#FFFDF9] cursor-pointer"
           >
-            {isAr ? 'موافق' : 'Accept'}
+            {isAr ? 'إغلاق وموافقة' : 'Accept & Close'}
           </button>
         </div>
       </div>

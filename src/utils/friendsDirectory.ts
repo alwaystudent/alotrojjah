@@ -376,30 +376,35 @@ export async function approveIncomingFriendRequest(
 ): Promise<void> {
   const reqRef = doc(db, 'friendRequests', req.requestId);
   const friendRef = doc(db, 'users', currentUser.uid, 'friends', req.fromUid);
+  const safeFromName = req.fromName?.trim().slice(0, 80) || 'صديق';
 
   try {
     const [reqSnap, friendSnap] = await Promise.all([getDoc(reqRef), getDoc(friendRef)]);
     const batch = writeBatch(db);
     let hasWrites = false;
 
-    if (reqSnap.exists() && (reqSnap.data() as FriendRequestDoc).status === 'pending') {
-      batch.update(reqRef, {
-        status: 'accepted',
-        updatedAt: serverTimestamp(),
-      });
-      hasWrites = true;
+    if (reqSnap.exists()) {
+      const reqData = reqSnap.data() as FriendRequestDoc;
+      if (reqData.status === 'pending') {
+        batch.update(reqRef, {
+          status: 'accepted',
+          syncedBySender: true,
+          updatedAt: serverTimestamp(),
+        });
+        hasWrites = true;
+      }
     }
 
     if (friendSnap.exists()) {
       batch.update(friendRef, {
-        friendName: req.fromName.slice(0, 80),
+        friendName: safeFromName,
         updatedAt: serverTimestamp(),
       });
       hasWrites = true;
     } else {
       batch.set(friendRef, {
         friendUid: req.fromUid,
-        friendName: req.fromName.slice(0, 80),
+        friendName: safeFromName,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
@@ -419,6 +424,7 @@ export async function declineIncomingFriendRequest(req: FriendRequestDoc): Promi
   try {
     await updateDoc(doc(db, 'friendRequests', req.requestId), {
       status: 'declined',
+      syncedBySender: false,
       updatedAt: serverTimestamp(),
     });
   } catch (err) {
@@ -432,29 +438,33 @@ export async function syncAcceptedOutgoingRequest(
 ): Promise<void> {
   const friendRef = doc(db, 'users', currentUser.uid, 'friends', req.toUid);
   const reqRef = doc(db, 'friendRequests', req.requestId);
+  const safeToName = req.toName?.trim().slice(0, 80) || 'صديق';
 
   try {
     const [reqSnap, friendSnap] = await Promise.all([getDoc(reqRef), getDoc(friendRef)]);
-    if (reqSnap.exists() && (reqSnap.data() as FriendRequestDoc).syncedBySender && friendSnap.exists()) {
+    const reqSyncedAlready =
+      reqSnap.exists() && (reqSnap.data() as FriendRequestDoc).syncedBySender === true;
+
+    if (reqSyncedAlready && friendSnap.exists()) {
       return;
     }
 
     const batch = writeBatch(db);
     if (friendSnap.exists()) {
       batch.update(friendRef, {
-        friendName: req.toName.slice(0, 80),
+        friendName: safeToName,
         updatedAt: serverTimestamp(),
       });
     } else {
       batch.set(friendRef, {
         friendUid: req.toUid,
-        friendName: req.toName.slice(0, 80),
+        friendName: safeToName,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
     }
 
-    if (!reqSnap.exists() || !(reqSnap.data() as FriendRequestDoc).syncedBySender) {
+    if (!reqSyncedAlready) {
       batch.update(reqRef, {
         syncedBySender: true,
         updatedAt: serverTimestamp(),

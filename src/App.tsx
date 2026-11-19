@@ -180,6 +180,7 @@ export default function App() {
   const [incomingCall, setIncomingCall] = useState<IncomingDuoCall | null>(null);
   const lastRingingCallIdRef = useRef<string | null>(null);
   const [isPrivacyTermsOpen, setIsPrivacyTermsOpen] = useState<boolean>(false);
+  const [privacyTermsTab, setPrivacyTermsTab] = useState<'privacy' | 'terms'>('privacy');
 
   // Global Instant Friend-Invite & Approval Popup State (works on any screen)
   const [inviteModalDoc, setInviteModalDoc] = useState<FriendInviteDoc | null>(null);
@@ -192,6 +193,9 @@ export default function App() {
     friendName: string;
   } | null>(null);
   const [friendAlertBusy, setFriendAlertBusy] = useState<boolean>(false);
+  const handledIncomingReqIdsRef = useRef<Set<string>>(new Set());
+  const inflightAcceptedSyncRef = useRef<Set<string>>(new Set());
+  const processedAcceptedReqIdsRef = useRef<Set<string>>(new Set());
 
   const [activeSection, setActiveSection] = useState<AppSection>(() => {
     if (initialFriendInviteToken || pendingAcceptCallId) return 'duo';
@@ -371,12 +375,94 @@ export default function App() {
     return () => unsubAuth();
   }, []);
 
-  // Global listener for incoming pending friend requests & newly accepted outgoing requests
+  // Global listener for incoming pending friend requests & reliable one-time accepted outgoing sync
   useEffect(() => {
     if (!authUser || !authUser.emailVerified) {
       setPendingIncomingFriendReqs([]);
       return;
     }
+
+    let friendsLoaded = false;
+    const myFriendUids = new Set<string>();
+    let latestAcceptedOutgoing: FriendRequestDoc[] = [];
+
+    const readSeenAcceptedSet = (): Set<string> => {
+      try {
+        const raw = localStorage.getItem('alutrujjah_seen_accepted_reqs_v1');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) return new Set(parsed.map(String));
+        }
+      } catch {
+        // ignore
+      }
+      return new Set<string>();
+    };
+
+    const markSeenAccepted = (requestId: string) => {
+      processedAcceptedReqIdsRef.current.add(requestId);
+      try {
+        const seen = readSeenAcceptedSet();
+        seen.add(requestId);
+        localStorage.setItem('alutrujjah_seen_accepted_reqs_v1', JSON.stringify(Array.from(seen).slice(-50)));
+      } catch {
+        // ignore
+      }
+    };
+
+    const processAcceptedOutgoing = async () => {
+      if (!friendsLoaded) return;
+      const seenSet = readSeenAcceptedSet();
+
+      for (const req of latestAcceptedOutgoing) {
+        if (req.status !== 'accepted') continue;
+        if (
+          processedAcceptedReqIdsRef.current.has(req.requestId) ||
+          inflightAcceptedSyncRef.current.has(req.requestId)
+        ) {
+          continue;
+        }
+
+        const missingInFriends = !myFriendUids.has(req.toUid);
+        const needsSyncFlag = !req.syncedBySender;
+
+        if (!missingInFriends && !needsSyncFlag) {
+          processedAcceptedReqIdsRef.current.add(req.requestId);
+          continue;
+        }
+
+        inflightAcceptedSyncRef.current.add(req.requestId);
+        try {
+          await syncAcceptedOutgoingRequest(authUser, req);
+          myFriendUids.add(req.toUid);
+          const alreadyNotified = seenSet.has(req.requestId);
+          markSeenAccepted(req.requestId);
+          if (missingInFriends && !alreadyNotified) {
+            setNewlyAcceptedFriendPopup({
+              friendUid: req.toUid,
+              friendName: req.toName,
+            });
+          }
+        } catch (err) {
+          console.warn('Outgoing friend sync notice:', err);
+        } finally {
+          inflightAcceptedSyncRef.current.delete(req.requestId);
+        }
+      }
+    };
+
+    const unsubMyFriends = onSnapshot(
+      collection(db, 'users', authUser.uid, 'friends'),
+      (snap) => {
+        myFriendUids.clear();
+        snap.docs.forEach((d) => myFriendUids.add(d.id));
+        friendsLoaded = true;
+        void processAcceptedOutgoing();
+      },
+      (err) => {
+        handleFirestoreError(err, OperationType.LIST, `users/${authUser.uid}/friends`);
+      }
+    );
 
     const incomingReqQ = query(
       collection(db, 'friendRequests'),
@@ -386,7 +472,14 @@ export default function App() {
     const unsubIncomingReqs = onSnapshot(
       incomingReqQ,
       (snap) => {
-        setPendingIncomingFriendReqs(snap.docs.map((d) => d.data() as FriendRequestDoc));
+        const filtered = snap.docs
+          .map((d) => d.data() as FriendRequestDoc)
+          .filter(
+            (r) =>
+              r.status === 'pending' &&
+              !handledIncomingReqIdsRef.current.has(r.requestId)
+          );
+        setPendingIncomingFriendReqs(filtered);
       },
       (err) => {
         handleFirestoreError(err, OperationType.LIST, 'friendRequests');
@@ -395,25 +488,14 @@ export default function App() {
 
     const outgoingReqQ = query(
       collection(db, 'friendRequests'),
-      where('fromUid', '==', authUser.uid)
+      where('fromUid', '==', authUser.uid),
+      where('status', '==', 'accepted')
     );
     const unsubOutgoingReqs = onSnapshot(
       outgoingReqQ,
-      async (snap) => {
-        const allOut = snap.docs.map((d) => d.data() as FriendRequestDoc);
-        for (const req of allOut) {
-          if (req.status === 'accepted' && !req.syncedBySender) {
-            try {
-              await syncAcceptedOutgoingRequest(authUser, req);
-              setNewlyAcceptedFriendPopup({
-                friendUid: req.toUid,
-                friendName: req.toName,
-              });
-            } catch (err) {
-              console.warn('Outgoing friend sync notice:', err);
-            }
-          }
-        }
+      (snap) => {
+        latestAcceptedOutgoing = snap.docs.map((d) => d.data() as FriendRequestDoc);
+        void processAcceptedOutgoing();
       },
       (err) => {
         handleFirestoreError(err, OperationType.LIST, 'friendRequests');
@@ -421,6 +503,7 @@ export default function App() {
     );
 
     return () => {
+      unsubMyFriends();
       unsubIncomingReqs();
       unsubOutgoingReqs();
     };
@@ -524,6 +607,8 @@ export default function App() {
 
   const handleApproveGlobalFriendRequest = async (req: FriendRequestDoc) => {
     if (!authUser || !authUser.emailVerified) return;
+    handledIncomingReqIdsRef.current.add(req.requestId);
+    setPendingIncomingFriendReqs((prev) => prev.filter((item) => item.requestId !== req.requestId));
     setFriendAlertBusy(true);
     try {
       await approveIncomingFriendRequest(authUser, req);
@@ -536,6 +621,10 @@ export default function App() {
             : `"${req.fromName}" added to Duo Sard — tap Call to begin.`,
       });
     } catch {
+      handledIncomingReqIdsRef.current.delete(req.requestId);
+      setPendingIncomingFriendReqs((prev) =>
+        prev.some((item) => item.requestId === req.requestId) ? prev : [...prev, req]
+      );
       setActiveToast({
         title: lang === 'ar' ? 'تعذر إتمام الإضافة' : 'Could Not Add Friend',
         body:
@@ -549,9 +638,13 @@ export default function App() {
   };
 
   const handleDeclineGlobalFriendRequest = async (req: FriendRequestDoc) => {
+    handledIncomingReqIdsRef.current.add(req.requestId);
+    setPendingIncomingFriendReqs((prev) => prev.filter((item) => item.requestId !== req.requestId));
     setFriendAlertBusy(true);
     try {
       await declineIncomingFriendRequest(req);
+    } catch {
+      handledIncomingReqIdsRef.current.delete(req.requestId);
     } finally {
       setFriendAlertBusy(false);
     }
@@ -1429,76 +1522,79 @@ export default function App() {
       )}
 
       {/* Main Content Container */}
-      <main className="flex-1 w-full px-3 sm:px-6 lg:px-10 py-4 sm:py-6 space-y-5">
+      <main className="flex-1 w-full px-3 sm:px-6 lg:px-10 py-3 sm:py-4 space-y-4">
         {/* HOME VIEW — Original Warm Umber, Parchment, Mustard Gold & Olive Theme (NO Tables Shown on Home!) */}
         {activeSection === 'home' && (
-          <section className="max-w-5xl mx-auto space-y-5">
-            {/* Centered Title & Greeting (Logo above platform title removed as requested) */}
-            <div className="flex flex-col items-center text-center pt-1 pb-1 space-y-2.5">
-              <h1 className="text-3xl sm:text-4xl font-extrabold font-display-islamic text-[#2D2218] leading-tight">
+          <section className="max-w-5xl mx-auto space-y-4 sm:space-y-5">
+            {/* Compact Centered Title & Greeting */}
+            <div className="flex flex-col items-center text-center pt-0.5 pb-0.5 space-y-1.5">
+              <h1 className="text-2xl sm:text-3xl font-extrabold font-display-islamic text-[#2D2218] leading-tight">
                 {dict.homePlatformTitle}
               </h1>
 
               {/* Thin Line with Centered Gold Diamond + Spaced Title */}
-              <div className="flex flex-col items-center gap-1.5 w-44">
+              <div className="flex flex-col items-center gap-1 w-40">
                 <div className="w-full flex items-center gap-2">
                   <div className="flex-1 h-px bg-[#DDD2BE]" />
-                  <span className="w-2 h-2 rotate-45 bg-[#C88A14] inline-block shrink-0" />
+                  <span className="w-1.5 h-1.5 rotate-45 bg-[#C88A14] inline-block shrink-0" />
                   <div className="flex-1 h-px bg-[#DDD2BE]" />
                 </div>
-                <span className="text-[11px] font-bold tracking-[0.28em] text-[#9E6A0C] uppercase">
+                <span className="text-[10px] font-bold tracking-[0.26em] text-[#9E6A0C] uppercase">
                   {dict.homePlatformLatin}
                 </span>
               </div>
 
-              <p className="text-sm sm:text-base font-bold text-[#5C4B3B] max-w-xl leading-relaxed">
+              <p className="text-xs sm:text-sm font-bold text-[#5C4B3B] max-w-xl leading-relaxed">
                 {dict.homeWelcomeLine}
               </p>
             </div>
 
-            {/* Guiding Compass Callout Card */}
-            <div className="rounded-2xl bg-[#FFFDF9] border border-[#DDD2BE] px-4 py-3.5 flex items-center gap-3 shadow-2xs">
-              <div className="w-9 h-9 rounded-full bg-[#F6E9C8] text-[#9E6A0C] flex items-center justify-center shrink-0">
-                <Compass className="w-5 h-5" />
+            {/* Compact Short Guiding Compass Pill-Strip (Date-Strip Width, Reduced Height) */}
+            <div className="w-[265px] sm:w-[300px] max-w-full mx-auto rounded-full bg-[#FFFDF9] border border-[#DDD2BE] px-3 py-0.5 sm:py-1 flex items-center justify-center gap-1.5 shadow-2xs">
+              <div className="w-4 h-4 rounded-full bg-[#F6E9C8] text-[#9E6A0C] flex items-center justify-center shrink-0">
+                <Compass className="w-2.5 h-2.5" />
               </div>
-              <p className="text-xs sm:text-sm font-medium text-[#2D2218] leading-relaxed">
+              <p className="text-[11px] sm:text-xs font-bold text-[#2D2218] leading-tight whitespace-nowrap">
                 {dict.homeGuidePrompt}
               </p>
             </div>
 
-            {/* Clean Feature Cards Grid in Original App Palette (NO tables or schedules on home!) */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Card 1 (TOP): Add Quran Plans (Above Self-Paced Sard on all screens) */}
-              <div className="md:col-span-2 gold-card-surface rounded-[24px] border border-[#E6D19E] border-t-[3px] border-t-[#C88A14] p-5 relative overflow-hidden shadow-xs flex flex-col justify-between gap-4">
-                <svg className="w-28 h-28 absolute -bottom-6 -end-6 text-[#C88A14]/10 pointer-events-none" viewBox="0 0 96 96" fill="none" aria-hidden="true">
+            {/* Balanced Feature Cards Grid (1 Compact Top Action Strip + 2x2 Evenly Distributed Cards) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-stretch">
+              {/* Card 1 (TOP): Add Quran Plans — Sleek Horizontal Strip */}
+              <div className="sm:col-span-2 gold-card-surface rounded-[20px] border border-[#E6D19E] border-t-[3px] border-t-[#C88A14] p-3.5 sm:p-4 relative overflow-hidden shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <svg className="w-20 h-20 absolute -bottom-5 -end-5 text-[#C88A14]/10 pointer-events-none" viewBox="0 0 96 96" fill="none" aria-hidden="true">
                   <rect x="20" y="20" width="56" height="56" rx="4" stroke="currentColor" strokeWidth="2" />
                   <rect x="20" y="20" width="56" height="56" rx="4" transform="rotate(45 48 48)" stroke="currentColor" strokeWidth="2" />
                 </svg>
 
-                <div className="space-y-3 relative z-10">
-                  <div className="flex items-start gap-3.5">
-                    <div className="w-12 h-12 rounded-2xl bg-[#F6E9C8] border border-[#E5C983] flex items-center justify-center text-[#9E650C] shrink-0">
-                      <PlusCircle className="w-6 h-6" />
+                <div className="space-y-1.5 relative z-10 min-w-0 flex-1">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-[#F6E9C8] border border-[#E5C983] flex items-center justify-center text-[#9E650C] shrink-0">
+                      <PlusCircle className="w-5 h-5" />
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <h2 className="text-lg sm:text-xl font-extrabold text-[#261C14] leading-snug">
+                    <div className="min-w-0">
+                      <h2 className="text-base sm:text-lg font-extrabold text-[#261C14] leading-snug">
                         {dict.homeCardAddTitle}
                       </h2>
-                      <p className="text-xs sm:text-sm font-bold text-[#9E650C] mt-0.5">
+                      <p className="text-xs font-bold text-[#9E650C]">
                         {dict.homeCardAddSub}
                       </p>
                     </div>
                   </div>
-                  <p className="text-xs sm:text-sm text-[#5C4B3B] leading-relaxed">
+                  <p className="text-xs text-[#5C4B3B] leading-relaxed">
                     {dict.homeCardAddDesc}
                   </p>
                 </div>
 
-                <div className="flex items-center justify-between gap-3 pt-1 relative z-10">
+                <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 relative z-10">
+                  <span className="text-[11px] font-medium text-[#84715E] sm:hidden">
+                    {lang === 'ar' ? 'تخصيص مرن' : 'Flexible Setup'}
+                  </span>
                   <button
                     type="button"
                     onClick={() => handleOpenAddModal(todayId)}
-                    className="mustard-gradient-btn rounded-full text-[#FFFDF9] px-5 py-2.5 text-xs sm:text-sm font-bold inline-flex items-center gap-2 shadow-xs transition-all cursor-pointer whitespace-nowrap"
+                    className="mustard-gradient-btn rounded-full text-[#FFFDF9] px-4 py-2 text-xs sm:text-sm font-bold inline-flex items-center gap-1.5 shadow-xs transition-all cursor-pointer whitespace-nowrap"
                   >
                     <span>{dict.homeCardAddCta}</span>
                     {lang === 'ar' ? (
@@ -1507,39 +1603,36 @@ export default function App() {
                       <ArrowRight className="w-4 h-4 shrink-0" />
                     )}
                   </button>
-                  <span className="text-xs font-medium text-[#84715E]">
-                    {lang === 'ar' ? 'تخصيص مرن' : 'Flexible Setup'}
-                  </span>
                 </div>
               </div>
 
               {/* Card 2: Self-Paced Sard & Smart Memorization (Original Olive Green) */}
-              <div className="md:col-span-2 olive-card-surface rounded-[24px] border border-[#C8D4C2] border-t-[3px] border-t-[#4A6144] p-5 relative overflow-hidden shadow-xs flex flex-col justify-between gap-4">
-                <svg className="w-28 h-28 absolute -bottom-6 -end-6 text-[#4A6144]/10 pointer-events-none" viewBox="0 0 96 96" fill="none" aria-hidden="true">
+              <div className="olive-card-surface rounded-[20px] border border-[#C8D4C2] border-t-[3px] border-t-[#4A6144] p-3.5 sm:p-4 relative overflow-hidden shadow-xs flex flex-col justify-between gap-2.5">
+                <svg className="w-20 h-20 absolute -bottom-5 -end-5 text-[#4A6144]/10 pointer-events-none" viewBox="0 0 96 96" fill="none" aria-hidden="true">
                   <rect x="20" y="20" width="56" height="56" rx="4" stroke="currentColor" strokeWidth="2" />
                   <rect x="20" y="20" width="56" height="56" rx="4" transform="rotate(45 48 48)" stroke="currentColor" strokeWidth="2" />
                 </svg>
 
-                <div className="space-y-3 relative z-10">
-                  <div className="flex items-start gap-3.5">
-                    <div className="w-12 h-12 rounded-2xl bg-[#4A6144]/15 border border-[#4A6144]/25 flex items-center justify-center text-[#4A6144] shrink-0">
-                      <BookOpen className="w-6 h-6" />
+                <div className="space-y-1.5 relative z-10">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-10 h-10 rounded-xl bg-[#4A6144]/15 border border-[#4A6144]/25 flex items-center justify-center text-[#4A6144] shrink-0">
+                      <BookOpen className="w-5 h-5" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <h2 className="text-lg sm:text-xl font-extrabold text-[#261C14] leading-snug">
+                      <h2 className="text-base sm:text-lg font-extrabold text-[#261C14] leading-snug">
                         {dict.homeCardSelfTitle}
                       </h2>
-                      <p className="text-xs sm:text-sm font-bold text-[#4A6144] mt-0.5">
+                      <p className="text-xs font-bold text-[#4A6144]">
                         {dict.homeCardSelfSub}
                       </p>
                     </div>
                   </div>
-                  <p className="text-xs sm:text-sm text-[#5C4B3B] leading-relaxed">
+                  <p className="text-xs text-[#5C4B3B] leading-relaxed">
                     {dict.homeCardSelfDesc}
                   </p>
                 </div>
 
-                <div className="flex items-center justify-between gap-3 pt-1 relative z-10">
+                <div className="flex items-center justify-between gap-2 pt-0.5 relative z-10">
                   <button
                     type="button"
                     onClick={() => {
@@ -1553,7 +1646,7 @@ export default function App() {
                         setActiveSection('schedule');
                       }
                     }}
-                    className="rounded-full bg-[#4A6144] hover:bg-[#3B4F36] text-[#FFFDF9] px-5 py-2.5 text-xs sm:text-sm font-bold inline-flex items-center gap-2 shadow-xs transition-colors cursor-pointer whitespace-nowrap"
+                    className="rounded-full bg-[#4A6144] hover:bg-[#3B4F36] text-[#FFFDF9] px-4 py-2 text-xs sm:text-sm font-bold inline-flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer whitespace-nowrap"
                   >
                     <span>{dict.homeCardSelfCta}</span>
                     {lang === 'ar' ? (
@@ -1562,7 +1655,7 @@ export default function App() {
                       <ArrowRight className="w-4 h-4 shrink-0" />
                     )}
                   </button>
-                  <span className="text-xs font-medium text-[#84715E] font-mono-tabular">
+                  <span className="text-[11px] font-medium text-[#84715E] font-mono-tabular">
                     {todayPlansCount > 0
                       ? `${todayCompletedCount}/${todayPlansCount} ${dict.todayBadge}`
                       : lang === 'ar'
@@ -1573,36 +1666,36 @@ export default function App() {
               </div>
 
               {/* Card 2b: Browser P2P Duo Recitation (Zero Server Load) */}
-              <div className="md:col-span-2 gold-card-surface rounded-[24px] border border-[#E6D19E] border-t-[3px] border-t-[#C88A14] p-5 relative overflow-hidden shadow-xs flex flex-col justify-between gap-4">
-                <svg className="w-28 h-28 absolute -bottom-6 -end-6 text-[#C88A14]/10 pointer-events-none" viewBox="0 0 96 96" fill="none" aria-hidden="true">
+              <div className="gold-card-surface rounded-[20px] border border-[#E6D19E] border-t-[3px] border-t-[#C88A14] p-3.5 sm:p-4 relative overflow-hidden shadow-xs flex flex-col justify-between gap-2.5">
+                <svg className="w-20 h-20 absolute -bottom-5 -end-5 text-[#C88A14]/10 pointer-events-none" viewBox="0 0 96 96" fill="none" aria-hidden="true">
                   <rect x="20" y="20" width="56" height="56" rx="4" stroke="currentColor" strokeWidth="2" />
                   <rect x="20" y="20" width="56" height="56" rx="4" transform="rotate(45 48 48)" stroke="currentColor" strokeWidth="2" />
                 </svg>
 
-                <div className="space-y-3 relative z-10">
-                  <div className="flex items-start gap-3.5">
-                    <div className="w-12 h-12 rounded-2xl bg-[#F6E9C8] border border-[#E5C983] flex items-center justify-center text-[#9E650C] shrink-0">
-                      <Users className="w-6 h-6" />
+                <div className="space-y-1.5 relative z-10">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-10 h-10 rounded-xl bg-[#F6E9C8] border border-[#E5C983] flex items-center justify-center text-[#9E650C] shrink-0">
+                      <Users className="w-5 h-5" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <h2 className="text-lg sm:text-xl font-extrabold text-[#261C14] leading-snug">
+                      <h2 className="text-base sm:text-lg font-extrabold text-[#261C14] leading-snug">
                         {dict.homeCardDuoTitle}
                       </h2>
-                      <p className="text-xs sm:text-sm font-bold text-[#9E650C] mt-0.5">
+                      <p className="text-xs font-bold text-[#9E650C]">
                         {dict.homeCardDuoSub}
                       </p>
                     </div>
                   </div>
-                  <p className="text-xs sm:text-sm text-[#5C4B3B] leading-relaxed">
+                  <p className="text-xs text-[#5C4B3B] leading-relaxed">
                     {dict.homeCardDuoDesc}
                   </p>
                 </div>
 
-                <div className="flex items-center justify-between gap-3 pt-1 relative z-10">
+                <div className="flex items-center justify-between gap-2 pt-0.5 relative z-10">
                   <button
                     type="button"
                     onClick={() => setActiveSection('duo')}
-                    className="mustard-gradient-btn rounded-full text-[#FFFDF9] px-5 py-2.5 text-xs sm:text-sm font-bold inline-flex items-center gap-2 shadow-xs transition-all cursor-pointer whitespace-nowrap"
+                    className="mustard-gradient-btn rounded-full text-[#FFFDF9] px-4 py-2 text-xs sm:text-sm font-bold inline-flex items-center gap-1.5 shadow-xs transition-all cursor-pointer whitespace-nowrap"
                   >
                     <span>{dict.homeCardDuoCta}</span>
                     {lang === 'ar' ? (
@@ -1611,43 +1704,43 @@ export default function App() {
                       <ArrowRight className="w-4 h-4 shrink-0" />
                     )}
                   </button>
-                  <span className="text-xs font-medium text-[#84715E]">
+                  <span className="text-[11px] font-medium text-[#84715E]">
                     {lang === 'ar' ? 'بث P2P مشفّر' : 'Direct WebRTC P2P'}
                   </span>
                 </div>
               </div>
 
               {/* Card 3: Weekly Schedule (Original Warm Umber & Gold) */}
-              <div className="umber-card-surface rounded-[24px] border border-[#DDD2BE] border-t-[3px] border-t-[#2D2218] p-5 relative overflow-hidden shadow-xs flex flex-col justify-between gap-4">
-                <svg className="w-28 h-28 absolute -bottom-6 -end-6 text-[#2D2218]/10 pointer-events-none" viewBox="0 0 96 96" fill="none" aria-hidden="true">
+              <div className="umber-card-surface rounded-[20px] border border-[#DDD2BE] border-t-[3px] border-t-[#2D2218] p-3.5 sm:p-4 relative overflow-hidden shadow-xs flex flex-col justify-between gap-2.5">
+                <svg className="w-20 h-20 absolute -bottom-5 -end-5 text-[#2D2218]/10 pointer-events-none" viewBox="0 0 96 96" fill="none" aria-hidden="true">
                   <rect x="20" y="20" width="56" height="56" rx="4" stroke="currentColor" strokeWidth="2" />
                   <rect x="20" y="20" width="56" height="56" rx="4" transform="rotate(45 48 48)" stroke="currentColor" strokeWidth="2" />
                 </svg>
 
-                <div className="space-y-3 relative z-10">
-                  <div className="flex items-start gap-3.5">
-                    <div className="w-12 h-12 rounded-2xl bg-[#2D2218] border border-[#8F681E]/50 flex items-center justify-center text-[#EAB338] shrink-0">
-                      <CalendarDays className="w-6 h-6" />
+                <div className="space-y-1.5 relative z-10">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-10 h-10 rounded-xl bg-[#2D2218] border border-[#8F681E]/50 flex items-center justify-center text-[#EAB338] shrink-0">
+                      <CalendarDays className="w-5 h-5" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <h2 className="text-lg sm:text-xl font-extrabold text-[#261C14] leading-snug">
+                      <h2 className="text-base sm:text-lg font-extrabold text-[#261C14] leading-snug">
                         {dict.homeCardScheduleTitle}
                       </h2>
-                      <p className="text-xs sm:text-sm font-bold text-[#8B6514] mt-0.5">
+                      <p className="text-xs font-bold text-[#8B6514]">
                         {dict.homeCardScheduleSub}
                       </p>
                     </div>
                   </div>
-                  <p className="text-xs sm:text-sm text-[#5C4B3B] leading-relaxed">
+                  <p className="text-xs text-[#5C4B3B] leading-relaxed">
                     {dict.homeCardScheduleDesc}
                   </p>
                 </div>
 
-                <div className="flex items-center justify-between gap-3 pt-1 relative z-10">
+                <div className="flex items-center justify-between gap-2 pt-0.5 relative z-10">
                   <button
                     type="button"
                     onClick={() => setActiveSection('schedule')}
-                    className="rounded-full bg-[#2D2218] hover:bg-[#3D2F22] text-[#EAB338] px-5 py-2.5 text-xs sm:text-sm font-bold inline-flex items-center gap-2 shadow-xs transition-colors cursor-pointer whitespace-nowrap"
+                    className="rounded-full bg-[#2D2218] hover:bg-[#3D2F22] text-[#EAB338] px-4 py-2 text-xs sm:text-sm font-bold inline-flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer whitespace-nowrap"
                   >
                     <span>{dict.homeCardScheduleCta}</span>
                     {lang === 'ar' ? (
@@ -1656,44 +1749,43 @@ export default function App() {
                       <ArrowRight className="w-4 h-4 shrink-0" />
                     )}
                   </button>
-                  <span className="text-xs font-medium text-[#84715E] font-mono-tabular">
+                  <span className="text-[11px] font-medium text-[#84715E] font-mono-tabular">
                     {plans.length} {lang === 'ar' ? 'خطة' : 'Plans'}
                   </span>
                 </div>
               </div>
 
-
               {/* Card 5: Mutun & Daily Adhkar (Olive & Warm Parchment) */}
-              <div className="olive-card-surface rounded-[24px] border border-[#C8D4C2] border-t-[3px] border-t-[#4A6144] p-5 relative overflow-hidden shadow-xs flex flex-col justify-between gap-4">
-                <svg className="w-28 h-28 absolute -bottom-6 -end-6 text-[#4A6144]/10 pointer-events-none" viewBox="0 0 96 96" fill="none" aria-hidden="true">
+              <div className="olive-card-surface rounded-[20px] border border-[#C8D4C2] border-t-[3px] border-t-[#4A6144] p-3.5 sm:p-4 relative overflow-hidden shadow-xs flex flex-col justify-between gap-2.5">
+                <svg className="w-20 h-20 absolute -bottom-5 -end-5 text-[#4A6144]/10 pointer-events-none" viewBox="0 0 96 96" fill="none" aria-hidden="true">
                   <rect x="20" y="20" width="56" height="56" rx="4" stroke="currentColor" strokeWidth="2" />
                   <rect x="20" y="20" width="56" height="56" rx="4" transform="rotate(45 48 48)" stroke="currentColor" strokeWidth="2" />
                 </svg>
 
-                <div className="space-y-3 relative z-10">
-                  <div className="flex items-start gap-3.5">
-                    <div className="w-12 h-12 rounded-2xl bg-[#4A6144]/15 border border-[#4A6144]/25 flex items-center justify-center text-[#4A6144] shrink-0">
-                      <BookMarked className="w-6 h-6" />
+                <div className="space-y-1.5 relative z-10">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-10 h-10 rounded-xl bg-[#4A6144]/15 border border-[#4A6144]/25 flex items-center justify-center text-[#4A6144] shrink-0">
+                      <BookMarked className="w-5 h-5" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <h2 className="text-lg sm:text-xl font-extrabold text-[#261C14] leading-snug">
+                      <h2 className="text-base sm:text-lg font-extrabold text-[#261C14] leading-snug">
                         {dict.homeCardMutunTitle}
                       </h2>
-                      <p className="text-xs sm:text-sm font-bold text-[#4A6144] mt-0.5">
+                      <p className="text-xs font-bold text-[#4A6144]">
                         {dict.homeCardMutunSub}
                       </p>
                     </div>
                   </div>
-                  <p className="text-xs sm:text-sm text-[#5C4B3B] leading-relaxed">
+                  <p className="text-xs text-[#5C4B3B] leading-relaxed">
                     {dict.homeCardMutunDesc}
                   </p>
                 </div>
 
-                <div className="flex items-center justify-between gap-3 pt-1 relative z-10">
+                <div className="flex items-center justify-between gap-2 pt-0.5 relative z-10">
                   <button
                     type="button"
                     onClick={() => setActiveSection('mutun')}
-                    className="rounded-full bg-[#4A6144] hover:bg-[#3B4F36] text-[#FFFDF9] px-5 py-2.5 text-xs sm:text-sm font-bold inline-flex items-center gap-2 shadow-xs transition-colors cursor-pointer whitespace-nowrap"
+                    className="rounded-full bg-[#4A6144] hover:bg-[#3B4F36] text-[#FFFDF9] px-4 py-2 text-xs sm:text-sm font-bold inline-flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer whitespace-nowrap"
                   >
                     <span>{dict.homeCardMutunCta}</span>
                     {lang === 'ar' ? (
@@ -1702,12 +1794,35 @@ export default function App() {
                       <ArrowRight className="w-4 h-4 shrink-0" />
                     )}
                   </button>
-                  <span className="text-xs font-medium text-[#84715E]">
+                  <span className="text-[11px] font-medium text-[#84715E]">
                     {lang === 'ar' ? 'قراءة مريحة' : 'Easy Reading'}
                   </span>
                 </div>
               </div>
+            </div>
 
+            {/* Compact Separated Privacy Policy & Terms Links below Home Cards & above Bottom Nav */}
+            <div className="pt-0.5 pb-1 flex items-center justify-center gap-6 text-[11px] font-bold">
+              <button
+                type="button"
+                onClick={() => {
+                  setPrivacyTermsTab('privacy');
+                  setIsPrivacyTermsOpen(true);
+                }}
+                className="text-[#15803D] hover:text-[#14532D] hover:underline cursor-pointer whitespace-nowrap"
+              >
+                {lang === 'ar' ? 'سياسة الخصوصية' : 'Privacy Policy'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPrivacyTermsTab('terms');
+                  setIsPrivacyTermsOpen(true);
+                }}
+                className="text-[#15803D] hover:text-[#14532D] hover:underline cursor-pointer whitespace-nowrap"
+              >
+                {lang === 'ar' ? 'شروط الاستخدام' : 'Terms of Use'}
+              </button>
             </div>
           </section>
         )}
@@ -3225,6 +3340,7 @@ export default function App() {
         lang={lang}
         isOpen={isPrivacyTermsOpen}
         onClose={() => setIsPrivacyTermsOpen(false)}
+        initialTab={privacyTermsTab}
       />
     </div>
   );

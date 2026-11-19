@@ -289,12 +289,13 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && (
-          // Action 1: Recipient explicitly accepts or declines pending request
+          // Action 1: Recipient explicitly accepts or declines pending request (can also update syncedBySender)
           (
             existing().status == 'pending'
             && existing().toUid == request.auth.uid
             && incoming().status in ['accepted', 'declined']
-            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+            && incoming().syncedBySender is bool
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'syncedBySender', 'updatedAt'])
           )
           ||
           // Action 2: Sender marks accepted request as synced after writing own friend record
