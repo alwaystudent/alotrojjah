@@ -229,6 +229,14 @@
         "hideVersesForListener": {
           "type": "boolean"
         },
+        "hostRole": {
+          "type": "string",
+          "enum": ["student", "teacher"]
+        },
+        "guestRole": {
+          "type": "string",
+          "enum": ["student", "teacher"]
+        },
         "activeAyah": {
           "type": "number"
         },

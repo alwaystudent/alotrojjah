@@ -118,6 +118,7 @@ service cloud.firestore {
           'sessionId', 'hostUid', 'hostName', 'guestUid', 'guestName',
           'calleeUid', 'callMode', 'riwayah', 'curriculumMode',
           'hideVersesForReciter', 'hideVersesForListener',
+          'hostRole', 'guestRole',
           'activeAyah', 'reciterSide', 'mistakesCount', 'markedErrors',
           'endedByUid', 'sessionEvaluation', 'callDurationSeconds', 'accuracyPct',
           'surahNumber', 'surahEnd', 'ayahFrom', 'ayahTo', 'pageFrom', 'pageTo',
@@ -137,6 +138,8 @@ service cloud.firestore {
         && (!('curriculumMode' in data) || data.curriculumMode in ['surah', 'ayah', 'page'])
         && (!('hideVersesForReciter' in data) || data.hideVersesForReciter is bool)
         && (!('hideVersesForListener' in data) || data.hideVersesForListener is bool)
+        && (!('hostRole' in data) || data.hostRole in ['student', 'teacher'])
+        && (!('guestRole' in data) || data.guestRole in ['student', 'teacher'])
         && (!('activeAyah' in data) || (data.activeAyah is number && data.activeAyah >= 1 && data.activeAyah <= 286))
         && (!('reciterSide' in data) || data.reciterSide in ['host', 'guest'])
         && (!('mistakesCount' in data) || (data.mistakesCount is number && data.mistakesCount >= 0 && data.mistakesCount <= 999))
@@ -411,6 +414,7 @@ service cloud.firestore {
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'activeAyah', 'reciterSide', 'mistakesCount', 'markedErrors',
               'hideVersesForReciter', 'hideVersesForListener',
+              'hostRole', 'guestRole',
               'riwayah', 'curriculumMode', 'surahNumber', 'surahEnd', 'ayahFrom', 'ayahTo', 'pageFrom', 'pageTo',
               'updatedAt'
             ])

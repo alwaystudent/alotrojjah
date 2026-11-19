@@ -61,6 +61,7 @@ import {
   Radio,
   Volume2,
   Volume1,
+  GraduationCap,
   X,
 } from 'lucide-react';
 import { auth, db, googleProvider, OperationType, handleFirestoreError } from '../firebase';
@@ -134,6 +135,8 @@ interface DuoRecitationSectionProps {
   onOpenPrivacyTerms?: () => void;
 }
 
+export type DuoParticipantRole = 'student' | 'teacher';
+
 interface DuoSessionDoc {
   sessionId: string;
   hostUid: string;
@@ -152,6 +155,8 @@ interface DuoSessionDoc {
   pageTo?: number;
   hideVersesForReciter?: boolean;
   hideVersesForListener?: boolean;
+  hostRole?: DuoParticipantRole;
+  guestRole?: DuoParticipantRole;
   activeAyah?: number;
   reciterSide?: 'host' | 'guest';
   mistakesCount?: number;
@@ -435,10 +440,13 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   const [lobbyBusy, setLobbyBusy] = useState<boolean>(false);
   const [lobbyError, setLobbyError] = useState<string | null>(null);
 
-  // Recitation & Privacy Options
+  // Recitation Roles (Student / Teacher) & Curriculum Privacy Options
+  const [hostAppRole, setHostAppRole] = useState<DuoParticipantRole>('student');
+  const [guestAppRole, setGuestAppRole] = useState<DuoParticipantRole>('student');
   const [hideVersesForReciter, setHideVersesForReciter] = useState<boolean>(true);
   const [hideVersesForListener, setHideVersesForListener] = useState<boolean>(false);
   const [localHideVerses, setLocalHideVerses] = useState<boolean>(false);
+  const [localShowVersesOverride, setLocalShowVersesOverride] = useState<boolean>(false);
   const [fadeFirstWordOnly, setFadeFirstWordOnly] = useState<boolean>(false);
   const [peekVerseKey, setPeekVerseKey] = useState<string | null>(null);
   const [textScale, setTextScale] = useState<'normal' | 'large' | 'xlarge'>('large');
@@ -1249,6 +1257,8 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       markedErrors: string[];
       hideVersesForReciter: boolean;
       hideVersesForListener: boolean;
+      hostRole: DuoParticipantRole;
+      guestRole: DuoParticipantRole;
       riwayah: QuranRiwayah;
       curriculumMode: 'surah' | 'ayah' | 'page';
       surahNumber: number;
@@ -1278,15 +1288,23 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     if (data.reciterSide === 'host' || data.reciterSide === 'guest') {
       setReciterSide(data.reciterSide);
     }
+    if (data.hostRole === 'student' || data.hostRole === 'teacher') {
+      setHostAppRole(data.hostRole);
+    }
+    if (data.guestRole === 'student' || data.guestRole === 'teacher') {
+      setGuestAppRole(data.guestRole);
+    }
     if (typeof data.mistakesCount === 'number') setMistakesCount(data.mistakesCount);
     if (Array.isArray(data.markedErrors)) {
       setMarkedErrors(data.markedErrors.slice(0, 80));
     }
     if (typeof data.hideVersesForReciter === 'boolean') {
       setHideVersesForReciter(data.hideVersesForReciter);
+      setLocalShowVersesOverride(false);
     }
     if (typeof data.hideVersesForListener === 'boolean') {
       setHideVersesForListener(data.hideVersesForListener);
+      setLocalShowVersesOverride(false);
     }
     if (data.riwayah === 'hafs' || data.riwayah === 'qalun' || data.riwayah === 'warsh') {
       setSelectedRiwayah(data.riwayah);
@@ -1533,6 +1551,11 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       const hostDisplayName = getDisplayNameForUser(user);
       const currFields = buildCurriculumPayloadFields();
 
+      const effectiveInitHideReciter =
+        hostAppRole === 'teacher' ? false : hideVersesForReciter;
+      const effectiveInitHideListener =
+        guestAppRole === 'teacher' ? false : hideVersesForListener;
+
       const callPayload: Record<string, unknown> = {
         sessionId: newSessionId,
         hostUid: user.uid,
@@ -1542,8 +1565,10 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         ...currFields,
         offerType: finalDesc.type || 'offer',
         offerSdp: finalDesc.sdp,
-        hideVersesForReciter,
-        hideVersesForListener,
+        hideVersesForReciter: effectiveInitHideReciter,
+        hideVersesForListener: effectiveInitHideListener,
+        hostRole: hostAppRole,
+        guestRole: guestAppRole,
         activeAyah: currFields.ayahFrom,
         reciterSide: 'host',
         mistakesCount: 0,
@@ -1928,9 +1953,21 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
 
   const handleSwapRoles = () => {
     const nextSide = reciterSide === 'host' ? 'guest' : 'host';
+    const nextReciterRole = nextSide === 'host' ? hostAppRole : guestAppRole;
+    const nextListenerRole = nextSide === 'host' ? guestAppRole : hostAppRole;
+    const nextHideReciter = nextReciterRole === 'teacher' ? false : hideVersesForReciter;
+    const nextHideListener = nextListenerRole === 'teacher' ? false : hideVersesForListener;
+
     setReciterSide(nextSide);
+    setHideVersesForReciter(nextHideReciter);
+    setHideVersesForListener(nextHideListener);
+    setLocalShowVersesOverride(false);
     setPeekVerseKey(null);
-    syncCallControlState({ reciterSide: nextSide });
+    syncCallControlState({
+      reciterSide: nextSide,
+      hideVersesForReciter: nextHideReciter,
+      hideVersesForListener: nextHideListener,
+    });
   };
 
   const handleAdjustMistakes = (delta: number) => {
@@ -1961,16 +1998,77 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     syncCallControlState({ markedErrors: nextList, mistakesCount: nextCount });
   };
 
+  const handleApplyParticipantRoles = (
+    nextHostRole: DuoParticipantRole,
+    nextGuestRole: DuoParticipantRole
+  ) => {
+    setHostAppRole(nextHostRole);
+    setGuestAppRole(nextGuestRole);
+
+    const nextReciterRole = reciterSide === 'host' ? nextHostRole : nextGuestRole;
+    const nextListenerRole = reciterSide === 'host' ? nextGuestRole : nextHostRole;
+
+    // Rule: If a side is a teacher, NEVER hide the curriculum from them
+    const nextHideReciter = nextReciterRole === 'teacher' ? false : hideVersesForReciter;
+    const nextHideListener = nextListenerRole === 'teacher' ? false : hideVersesForListener;
+
+    const myNextRole =
+      sessionId && myRoleInCall === 'guest' ? nextGuestRole : nextHostRole;
+    if (myNextRole === 'teacher') {
+      setLocalHideVerses(false);
+    }
+    setLocalShowVersesOverride(false);
+    setHideVersesForReciter(nextHideReciter);
+    setHideVersesForListener(nextHideListener);
+
+    if (sessionId && sessionStatusRef.current === 'active') {
+      syncCallControlState({
+        hostRole: nextHostRole,
+        guestRole: nextGuestRole,
+        hideVersesForReciter: nextHideReciter,
+        hideVersesForListener: nextHideListener,
+      });
+    }
+  };
+
+  const handleToggleHideForBothStudents = () => {
+    if (hostAppRole !== 'student' || guestAppRole !== 'student') return;
+    const nextBothHidden = !(hideVersesForReciter && hideVersesForListener);
+    setHideVersesForReciter(nextBothHidden);
+    setHideVersesForListener(nextBothHidden);
+    setLocalHideVerses(false);
+    setLocalShowVersesOverride(false);
+    setPeekVerseKey(null);
+    if (sessionId && sessionStatusRef.current === 'active') {
+      syncCallControlState({
+        hideVersesForReciter: nextBothHidden,
+        hideVersesForListener: nextBothHidden,
+      });
+    }
+  };
+
   const handleToggleSyncedHideReciter = () => {
+    const currentReciterRole = reciterSide === 'host' ? hostAppRole : guestAppRole;
+    if (currentReciterRole === 'teacher') {
+      setHideVersesForReciter(false);
+      return;
+    }
     const next = !hideVersesForReciter;
     setHideVersesForReciter(next);
+    setLocalShowVersesOverride(false);
     setPeekVerseKey(null);
     syncCallControlState({ hideVersesForReciter: next });
   };
 
   const handleToggleSyncedHideListener = () => {
+    const currentListenerRole = reciterSide === 'host' ? guestAppRole : hostAppRole;
+    if (currentListenerRole === 'teacher') {
+      setHideVersesForListener(false);
+      return;
+    }
     const next = !hideVersesForListener;
     setHideVersesForListener(next);
+    setLocalShowVersesOverride(false);
     setPeekVerseKey(null);
     syncCallControlState({ hideVersesForListener: next });
   };
@@ -1978,10 +2076,16 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   const handleApplyCurriculumSettings = () => {
     if (sessionId && sessionStatusRef.current === 'active') {
       const payload = buildCurriculumPayloadFields();
+      const recRole = reciterSide === 'host' ? hostAppRole : guestAppRole;
+      const listRole = reciterSide === 'host' ? guestAppRole : hostAppRole;
+      const safeHideRec = recRole === 'teacher' ? false : hideVersesForReciter;
+      const safeHideList = listRole === 'teacher' ? false : hideVersesForListener;
       syncCallControlState({
         ...payload,
-        hideVersesForReciter,
-        hideVersesForListener,
+        hostRole: hostAppRole,
+        guestRole: guestAppRole,
+        hideVersesForReciter: safeHideRec,
+        hideVersesForListener: safeHideList,
       });
     }
     setShowCurriculumModal(false);
@@ -2072,9 +2176,32 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   }, [sessionMeta, myRoleInCall, outgoingCallTargetName, isAr]);
 
   const amICurrentReciter = myRoleInCall === reciterSide;
+  const myAppRole: DuoParticipantRole = sessionId
+    ? myRoleInCall === 'host'
+      ? hostAppRole
+      : guestAppRole
+    : hostAppRole;
+  const partnerAppRole: DuoParticipantRole = sessionId
+    ? myRoleInCall === 'host'
+      ? guestAppRole
+      : hostAppRole
+    : guestAppRole;
+  const bothAreStudents = hostAppRole === 'student' && guestAppRole === 'student';
+  const amITeacher = myAppRole === 'teacher';
+  const reciterAppRole: DuoParticipantRole =
+    reciterSide === 'host' ? hostAppRole : guestAppRole;
+  const listenerAppRole: DuoParticipantRole =
+    reciterSide === 'host' ? guestAppRole : hostAppRole;
+  const effectiveHideReciter = reciterAppRole === 'student' && hideVersesForReciter;
+  const effectiveHideListener = listenerAppRole === 'student' && hideVersesForListener;
+  const bothHiddenForStudents =
+    bothAreStudents && effectiveHideReciter && effectiveHideListener;
+
   const shouldHideVersesForMe =
-    localHideVerses ||
-    (amICurrentReciter ? hideVersesForReciter : hideVersesForListener);
+    !amITeacher &&
+    !localShowVersesOverride &&
+    (localHideVerses ||
+      (amICurrentReciter ? effectiveHideReciter : effectiveHideListener));
 
   const activeSourceMeta =
     TRUSTED_QURAN_SOURCES.find((s) => s.id === activeUsedSource) || TRUSTED_QURAN_SOURCES[0];
@@ -2716,26 +2843,105 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                 </span>
               </div>
 
-              {/* Compact Current Riwayah, Curriculum & Privacy Bar */}
-              <div className="rounded-xl bg-[#FAF7F0] border border-[#E5DEC9] px-3 py-2 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2 text-xs min-w-0">
-                  <BookOpen className="w-4 h-4 text-[#C88A14] shrink-0" />
-                  <span className="font-bold text-[#261C14] truncate">{lobbyCurriculumSummary}</span>
-                  {highPrivacyIpMask && (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#ECFDF3] border border-[#86EFAC] text-[#15803D] text-[10px] font-bold shrink-0">
-                      <Lock className="w-2.5 h-2.5" />
-                      <span>{isAr ? 'إخفاء IP' : 'IP Masked'}</span>
+              {/* Compact Current Riwayah, Curriculum, Roles & Privacy Bar */}
+              <div className="rounded-xl bg-[#FAF7F0] border border-[#E5DEC9] px-3 py-2.5 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-xs min-w-0">
+                    <BookOpen className="w-4 h-4 text-[#C88A14] shrink-0" />
+                    <span className="font-bold text-[#261C14] truncate">{lobbyCurriculumSummary}</span>
+                    {highPrivacyIpMask && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#ECFDF3] border border-[#86EFAC] text-[#15803D] text-[10px] font-bold shrink-0">
+                        <Lock className="w-2.5 h-2.5" />
+                        <span>{isAr ? 'إخفاء IP' : 'IP Masked'}</span>
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowCurriculumModal(true)}
+                    className="px-3 py-1.5 rounded-lg bg-[#FFFDF9] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-xs font-bold text-[#261C14] flex items-center gap-1.5 cursor-pointer shrink-0"
+                  >
+                    <SlidersHorizontal className="w-3.5 h-3.5 text-[#C88A14]" />
+                    <span>{isAr ? 'الرواية والمقرر' : 'Narration & Curriculum'}</span>
+                  </button>
+                </div>
+
+                {/* Role Assignment (Student/Teacher) + Hide Curriculum for Both (when both are students) */}
+                <div className="pt-2 border-t border-[#E5DEC9] flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[11px] font-extrabold text-[#5C4B3B] flex items-center gap-1 me-1">
+                      <GraduationCap className="w-3.5 h-3.5 text-[#C88A14]" />
+                      <span>{isAr ? 'تحديد الأدوار:' : 'Roles:'}</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleApplyParticipantRoles('student', 'student')}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-colors cursor-pointer ${
+                        bothAreStudents
+                          ? 'bg-[#2D2218] border-[#C88A14] text-[#EAB338]'
+                          : 'bg-[#FFFDF9] border-[#DDD2BE] text-[#5C4B3B] hover:text-[#261C14]'
+                      }`}
+                    >
+                      {isAr ? 'كلاهما طلاب' : 'Both Students'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleApplyParticipantRoles('teacher', 'student')}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-colors cursor-pointer ${
+                        hostAppRole === 'teacher' && guestAppRole === 'student'
+                          ? 'bg-[#2D2218] border-[#C88A14] text-[#EAB338]'
+                          : 'bg-[#FFFDF9] border-[#DDD2BE] text-[#5C4B3B] hover:text-[#261C14]'
+                      }`}
+                    >
+                      {isAr ? 'أنا معلم · الشريك طالب' : 'Me: Teacher · Peer: Student'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleApplyParticipantRoles('student', 'teacher')}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-colors cursor-pointer ${
+                        hostAppRole === 'student' && guestAppRole === 'teacher'
+                          ? 'bg-[#2D2218] border-[#C88A14] text-[#EAB338]'
+                          : 'bg-[#FFFDF9] border-[#DDD2BE] text-[#5C4B3B] hover:text-[#261C14]'
+                      }`}
+                    >
+                      {isAr ? 'أنا طالب · الشريك معلم' : 'Me: Student · Peer: Teacher'}
+                    </button>
+                  </div>
+
+                  {bothAreStudents ? (
+                    <button
+                      type="button"
+                      onClick={handleToggleHideForBothStudents}
+                      className={`px-3 py-1 rounded-lg text-[11px] font-extrabold border flex items-center gap-1.5 cursor-pointer transition-colors ${
+                        bothHiddenForStudents
+                          ? 'bg-[#166534] border-[#166534] text-[#FFFDF9]'
+                          : 'bg-[#FFFDF9] border-[#C88A14] text-[#9E650C] hover:bg-[#FBF3DF]'
+                      }`}
+                    >
+                      {bothHiddenForStudents ? (
+                        <EyeOff className="w-3.5 h-3.5" />
+                      ) : (
+                        <Eye className="w-3.5 h-3.5" />
+                      )}
+                      <span>
+                        {bothHiddenForStudents
+                          ? isAr
+                            ? 'إخفاء المقرر للطرفين: مفعّل'
+                            : 'Hide for Both: ON'
+                          : isAr
+                          ? 'إخفاء المقرر للطرفين'
+                          : 'Hide Curriculum for Both'}
+                      </span>
+                    </button>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#ECFDF3] border border-[#86EFAC] text-[#15803D] text-[11px] font-bold">
+                      <Eye className="w-3.5 h-3.5 shrink-0" />
+                      <span>
+                        {isAr ? 'المقرر ظاهر للمعلم دائماً' : 'Curriculum Always Visible to Teacher'}
+                      </span>
                     </span>
                   )}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setShowCurriculumModal(true)}
-                  className="px-3 py-1.5 rounded-lg bg-[#FFFDF9] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-xs font-bold text-[#261C14] flex items-center gap-1.5 cursor-pointer shrink-0"
-                >
-                  <SlidersHorizontal className="w-3.5 h-3.5 text-[#C88A14]" />
-                  <span>{isAr ? 'الرواية والمقرر' : 'Narration & Curriculum'}</span>
-                </button>
               </div>
 
               {friends.length === 0 ? (
@@ -2937,21 +3143,35 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                   {isAr ? `رواية ${activeRiwayahLabel}` : activeRiwayahLabel}
                 </span>
               </div>
-              <div className="text-xs sm:text-sm text-[#5C4B3B]">
-                {isAr ? 'دورك:' : 'Your role:'}{' '}
-                <strong className="text-[#261C14]">
-                  {amICurrentReciter
-                    ? shouldHideVersesForMe
+              <div className="text-xs sm:text-sm text-[#5C4B3B] flex flex-wrap items-center gap-2">
+                <span>
+                  {isAr ? 'دورك:' : 'Your role:'}{' '}
+                  <strong className="text-[#261C14]">
+                    {amITeacher
                       ? isAr
-                        ? 'القارئ (الشاشة مخفية)'
-                        : 'Reciter (Screen Hidden)'
+                        ? 'معلم (المقرر ظاهر دائماً)'
+                        : 'Teacher (Text Always Visible)'
                       : isAr
-                      ? 'القارئ (النص ظاهر)'
-                      : 'Reciter (Text Visible)'
-                    : isAr
-                    ? 'المُسمِّع (متابعة المصحف وتنبيه الأخطاء)'
-                    : 'Listener (Follow Mushaf & Mark Errors)'}
-                </strong>
+                      ? 'طالب'
+                      : 'Student'}
+                    {' · '}
+                    {amICurrentReciter
+                      ? shouldHideVersesForMe
+                        ? isAr
+                          ? 'القارئ (الشاشة مخفية)'
+                          : 'Reciter (Screen Hidden)'
+                        : isAr
+                        ? 'القارئ (النص ظاهر)'
+                        : 'Reciter (Text Visible)'
+                      : shouldHideVersesForMe
+                      ? isAr
+                        ? 'المُسمِّع (الشاشة مخفية)'
+                        : 'Listener (Screen Hidden)'
+                      : isAr
+                      ? 'المُسمِّع (متابعة المصحف وتنبيه الأخطاء)'
+                      : 'Listener (Follow Mushaf & Mark Errors)'}
+                  </strong>
+                </span>
               </div>
             </div>
 
@@ -3044,6 +3264,38 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                 <span>{isAr ? 'تبادل الأدوار' : 'Swap Roles'}</span>
               </button>
 
+              {bothAreStudents ? (
+                <button
+                  type="button"
+                  onClick={handleToggleHideForBothStudents}
+                  className={`px-3.5 py-2 rounded-2xl border text-xs sm:text-sm font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${
+                    bothHiddenForStudents
+                      ? 'bg-[#2D2218] border-[#C88A14] text-[#EAB338]'
+                      : 'bg-[#FAF7F0] hover:bg-[#EFE9DC] border-[#DDD2BE] text-[#261C14]'
+                  }`}
+                >
+                  {bothHiddenForStudents ? (
+                    <EyeOff className="w-4 h-4" />
+                  ) : (
+                    <Eye className="w-4 h-4" />
+                  )}
+                  <span>
+                    {bothHiddenForStudents
+                      ? isAr
+                        ? 'المقرر مخفي للطرفين'
+                        : 'Hidden for Both'
+                      : isAr
+                      ? 'إخفاء المقرر للطرفين'
+                      : 'Hide for Both'}
+                  </span>
+                </button>
+              ) : (
+                <span className="px-3 py-2 rounded-2xl bg-[#ECFDF3] border border-[#86EFAC] text-[#15803D] text-xs font-bold inline-flex items-center gap-1.5">
+                  <Eye className="w-3.5 h-3.5 shrink-0" />
+                  <span>{isAr ? 'ظاهر للمعلم' : 'Teacher View Open'}</span>
+                </span>
+              )}
+
               <button
                 type="button"
                 onClick={() => setShowEvalModal(true)}
@@ -3093,7 +3345,10 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
 
                 <button
                   type="button"
-                  onClick={() => setLocalHideVerses(false)}
+                  onClick={() => {
+                    setLocalHideVerses(false);
+                    setLocalShowVersesOverride(true);
+                  }}
                   className="text-[11px] font-bold text-[#84715E] hover:text-[#261C14] flex items-center gap-1 pt-2 cursor-pointer"
                 >
                   <Eye className="w-3.5 h-3.5" />
@@ -3693,34 +3948,154 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                 )}
               </div>
 
-              {/* Hiding, Font Size & IP Privacy Controls */}
-              <div className="space-y-2.5">
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleToggleSyncedHideReciter}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 cursor-pointer ${
-                      hideVersesForReciter
-                        ? 'bg-[#2D2218] text-[#EAB338] border-[#2D2218]'
-                        : 'bg-[#FAF7F0] text-[#5C4B3B] border-[#DDD2BE]'
-                    }`}
-                  >
-                    {hideVersesForReciter ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                    <span>{isAr ? 'إخفاء عن القارئ' : 'Hide for Reciter'}</span>
-                  </button>
+              {/* Roles (Student vs Teacher) & Curriculum Hiding Options */}
+              <div className="space-y-3">
+                <div className="rounded-xl bg-[#FAF7F0] border border-[#DDD2BE] p-3 space-y-2.5">
+                  <div className="flex items-center gap-1.5 text-xs font-extrabold text-[#2D2218]">
+                    <GraduationCap className="w-4 h-4 text-[#C88A14]" />
+                    <span>{isAr ? 'تحديد الأدوار (طالب / معلم)' : 'Participant Roles (Student / Teacher)'}</span>
+                  </div>
 
-                  <button
-                    type="button"
-                    onClick={handleToggleSyncedHideListener}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 cursor-pointer ${
-                      hideVersesForListener
-                        ? 'bg-[#2D2218] text-[#EAB338] border-[#2D2218]'
-                        : 'bg-[#FAF7F0] text-[#5C4B3B] border-[#DDD2BE]'
-                    }`}
-                  >
-                    {hideVersesForListener ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                    <span>{isAr ? 'إخفاء عن المُسمِّع' : 'Hide for Listener'}</span>
-                  </button>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div>
+                      <div className="text-[11px] font-bold text-[#5C4B3B] mb-1">
+                        {isAr ? 'دوري (أنت):' : 'Your Role:'}
+                      </div>
+                      <div className="grid grid-cols-2 gap-1 p-0.5 rounded-lg bg-[#EFE9DC] border border-[#DDD2BE]">
+                        {(
+                          [
+                            { id: 'student', labelAr: 'طالب', labelEn: 'Student' },
+                            { id: 'teacher', labelAr: 'معلم', labelEn: 'Teacher' },
+                          ] as const
+                        ).map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => {
+                              if (sessionId && myRoleInCall === 'guest') {
+                                handleApplyParticipantRoles(hostAppRole, opt.id);
+                              } else {
+                                handleApplyParticipantRoles(opt.id, guestAppRole);
+                              }
+                            }}
+                            className={`py-1.5 rounded-md text-xs font-bold cursor-pointer transition-colors ${
+                              myAppRole === opt.id
+                                ? 'bg-[#2D2218] text-[#EAB338]'
+                                : 'text-[#5C4B3B] hover:text-[#261C14]'
+                            }`}
+                          >
+                            {isAr ? opt.labelAr : opt.labelEn}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="text-[11px] font-bold text-[#5C4B3B] mb-1">
+                        {isAr ? 'دور الشريك:' : 'Partner Role:'}
+                      </div>
+                      <div className="grid grid-cols-2 gap-1 p-0.5 rounded-lg bg-[#EFE9DC] border border-[#DDD2BE]">
+                        {(
+                          [
+                            { id: 'student', labelAr: 'طالب', labelEn: 'Student' },
+                            { id: 'teacher', labelAr: 'معلم', labelEn: 'Teacher' },
+                          ] as const
+                        ).map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => {
+                              if (sessionId && myRoleInCall === 'guest') {
+                                handleApplyParticipantRoles(opt.id, guestAppRole);
+                              } else {
+                                handleApplyParticipantRoles(hostAppRole, opt.id);
+                              }
+                            }}
+                            className={`py-1.5 rounded-md text-xs font-bold cursor-pointer transition-colors ${
+                              partnerAppRole === opt.id
+                                ? 'bg-[#2D2218] text-[#EAB338]'
+                                : 'text-[#5C4B3B] hover:text-[#261C14]'
+                            }`}
+                          >
+                            {isAr ? opt.labelAr : opt.labelEn}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {!bothAreStudents && (
+                    <div className="rounded-lg bg-[#ECFDF3] border border-[#86EFAC] px-2.5 py-1.5 text-[11px] font-bold text-[#15803D]">
+                      {isAr
+                        ? 'أحد الطرفين معلم — لا يُخفى المقرر عن المعلم، ويمكن إخفاؤه عن الطالب فقط.'
+                        : 'Teacher participant detected — curriculum always stays visible for the teacher.'}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {bothAreStudents && (
+                    <button
+                      type="button"
+                      onClick={handleToggleHideForBothStudents}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-extrabold border flex items-center gap-1.5 cursor-pointer ${
+                        bothHiddenForStudents
+                          ? 'bg-[#166534] text-[#FFFDF9] border-[#166534]'
+                          : 'bg-[#FBF3DF] text-[#9E650C] border-[#C88A14]'
+                      }`}
+                    >
+                      {bothHiddenForStudents ? (
+                        <EyeOff className="w-3.5 h-3.5" />
+                      ) : (
+                        <Eye className="w-3.5 h-3.5" />
+                      )}
+                      <span>
+                        {isAr ? 'إخفاء المقرر للطرفين (كلاهما طلاب)' : 'Hide Curriculum for Both'}
+                      </span>
+                    </button>
+                  )}
+
+                  {reciterAppRole === 'student' && (
+                    <button
+                      type="button"
+                      onClick={handleToggleSyncedHideReciter}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 cursor-pointer ${
+                        hideVersesForReciter
+                          ? 'bg-[#2D2218] text-[#EAB338] border-[#2D2218]'
+                          : 'bg-[#FAF7F0] text-[#5C4B3B] border-[#DDD2BE]'
+                      }`}
+                    >
+                      {hideVersesForReciter ? (
+                        <EyeOff className="w-3.5 h-3.5" />
+                      ) : (
+                        <Eye className="w-3.5 h-3.5" />
+                      )}
+                      <span>
+                        {isAr ? 'إخفاء عن القارئ (طالب)' : 'Hide for Reciter (Student)'}
+                      </span>
+                    </button>
+                  )}
+
+                  {listenerAppRole === 'student' && (
+                    <button
+                      type="button"
+                      onClick={handleToggleSyncedHideListener}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 cursor-pointer ${
+                        hideVersesForListener
+                          ? 'bg-[#2D2218] text-[#EAB338] border-[#2D2218]'
+                          : 'bg-[#FAF7F0] text-[#5C4B3B] border-[#DDD2BE]'
+                      }`}
+                    >
+                      {hideVersesForListener ? (
+                        <EyeOff className="w-3.5 h-3.5" />
+                      ) : (
+                        <Eye className="w-3.5 h-3.5" />
+                      )}
+                      <span>
+                        {isAr ? 'إخفاء عن المُسمِّع (طالب)' : 'Hide for Listener (Student)'}
+                      </span>
+                    </button>
+                  )}
 
                   <button
                     type="button"

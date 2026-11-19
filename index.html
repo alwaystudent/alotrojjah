@@ -20,8 +20,207 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:ital,wght@0,400;0,700;1,400&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Scheherazade+New:wght@400;700&display=swap" rel="stylesheet" />
+    <style>
+      #app-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background-color: #F7F3EB;
+        background-image:
+          url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' stroke='%23C88A14' stroke-width='0.6' stroke-opacity='0.11'%3E%3Cpath d='M30 0L37.5 15L52.5 7.5L45 22.5L60 30L45 37.5L52.5 52.5L37.5 45L30 60L22.5 45L7.5 52.5L15 37.5L0 30L15 22.5L7.5 7.5L22.5 15Z'/%3E%3Ccircle cx='30' cy='30' r='8'/%3E%3C/g%3E%3C/svg%3E"),
+          radial-gradient(ellipse 68% 48% at 84% 12%, rgba(200, 138, 20, 0.11) 0%, rgba(200, 138, 20, 0) 70%),
+          radial-gradient(ellipse 65% 50% at 16% 84%, rgba(74, 97, 68, 0.09) 0%, rgba(74, 97, 68, 0) 72%),
+          radial-gradient(circle at 50% 42%, rgba(255, 253, 249, 0.92) 0%, rgba(247, 243, 235, 0) 68%),
+          linear-gradient(170deg, #FAF6EE 0%, #F5EFE2 52%, #ECE2CF 100%);
+        background-repeat: repeat, no-repeat, no-repeat, no-repeat, no-repeat;
+        background-size: 60px 60px, 100% 100%, 100% 100%, 100% 100%, 100% 100%;
+        color: #2D2218;
+        transition: opacity 380ms cubic-bezier(0.16, 1, 0.3, 1), transform 380ms cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      #app-splash.splash-hidden {
+        opacity: 0;
+        transform: scale(1.018);
+        pointer-events: none;
+      }
+      .splash-inner {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        max-width: 340px;
+        width: 100%;
+        animation: splashFadeIn 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+      }
+      .splash-emblem-wrap {
+        position: relative;
+        width: 122px;
+        height: 122px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 22px;
+      }
+      .splash-ring-outer {
+        position: absolute;
+        inset: 0;
+        border-radius: 9999px;
+        border: 1px dashed rgba(200, 138, 20, 0.42);
+        animation: splashSpinSlow 18s linear infinite;
+      }
+      .splash-ring-arc {
+        position: absolute;
+        inset: 7px;
+        border-radius: 9999px;
+        border: 2px solid rgba(200, 138, 20, 0.14);
+        border-top-color: #C88A14;
+        border-right-color: #4A6144;
+        animation: splashSpinArc 1.35s cubic-bezier(0.55, 0.25, 0.45, 0.75) infinite;
+      }
+      .splash-icon {
+        width: 84px;
+        height: 84px;
+        border-radius: 22px;
+        border: 1.5px solid rgba(234, 179, 56, 0.65);
+        box-shadow: 0 14px 30px -10px rgba(45, 34, 24, 0.28), 0 0 0 4px rgba(255, 253, 249, 0.72);
+        object-fit: cover;
+        position: relative;
+        z-index: 1;
+      }
+      .splash-title-ar {
+        margin: 0;
+        font-family: 'Amiri', 'Cairo', Georgia, serif;
+        font-size: clamp(2rem, 5.5vw, 2.55rem);
+        font-weight: 700;
+        line-height: 1.25;
+        color: #2D2218;
+        letter-spacing: -0.01em;
+      }
+      .splash-divider {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        width: 168px;
+        margin: 10px 0 8px;
+      }
+      .splash-divider-line {
+        flex: 1;
+        height: 1px;
+        background: linear-gradient(90deg, rgba(200, 138, 20, 0), rgba(200, 138, 20, 0.65), rgba(200, 138, 20, 0));
+      }
+      .splash-divider-diamond {
+        width: 6px;
+        height: 6px;
+        background: #C88A14;
+        transform: rotate(45deg);
+        border-radius: 1px;
+      }
+      .splash-title-en {
+        margin: 0;
+        font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 0.92rem;
+        font-weight: 700;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: #8F6514;
+        direction: ltr;
+      }
+      .splash-subtitle {
+        margin: 8px 0 0;
+        font-family: 'Cairo', sans-serif;
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: #5C4B3B;
+      }
+      .splash-loader-box {
+        margin-top: 26px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 9px;
+        width: 196px;
+      }
+      .splash-progress-track {
+        width: 100%;
+        height: 4px;
+        border-radius: 9999px;
+        background: rgba(200, 138, 20, 0.16);
+        overflow: hidden;
+        position: relative;
+      }
+      .splash-progress-bar {
+        position: absolute;
+        inset-block: 0;
+        left: 0;
+        width: 46%;
+        border-radius: 9999px;
+        background: linear-gradient(90deg, #4A6144 0%, #C88A14 55%, #EAB338 100%);
+        animation: splashBarSlide 1.25s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+      }
+      .splash-loading-text {
+        font-family: 'Cairo', 'Plus Jakarta Sans', sans-serif;
+        font-size: 0.72rem;
+        font-weight: 700;
+        color: #7D6A56;
+        letter-spacing: 0.02em;
+      }
+      @keyframes splashFadeIn {
+        from { opacity: 0; transform: translateY(8px) scale(0.98); }
+        to { opacity: 1; transform: translateY(0) scale(1); }
+      }
+      @keyframes splashSpinSlow {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+      @keyframes splashSpinArc {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+      @keyframes splashBarSlide {
+        0% { transform: translateX(-110%); }
+        100% { transform: translateX(240%); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #app-splash, .splash-inner, .splash-ring-outer, .splash-ring-arc, .splash-progress-bar {
+          animation: none;
+          transition: none;
+        }
+        .splash-progress-bar {
+          width: 65%;
+          transform: none;
+        }
+      }
+    </style>
   </head>
   <body>
+    <div id="app-splash" role="status" aria-live="polite" aria-label="جاري تحميل مشكاة السرد | Loading Mishkat Al-Sard">
+      <div class="splash-inner">
+        <div class="splash-emblem-wrap">
+          <div class="splash-ring-outer" aria-hidden="true"></div>
+          <div class="splash-ring-arc" aria-hidden="true"></div>
+          <img src="/icon.svg" alt="مشكاة السرد - Mishkat Al-Sard" class="splash-icon" />
+        </div>
+        <h1 class="splash-title-ar">مشكاة السرد</h1>
+        <div class="splash-divider" aria-hidden="true">
+          <span class="splash-divider-line"></span>
+          <span class="splash-divider-diamond"></span>
+          <span class="splash-divider-line"></span>
+        </div>
+        <p class="splash-title-en">Mishkat Al-Sard</p>
+        <p class="splash-subtitle">منصة السرد وحفظ القرآن الكريم</p>
+        <div class="splash-loader-box">
+          <div class="splash-progress-track" aria-hidden="true">
+            <div class="splash-progress-bar"></div>
+          </div>
+          <span id="app-splash-status" class="splash-loading-text">جاري التجهيز... · Loading...</span>
+        </div>
+      </div>
+    </div>
     <div id="root"></div>
     <script type="module" src="./src/main.tsx"></script>
   </body>

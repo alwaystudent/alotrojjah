@@ -247,6 +247,32 @@ export default function App() {
     }
   }, [activeSection, pendingAcceptCallId]);
 
+  // Smoothly dismiss the bilingual splash screen after initial render
+  useEffect(() => {
+    const splashEl = document.getElementById('app-splash');
+    if (!splashEl) return;
+
+    const statusEl = document.getElementById('app-splash-status');
+    if (statusEl) {
+      statusEl.textContent =
+        lang === 'en' ? 'Preparing Mushaf & Plans...' : 'جاري تجهيز المصحف والخطط...';
+    }
+
+    const displayDuration = pendingAcceptCallId ? 150 : 850;
+    let removeTimer = 0;
+    const hideTimer = window.setTimeout(() => {
+      splashEl.classList.add('splash-hidden');
+      removeTimer = window.setTimeout(() => {
+        splashEl.remove();
+      }, 420);
+    }, displayDuration);
+
+    return () => {
+      window.clearTimeout(hideTimer);
+      window.clearTimeout(removeTimer);
+    };
+  }, []);
+
   // Prevent silent SW reload from interrupting active Quran recitation sessions
   useEffect(() => {
     if (typeof window === 'undefined') return;
