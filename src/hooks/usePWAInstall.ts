@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 export interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -8,6 +8,7 @@ export interface BeforeInstallPromptEvent extends Event {
 export type BrowserType = 'ios' | 'samsung' | 'firefox' | 'mac_safari' | 'chromium' | 'other';
 
 const STORAGE_KEY_PWA_INSTALLED = 'alutrujjah_pwa_installed_v1';
+const STORAGE_KEY_PWA_ALERT_DISMISSED = 'alutrujjah_pwa_single_alert_dismissed_v1';
 
 function detectStandaloneDisplay(): boolean {
   if (typeof window === 'undefined') return false;
@@ -33,17 +34,54 @@ export function usePWAInstall() {
       return false;
     }
   });
+  const [alertDismissed, setAlertDismissed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      return localStorage.getItem(STORAGE_KEY_PWA_ALERT_DISMISSED) === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [isIOS, setIsIOS] = useState(false);
   const [browserType, setBrowserType] = useState<BrowserType>('chromium');
 
   useEffect(() => {
-    if (detectStandaloneDisplay()) {
+    let cancelled = false;
+
+    const markInstalled = () => {
+      if (cancelled) return;
       setIsInstalled(true);
+      setDeferredPrompt(null);
       try {
         localStorage.setItem(STORAGE_KEY_PWA_INSTALLED, 'true');
       } catch {
         // ignore
       }
+    };
+
+    if (detectStandaloneDisplay()) {
+      markInstalled();
+    } else if (typeof navigator !== 'undefined') {
+      // Smart check via Web App Installed Related Apps API when available
+      const navWithRelated = navigator as unknown as {
+        getInstalledRelatedApps?: () => Promise<Array<{ platform?: string }>>;
+      };
+      if (typeof navWithRelated.getInstalledRelatedApps === 'function') {
+        navWithRelated
+          .getInstalledRelatedApps()
+          .then((apps) => {
+            if (!cancelled && Array.isArray(apps) && apps.length > 0) {
+              markInstalled();
+            }
+          })
+          .catch(() => {});
+      }
+    }
+
+    // Trigger silent SW update check when checking installation state
+    const win = window as unknown as { __alutrujjahCheckSilentUpdate?: () => void };
+    if (typeof win.__alutrujjahCheckSilentUpdate === 'function') {
+      win.__alutrujjahCheckSilentUpdate();
     }
 
     // Detect browser environment
@@ -78,19 +116,18 @@ export function usePWAInstall() {
     };
 
     const handleAppInstalled = () => {
-      setIsInstalled(true);
-      setDeferredPrompt(null);
-      try {
-        localStorage.setItem(STORAGE_KEY_PWA_INSTALLED, 'true');
-      } catch {
-        // ignore
+      markInstalled();
+      // Sync silent SW update immediately upon installation
+      const w = window as unknown as { __alutrujjahCheckSilentUpdate?: () => void };
+      if (typeof w.__alutrujjahCheckSilentUpdate === 'function') {
+        w.__alutrujjahCheckSilentUpdate();
       }
     };
 
     const standaloneMq = window.matchMedia('(display-mode: standalone)');
     const handleDisplayChange = () => {
       if (detectStandaloneDisplay()) {
-        handleAppInstalled();
+        markInstalled();
       }
     };
 
@@ -101,12 +138,22 @@ export function usePWAInstall() {
     }
 
     return () => {
+      cancelled = true;
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
       window.removeEventListener('appinstalled', handleAppInstalled);
       if (typeof standaloneMq.removeEventListener === 'function') {
         standaloneMq.removeEventListener('change', handleDisplayChange);
       }
     };
+  }, []);
+
+  const dismissSingleAlert = useCallback(() => {
+    setAlertDismissed(true);
+    try {
+      localStorage.setItem(STORAGE_KEY_PWA_ALERT_DISMISSED, 'true');
+    } catch {
+      // ignore
+    }
   }, []);
 
   const install = async (): Promise<boolean> => {
@@ -133,6 +180,8 @@ export function usePWAInstall() {
   return {
     isInstallable: !!deferredPrompt,
     isInstalled,
+    shouldShowSingleAlert: !isInstalled && !alertDismissed,
+    dismissSingleAlert,
     isIOS,
     browserType,
     install,

@@ -89,9 +89,8 @@ import { SardMushafView } from './components/SardMushafView';
 import { SmartMemorizationSystem } from './components/SmartMemorizationSystem';
 import { RandomQuizModal } from './components/RandomQuizModal';
 import { MemorizationReportModal } from './components/MemorizationReportModal';
-import { PWAInstallButton } from './components/PWAInstallButton';
+import { SmartPWAInstallAlert } from './components/PWAInstallButton';
 import { PrivacyTermsModal } from './components/PrivacyTermsModal';
-import { usePWAInstall } from './hooks/usePWAInstall';
 import { getDualDate, getCompactDualDate } from './utils/calendar';
 import { memoryManager } from './utils/memoryCleanup';
 import {
@@ -114,6 +113,18 @@ import {
 const STORAGE_KEY_PLANS = 'mishkat_sard_user_plans_v2';
 const STORAGE_KEY_LANG = 'mishkat_sard_lang_v1';
 const STORAGE_KEY_FOCUS_MODE = 'alutrujjah_focus_mode';
+const STORAGE_KEY_ACTIVE_SECTION = 'alutrujjah_active_section_v1';
+
+type AppSection = 'home' | 'schedule' | 'today' | 'analytics' | 'reminders' | 'mutun' | 'duo';
+const VALID_SECTIONS: ReadonlyArray<AppSection> = [
+  'home',
+  'schedule',
+  'today',
+  'analytics',
+  'reminders',
+  'mutun',
+  'duo',
+];
 
 export default function App() {
   const [lang, setLang] = useState<Language>(() => {
@@ -157,14 +168,64 @@ export default function App() {
   const [authUser, setAuthUser] = useState<User | null>(auth.currentUser);
   const [incomingCall, setIncomingCall] = useState<IncomingDuoCall | null>(null);
   const lastRingingCallIdRef = useRef<string | null>(null);
-  const { isInstalled: isPwaInstalled } = usePWAInstall();
   const [isPrivacyTermsOpen, setIsPrivacyTermsOpen] = useState<boolean>(false);
 
-  const [activeSection, setActiveSection] = useState<
-    'home' | 'schedule' | 'today' | 'analytics' | 'reminders' | 'mutun' | 'duo'
-  >(() => (initialFriendInviteToken || pendingAcceptCallId ? 'duo' : 'home'));
+  const [activeSection, setActiveSection] = useState<AppSection>(() => {
+    if (initialFriendInviteToken || pendingAcceptCallId) return 'duo';
+    try {
+      const saved = sessionStorage.getItem(STORAGE_KEY_ACTIVE_SECTION) as AppSection | null;
+      if (saved && VALID_SECTIONS.includes(saved)) return saved;
+    } catch {
+      // ignore
+    }
+    return 'home';
+  });
   const [expandedSardPlanId, setExpandedSardPlanId] = useState<string | null>(null);
   const [smartMemorizationPlan, setSmartMemorizationPlan] = useState<QuranPlanItem | null>(null);
+
+  // Immediately strip transient URL invite/call query params after capturing them
+  // so pulling down to refresh Home never redirects back to Duo Recitation!
+  useEffect(() => {
+    try {
+      const url = new URL(window.location.href);
+      let modified = false;
+      for (const param of ['invite', 'friendInvite', 'duo', 'callAction']) {
+        if (url.searchParams.has(param)) {
+          url.searchParams.delete(param);
+          modified = true;
+        }
+      }
+      if (modified) {
+        window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Persist current section across pull-to-refresh reloads & clear transient duo triggers on Home
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(STORAGE_KEY_ACTIVE_SECTION, activeSection);
+    } catch {
+      // ignore
+    }
+    if (activeSection !== 'duo') {
+      if (initialFriendInviteToken) setInitialFriendInviteToken('');
+      if (pendingAcceptCallId) setPendingAcceptCallId(null);
+    }
+  }, [activeSection, initialFriendInviteToken, pendingAcceptCallId]);
+
+  // Prevent silent SW reload from interrupting active Quran recitation sessions
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const win = window as unknown as { __alutrujjahActiveRecitation?: boolean };
+    const active = Boolean(expandedSardPlanId || smartMemorizationPlan);
+    win.__alutrujjahActiveRecitation = active;
+    if (!active) {
+      window.dispatchEvent(new Event('alutrujjah:call-ended'));
+    }
+  }, [expandedSardPlanId, smartMemorizationPlan]);
 
   // Memorization Reports & Scheduled Random Quizzes State (تقارير الحفظ المعتمدة والاختبارات العشوائية)
   const [memorizationReports, setMemorizationReports] = useState<MemorizationReport[]>(() =>
@@ -1128,17 +1189,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Top Left Bar directly under Date: PWA Install Button (hidden immediately once installed) */}
-        {!isPwaInstalled && (
-          <div
-            dir="ltr"
-            className="w-full px-3 sm:px-6 lg:px-10 py-1 border-t border-[#E5DEC9]/80 bg-[#F7F3EB]/90 flex items-center justify-start"
-          >
-            <div dir={lang === 'ar' ? 'rtl' : 'ltr'}>
-              <PWAInstallButton lang={lang} variant="header" />
-            </div>
-          </div>
-        )}
       </header>
 
       {/* In-App Reminder Notification Banner when triggered (Soft Comfortable Earthy Theme) */}
@@ -2408,23 +2458,27 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 4. Optional App Install (Hidden automatically once installed to save space) */}
-              {!isPwaInstalled && (
-                <div className="p-3 rounded-xl bg-[#F7F3EB] border border-[#DDD2BE] space-y-2.5">
-                  <div className="space-y-0.5">
-                    <h3 className="font-bold text-[#2D2218] flex items-center gap-1.5 text-xs">
-                      <Smartphone className="w-3.5 h-3.5 text-[#C88A14]" />
-                      <span>{dict.installAppOptionalChoice}</span>
-                    </h3>
-                    <p className="text-[11px] text-[#5C4B3B] leading-relaxed">
-                      {dict.installAppOptionalChoiceDesc}
-                    </p>
-                  </div>
-                  <div className="pt-1">
-                    <PWAInstallButton lang={lang} variant="settings" />
-                  </div>
+              {/* 4. Silent Auto-Update Status (Single smart install alert handled globally to save space) */}
+              <div className="p-3 rounded-xl bg-[#F7F3EB] border border-[#DDD2BE] flex items-center justify-between gap-2.5">
+                <div className="space-y-0.5 min-w-0">
+                  <h3 className="font-bold text-[#2D2218] flex items-center gap-1.5 text-xs">
+                    <Smartphone className="w-3.5 h-3.5 text-[#4A6144]" />
+                    <span>
+                      {lang === 'ar'
+                        ? 'التحديث التلقائي الصامت'
+                        : 'Silent Automatic Updates'}
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-[#5C4B3B] leading-relaxed">
+                    {lang === 'ar'
+                      ? 'يبقى التطبيق محدّثاً تلقائياً في الخلفية دون مسح الذاكرة أو إعادة التثبيت.'
+                      : 'Keeps the app up to date silently in the background without cache clearing.'}
+                  </p>
                 </div>
-              )}
+                <span className="px-2.5 py-1 rounded-lg bg-[#4A6144]/15 border border-[#4A6144]/30 text-[#4A6144] text-[11px] font-bold shrink-0">
+                  {lang === 'ar' ? 'نشط' : 'Active'}
+                </span>
+              </div>
 
               {/* 4b. Privacy Policy & Platform Terms */}
               <div className="p-3 rounded-xl bg-[#ECFDF3] border border-[#86EFAC] flex items-center justify-between gap-3">
@@ -2686,6 +2740,9 @@ export default function App() {
           }}
         />
       )}
+
+      {/* Single Space-Saving Smart PWA Alert (Shown ONCE only when not installed) */}
+      <SmartPWAInstallAlert lang={lang} />
 
       {/* Privacy Policy & Platform Terms Modal */}
       <PrivacyTermsModal

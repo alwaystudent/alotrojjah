@@ -4,32 +4,43 @@ import App from './App.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import './index.css';
 
-// Automatic seamless PWA updates — applies new releases immediately without manual cache clearing or reinstall
+// Silent Automatic PWA Update Engine
+// Ensures the app always stays updated silently without manual cache clearing or reinstalling
 if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
-  let pendingReloadAfterCall = false;
+  const hadControllerAtLoad = Boolean(navigator.serviceWorker.controller);
+  let pendingSilentReload = false;
   let lastUpdateCheckAt = 0;
+  let swReloading = false;
 
-  const triggerSafeReload = () => {
-    const win = window as unknown as { __alutrujjahActiveVoiceCall?: boolean };
-    if (win.__alutrujjahActiveVoiceCall) {
-      pendingReloadAfterCall = true;
+  const canSafelyApplyReload = () => {
+    const win = window as unknown as {
+      __alutrujjahActiveVoiceCall?: boolean;
+      __alutrujjahActiveRecitation?: boolean;
+    };
+    return !win.__alutrujjahActiveVoiceCall && !win.__alutrujjahActiveRecitation;
+  };
+
+  const applySilentReloadIfSafe = () => {
+    if (swReloading) return;
+    if (!canSafelyApplyReload()) {
+      pendingSilentReload = true;
       return;
     }
+    swReloading = true;
     window.location.reload();
   };
 
   window.addEventListener('alutrujjah:call-ended', () => {
-    if (pendingReloadAfterCall) {
-      pendingReloadAfterCall = false;
-      window.location.reload();
+    if (pendingSilentReload) {
+      pendingSilentReload = false;
+      applySilentReloadIfSafe();
     }
   });
 
-  let swReloading = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (swReloading) return;
-    swReloading = true;
-    triggerSafeReload();
+    // Only reload when replacing a previously active SW version (not on initial install)
+    if (!hadControllerAtLoad) return;
+    applySilentReloadIfSafe();
   });
 
   const updateSW = registerSW({
@@ -37,24 +48,29 @@ if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
     onRegisteredSW(_swUrl, registration) {
       if (!registration) return;
 
-      const checkForUpdate = () => {
+      const checkSilentlyForUpdate = () => {
         const now = Date.now();
         if (now - lastUpdateCheckAt < 45_000) return;
         lastUpdateCheckAt = now;
         registration.update().catch(() => {});
       };
 
-      // Check shortly after startup, periodically, and when user returns to the app
-      window.setTimeout(checkForUpdate, 3000);
-      window.setInterval(checkForUpdate, 5 * 60 * 1000);
+      const win = window as unknown as {
+        __alutrujjahCheckSilentUpdate?: () => void;
+      };
+      win.__alutrujjahCheckSilentUpdate = checkSilentlyForUpdate;
+
+      // Silent check shortly after launch, periodically, and when returning to the app
+      window.setTimeout(checkSilentlyForUpdate, 2500);
+      window.setInterval(checkSilentlyForUpdate, 5 * 60 * 1000);
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') {
-          checkForUpdate();
+          checkSilentlyForUpdate();
         }
       });
     },
     onNeedRefresh() {
-      // With skipWaiting + clientsClaim enabled, force activation immediately
+      // Activate new Service Worker silently immediately
       updateSW(true).catch(() => {});
     },
   });
