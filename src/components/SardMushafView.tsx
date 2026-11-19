@@ -29,6 +29,9 @@ import {
   QuizLevel,
   SURAH_LIST,
   JUZ_LIST,
+  QuranRiwayah,
+  RIWAYAH_OPTIONS,
+  getRiwayahLabel,
   getPlanMushafPageRange,
   formatCurriculumTitle,
   getPlanTypeLabel,
@@ -37,6 +40,7 @@ import {
 } from '@/src/data/quranData';
 import { getDualDate } from '@/src/utils/calendar';
 import { memoryManager } from '@/src/utils/memoryCleanup';
+import { fetchMushafPageByRiwayah } from '@/src/utils/trustedQuranApi';
 import { t } from '@/src/data/translations';
 
 export interface MushafWordItem {
@@ -73,6 +77,7 @@ interface SardMushafViewProps {
   defaultSyncSpeed?: number;
   defaultTargetReps?: number;
   defaultQuizLevel?: QuizLevel;
+  defaultRiwayah?: QuranRiwayah;
   focusModeDefault?: boolean;
   onClose: () => void;
   onCompletePlanSard: (
@@ -362,6 +367,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
   defaultSyncSpeed = 1.0,
   defaultTargetReps = 5,
   defaultQuizLevel = 'intermediate',
+  defaultRiwayah = 'hafs',
   focusModeDefault,
   onClose,
   onCompletePlanSard,
@@ -369,6 +375,10 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
 }) => {
   const dict = t(lang);
   const initialRange = useMemo(() => getPlanMushafPageRange(plan), [plan]);
+
+  const [selectedRiwayah, setSelectedRiwayah] = useState<QuranRiwayah>(
+    plan.riwayah || defaultRiwayah
+  );
 
   const [focusMode, setFocusMode] = useState<boolean>(() => {
     if (typeof focusModeDefault === 'boolean') return focusModeDefault;
@@ -806,59 +816,30 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
     ]
   );
 
-  // Fetch Uthmani verses strictly page-by-page according to official Madinah Mushaf page numbers
+  // Fetch verses page-by-page according to official Madinah Mushaf page numbers & selected Riwayah
   useEffect(() => {
     let cancelled = false;
     const fetchMushafVerses = async () => {
       setLoadingPage(true);
       try {
-        const res = await fetch(
-          `https://api.quran.com/api/v4/verses/by_page/${currentPage}?words=false&fields=text_uthmani,chapter_id,verse_number,juz_number&per_page=50`
-        );
-        if (!res.ok) throw new Error('Primary API error');
-        const data = await res.json();
-        if (!cancelled && Array.isArray(data.verses) && data.verses.length > 0) {
-          const mapped = data.verses.map((v: any) => ({
-            surahNumber: Number(v.chapter_id || String(v.verse_key).split(':')[0]),
-            ayahNumber: Number(v.verse_number || String(v.verse_key).split(':')[1]),
-            textUthmani: v.text_uthmani,
-            juz: Number(v.juz_number || 1),
-          }));
+        const mapped = await fetchMushafPageByRiwayah(currentPage, selectedRiwayah);
+        if (!cancelled && mapped.length > 0) {
           buildWordsFromVerses(mapped);
           setLoadingPage(false);
           return;
         }
-        throw new Error('Empty primary response');
+        throw new Error('Empty Riwayah page response');
       } catch {
-        try {
-          const res2 = await fetch(
-            `https://api.alquran.cloud/v1/page/${currentPage}/quran-uthmani`
-          );
-          if (!res2.ok) throw new Error('Secondary API error');
-          const data2 = await res2.json();
-          if (!cancelled && data2?.data?.ayahs?.length > 0) {
-            const mapped2 = data2.data.ayahs.map((a: any) => ({
-              surahNumber: Number(a.surah.number),
-              ayahNumber: Number(a.numberInSurah),
+        if (!cancelled) {
+          buildWordsFromVerses(
+            FALLBACK_PAGE_1_AYAHS.map((a) => ({
+              surahNumber: a.surahNumber,
+              ayahNumber: a.ayahNumber,
               textUthmani: a.text,
-              juz: Number(a.juz || 1),
-            }));
-            buildWordsFromVerses(mapped2);
-            setLoadingPage(false);
-            return;
-          }
-        } catch {
-          if (!cancelled) {
-            buildWordsFromVerses(
-              FALLBACK_PAGE_1_AYAHS.map((a) => ({
-                surahNumber: a.surahNumber,
-                ayahNumber: a.ayahNumber,
-                textUthmani: a.text,
-                juz: 1,
-              }))
-            );
-            setLoadingPage(false);
-          }
+              juz: 1,
+            }))
+          );
+          setLoadingPage(false);
         }
       }
     };
@@ -867,7 +848,7 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [currentPage, buildWordsFromVerses]);
+  }, [currentPage, selectedRiwayah, buildWordsFromVerses]);
 
   // Stop microphone & speech recognition session cleanly
   const stopListeningSession = useCallback(() => {
@@ -1632,6 +1613,27 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
+            {/* Compact Riwayah Switcher: Hafs / Qalun / Warsh */}
+            <div
+              className="hidden sm:flex items-center gap-0.5 p-0.5 rounded-xl bg-white/10 border border-white/15"
+              title={lang === 'ar' ? 'اختيار الرواية القرآنية' : 'Select Quran Riwayah'}
+            >
+              {RIWAYAH_OPTIONS.map((rw) => (
+                <button
+                  key={rw.id}
+                  type="button"
+                  onClick={() => setSelectedRiwayah(rw.id)}
+                  className={`px-2 py-1 rounded-lg text-[11px] font-bold transition-colors cursor-pointer ${
+                    selectedRiwayah === rw.id
+                      ? 'bg-[#EAB338] text-[#2D2218]'
+                      : 'text-[#E6D7BE] hover:text-white'
+                  }`}
+                >
+                  {lang === 'ar' ? rw.shortAr : rw.shortEn}
+                </button>
+              ))}
+            </div>
+
             {/* Automatic Silent Alerts Indicator */}
             <div
               className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/10 border border-white/15 text-[11px] text-[#E6D7BE]"
@@ -1747,19 +1749,33 @@ export const SardMushafView: React.FC<SardMushafViewProps> = ({
             {/* Mushaf Page Header Marginalia (Always RTL for authentic Mushaf order) */}
             <div
               dir="rtl"
-              className="flex items-center justify-between pb-2 mb-3.5 border-b border-[#DFD2B8] text-xs font-display-islamic font-bold text-[#5C4B3B]"
+              className="flex flex-wrap items-center justify-between gap-2 pb-2 mb-3.5 border-b border-[#DFD2B8] text-xs font-display-islamic font-bold text-[#5C4B3B]"
             >
               <span>{ayahGroups[0] ? `سُورَةُ ${ayahGroups[0].surahNameAr}` : ''}</span>
               <span className="text-[#C88A14]">
                 {totalPlanPages > 1
                   ? `الورقة ${toArabicNumerals(currentPlanPageOrder)} من ${toArabicNumerals(
                       totalPlanPages
-                    )} · صفحة المصحف ${toArabicNumerals(currentPage)}`
-                  : `صفحة المصحف ${toArabicNumerals(currentPage)}`}
+                    )} · صفحة المصحف ${toArabicNumerals(currentPage)} · برواية ${getRiwayahLabel(selectedRiwayah, 'ar')}`
+                  : `صفحة المصحف ${toArabicNumerals(currentPage)} · برواية ${getRiwayahLabel(selectedRiwayah, 'ar')}`}
               </span>
-              <span>
-                {JUZ_LIST.find((j) => j.number === pageJuz)?.nameAr || `الجزء ${pageJuz}`}
-              </span>
+              <div className="flex items-center gap-2">
+                <select
+                  value={selectedRiwayah}
+                  onChange={(e) => setSelectedRiwayah(e.target.value as QuranRiwayah)}
+                  aria-label="الرواية"
+                  className="sm:hidden px-2 py-0.5 rounded-lg bg-[#F6E9C8] border border-[#C88A14]/40 text-[11px] font-bold text-[#2D2218]"
+                >
+                  {RIWAYAH_OPTIONS.map((rw) => (
+                    <option key={rw.id} value={rw.id}>
+                      {rw.shortAr}
+                    </option>
+                  ))}
+                </select>
+                <span>
+                  {JUZ_LIST.find((j) => j.number === pageJuz)?.nameAr || `الجزء ${pageJuz}`}
+                </span>
+              </div>
             </div>
 
             {loadingPage ? (

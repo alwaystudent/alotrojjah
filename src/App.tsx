@@ -30,16 +30,40 @@ import {
   Sparkles,
   ChevronDown,
   ChevronUp,
+  CalendarDays,
+  Play,
+  Compass,
+  ArrowLeft,
+  ArrowRight,
+  PlusCircle,
   Star,
   Award,
   Brain,
   AlertCircle,
+  BookMarked,
+  Users,
+  PhoneCall,
+  PhoneOff,
 } from 'lucide-react';
+import { User, onAuthStateChanged } from 'firebase/auth';
+import {
+  collection,
+  doc,
+  onSnapshot,
+  query,
+  serverTimestamp,
+  updateDoc,
+  where,
+} from 'firebase/firestore';
+import { auth, db, OperationType, handleFirestoreError } from './firebase';
 import {
   Language,
   PlanType,
   DayId,
   QuranPlanItem,
+  QuranRiwayah,
+  RIWAYAH_OPTIONS,
+  getRiwayahLabel,
   PlanEvaluation,
   MemorizationReport,
   QuranRandomQuizItem,
@@ -47,17 +71,19 @@ import {
   getEvaluationLabel,
   QuizLevel,
   WEEK_DAYS,
+  SURAH_LIST,
   INITIAL_PLANS,
   getTodayDayId,
   formatCurriculumTitle,
   getPlanTypeLabel,
   getScopeLabel,
-  isPlanOverdue,
 } from './data/quranData';
 import { t } from './data/translations';
 import { PlanModal } from './components/PlanModal';
 import { AnalyticsSection } from './components/AnalyticsSection';
 import { RemindersSection } from './components/RemindersSection';
+import { MutunAdhkarSection } from './components/MutunAdhkarSection';
+import { DuoRecitationSection } from './components/DuoRecitationSection';
 import { SardMushafView } from './components/SardMushafView';
 import { SmartMemorizationSystem } from './components/SmartMemorizationSystem';
 import { RandomQuizModal } from './components/RandomQuizModal';
@@ -65,6 +91,15 @@ import { MemorizationReportModal } from './components/MemorizationReportModal';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { getDualDate, getCompactDualDate } from './utils/calendar';
 import { memoryManager } from './utils/memoryCleanup';
+import {
+  IncomingDuoCall,
+  syncVerifiedUserProfileAndDirectory,
+} from './utils/friendsDirectory';
+import {
+  callRingtone,
+  dispatchBackgroundCallNotification,
+  dismissBackgroundCallNotification,
+} from './utils/ringtone';
 import {
   loadStoredReports,
   saveStoredReports,
@@ -96,9 +131,32 @@ export default function App() {
     return INITIAL_PLANS;
   });
 
+  const [initialFriendInviteToken, setInitialFriendInviteToken] = useState<string>(() => {
+    try {
+      const inv = new URLSearchParams(window.location.search).get('friendInvite');
+      return inv ? inv.trim() : '';
+    } catch {
+      return '';
+    }
+  });
+
+  const [pendingAcceptCallId, setPendingAcceptCallId] = useState<string | null>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get('duo');
+      const action = params.get('callAction');
+      return code && action === 'answer' ? code.trim().toUpperCase() : null;
+    } catch {
+      return null;
+    }
+  });
+  const [authUser, setAuthUser] = useState<User | null>(auth.currentUser);
+  const [incomingCall, setIncomingCall] = useState<IncomingDuoCall | null>(null);
+  const lastRingingCallIdRef = useRef<string | null>(null);
+
   const [activeSection, setActiveSection] = useState<
-    'schedule' | 'today' | 'analytics' | 'reminders'
-  >('schedule');
+    'home' | 'schedule' | 'today' | 'analytics' | 'reminders' | 'mutun' | 'duo'
+  >(() => (initialFriendInviteToken || pendingAcceptCallId ? 'duo' : 'home'));
   const [expandedSardPlanId, setExpandedSardPlanId] = useState<string | null>(null);
   const [smartMemorizationPlan, setSmartMemorizationPlan] = useState<QuranPlanItem | null>(null);
 
@@ -193,15 +251,140 @@ export default function App() {
   const [defaultSyncSpeed, setDefaultSyncSpeed] = useState<number>(1.0);
   const [defaultTargetReps, setDefaultTargetReps] = useState<number>(5);
   const [defaultQuizLevel, setDefaultQuizLevel] = useState<QuizLevel>('intermediate');
+  const [defaultRiwayah, setDefaultRiwayah] = useState<QuranRiwayah>(() => {
+    try {
+      const saved = localStorage.getItem('alutrujjah_riwayah');
+      if (saved === 'hafs' || saved === 'qalun' || saved === 'warsh') return saved;
+    } catch {
+      // ignore
+    }
+    return 'hafs';
+  });
   const [confirmDeleteAll, setConfirmDeleteAll] = useState<boolean>(false);
   const [ramCleanupMessage, setRamCleanupMessage] = useState<string | null>(null);
+  const [noPlansAlertOpen, setNoPlansAlertOpen] = useState<boolean>(false);
 
   const dict = t(lang);
   const todayId = getTodayDayId();
-  const totalOverdueCount = useMemo(
-    () => plans.filter((p) => isPlanOverdue(p, todayId)).length,
-    [plans, todayId]
-  );
+
+  // Global Firebase Auth + Incoming Friend Call Ringing Listener (active on all screens)
+  useEffect(() => {
+    const unsubAuth = onAuthStateChanged(auth, async (nextUser) => {
+      setAuthUser(nextUser);
+      if (nextUser && nextUser.emailVerified) {
+        await syncVerifiedUserProfileAndDirectory(nextUser);
+      }
+    });
+    return () => unsubAuth();
+  }, []);
+
+  const handleDeclineIncomingCall = async (targetSessionId: string) => {
+    callRingtone.stop();
+    dismissBackgroundCallNotification(targetSessionId);
+    setIncomingCall(null);
+    lastRingingCallIdRef.current = null;
+    if (!auth.currentUser?.emailVerified) return;
+    const callPath = `duoSessions/${targetSessionId}`;
+    try {
+      await updateDoc(doc(db, 'duoSessions', targetSessionId), {
+        status: 'declined',
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      console.warn('Decline call notice:', err, callPath);
+    }
+  };
+
+  const handleAcceptIncomingCall = (targetSessionId: string) => {
+    callRingtone.stop();
+    callRingtone.unlockAudio();
+    dismissBackgroundCallNotification(targetSessionId);
+    setIncomingCall(null);
+    lastRingingCallIdRef.current = null;
+    setPendingAcceptCallId(targetSessionId);
+    setActiveSection('duo');
+  };
+
+  useEffect(() => {
+    if (!authUser || !authUser.emailVerified) {
+      setIncomingCall(null);
+      callRingtone.stop();
+      return;
+    }
+
+    const incomingQuery = query(
+      collection(db, 'duoSessions'),
+      where('calleeUid', '==', authUser.uid),
+      where('status', '==', 'ringing')
+    );
+
+    const unsubCalls = onSnapshot(
+      incomingQuery,
+      (snap) => {
+        if (snap.empty) {
+          if (lastRingingCallIdRef.current) {
+            dismissBackgroundCallNotification(lastRingingCallIdRef.current);
+            lastRingingCallIdRef.current = null;
+          }
+          callRingtone.stop();
+          setIncomingCall(null);
+          return;
+        }
+
+        const firstDoc = snap.docs[0];
+        const callData = firstDoc.data() as IncomingDuoCall;
+        setIncomingCall(callData);
+
+        if (lastRingingCallIdRef.current !== callData.sessionId) {
+          lastRingingCallIdRef.current = callData.sessionId;
+          callRingtone.start('incoming');
+
+          const surahObj = SURAH_LIST.find((s) => s.number === callData.surahNumber);
+          const rwLabel = getRiwayahLabel(callData.riwayah || 'hafs', lang);
+          const surahLabel =
+            callData.curriculumMode === 'page'
+              ? lang === 'ar'
+                ? `الصفحات ${callData.pageFrom || 1}-${callData.pageTo || callData.pageFrom || 1} (${rwLabel})`
+                : `Pages ${callData.pageFrom || 1}-${callData.pageTo || callData.pageFrom || 1} (${rwLabel})`
+              : surahObj
+              ? lang === 'ar'
+                ? `سورة ${surahObj.nameAr} (${rwLabel})`
+                : `Surah ${surahObj.nameEn} (${rwLabel})`
+              : '';
+          dispatchBackgroundCallNotification({
+            sessionId: callData.sessionId,
+            callerName: callData.hostName,
+            surahLabel,
+            ayahRange: `${callData.ayahFrom}-${callData.ayahTo}`,
+            lang,
+          });
+        }
+      },
+      (err) => {
+        handleFirestoreError(err, OperationType.LIST, 'duoSessions');
+      }
+    );
+
+    return () => {
+      unsubCalls();
+    };
+  }, [authUser, lang]);
+
+  // Listen to Service Worker Notification Click actions (Answer / Decline from background notification)
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+    const onSwMessage = (event: MessageEvent) => {
+      const msg = event.data;
+      if (!msg || msg.type !== 'CALL_NOTIFICATION_ACTION' || !msg.sessionId) return;
+      if (msg.action === 'decline') {
+        handleDeclineIncomingCall(msg.sessionId);
+      } else {
+        handleAcceptIncomingCall(msg.sessionId);
+      }
+    };
+    navigator.serviceWorker.addEventListener('message', onSwMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', onSwMessage);
+  }, []);
 
   useEffect(() => {
     document.documentElement.lang = lang;
@@ -800,92 +983,97 @@ export default function App() {
   const todayCompletedCount = plans.filter(
     (p) => p.day === todayId && p.status === 'completed'
   ).length;
+  const nextTodayPlan = useMemo(
+    () => plans.find((p) => p.day === todayId && p.status !== 'completed') || null,
+    [plans, todayId]
+  );
   const todayDual = useMemo(() => getDualDate(new Date(), lang), [lang]);
 
   return (
     <div
       dir={lang === 'ar' ? 'rtl' : 'ltr'}
-      className="w-full min-w-full min-h-screen flex flex-col bg-[#F7F3EB] text-[#261C14] islamic-pattern-subtle overflow-x-hidden"
+      className="w-full min-w-full min-h-screen flex flex-col bg-[#F7F3EB] text-[#261C14] islamic-pattern-subtle overflow-x-hidden pb-20 sm:pb-24"
     >
-      {/* Fixed/Sticky Top Header */}
+      {/* Clean Top Bar in Original Warm Parchment, Umber & Mustard Gold Theme */}
       <header className="w-full sticky top-0 z-30 bg-[#FFFDF9]/95 backdrop-blur-md border-b border-[#DDD2BE] shadow-xs">
-        {/* Row 1: Top Brand Row — Logo, Language Toggle, Pure Date, Settings — strictly on the same level across all devices */}
-        <div className="w-full px-2.5 sm:px-6 lg:px-8 py-2 sm:py-2.5 flex items-center justify-between gap-1.5 sm:gap-3 flex-nowrap">
-          {/* Brand Emblem Logo & Title */}
-          <div className="flex items-center gap-2 sm:gap-3 shrink-0 min-w-0">
-            <a
-              href="#schedule"
-              onClick={(e) => {
-                e.preventDefault();
-                setActiveSection('schedule');
-              }}
-              className="flex items-center gap-2 sm:gap-3 shrink-0 group cursor-pointer focus:outline-none"
-              title={dict.brandTitle}
-            >
-              {/* Distinctive & Clear Utrujjah Medallion Emblem */}
-              <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-2xl bg-gradient-to-br from-[#1C1610] via-[#2D2218] to-[#4A3828] border-2 border-[#EAB338] shadow-md flex items-center justify-center relative overflow-hidden group-hover:scale-105 group-hover:border-[#F6D365] transition-all shrink-0">
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-[#EAB338]/20 via-transparent to-transparent pointer-events-none" />
-                <svg
-                  className="w-5 h-5 sm:w-7 sm:h-7 text-[#EAB338]"
-                  viewBox="0 0 36 36"
-                  fill="none"
-                  aria-hidden="true"
-                >
-                  {/* Islamic 8-point geometric star (Rub el Hizb) */}
-                  <rect
-                    x="7"
-                    y="7"
-                    width="22"
-                    height="22"
-                    rx="3"
-                    stroke="#EAB338"
-                    strokeWidth="1.6"
-                    strokeOpacity="0.85"
-                  />
-                  <rect
-                    x="7"
-                    y="7"
-                    width="22"
-                    height="22"
-                    rx="3"
-                    transform="rotate(45 18 18)"
-                    stroke="#EAB338"
-                    strokeWidth="1.6"
-                    strokeOpacity="0.85"
-                  />
-                  {/* Inner glowing citrus medallion */}
-                  <path
-                    d="M18 9 C22 12, 23.5 15.5, 23.5 18.8 C23.5 22.3 21 25.2 18 26.5 C15 25.2 12.5 22.3 12.5 18.8 C12.5 15.5 14 12, 18 9 Z"
-                    fill="#EAB338"
-                    fillOpacity="0.35"
-                    stroke="#EAB338"
-                    strokeWidth="1.6"
-                  />
-                  <circle cx="18" cy="18" r="2.2" fill="#EAB338" />
-                </svg>
-              </div>
+        <div className="w-full px-3 sm:px-6 lg:px-10 py-2 sm:py-2.5 flex items-center justify-between gap-2 flex-nowrap">
+          {/* Start: Original App Logo & Brand Name */}
+          <a
+            href="#home"
+            onClick={(e) => {
+              e.preventDefault();
+              setActiveSection('home');
+            }}
+            className="flex items-center gap-2.5 shrink-0 group cursor-pointer focus:outline-none"
+            title={dict.brandTitle}
+          >
+            <img
+              src="/icon.svg"
+              alt={dict.brandTitle}
+              className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl border border-[#EAB338]/70 shadow-sm object-cover group-hover:scale-105 transition-transform shrink-0"
+            />
+            <div className="flex flex-col min-w-0">
+              <span className="text-lg sm:text-2xl font-extrabold font-display-islamic leading-none text-[#2D2218] tracking-tight whitespace-nowrap">
+                {dict.brandTitle}
+              </span>
+              <span className="text-[10px] font-bold text-[#8B6514] mt-0.5 hidden sm:block truncate">
+                {dict.brandSubtitle}
+              </span>
+            </div>
+          </a>
 
-              {/* Bold Brand Name & Subtitle */}
-              <div className="flex flex-col min-w-0">
-                <span className="text-xl sm:text-2xl md:text-3xl font-extrabold font-display-islamic leading-none text-[#2D2218] tracking-tight truncate">
-                  {dict.brandTitle}
-                </span>
-                <span className="text-[10px] sm:text-xs font-bold text-[#8B6514] tracking-normal mt-0.5 hidden md:block">
-                  {dict.brandSubtitle}
-                </span>
-              </div>
-            </a>
+          {/* Center (Desktop): Harmonious Single-Line Date */}
+          <div className="hidden md:flex items-center justify-center">
+            <div
+              className="inline-flex items-center justify-center gap-2 px-3.5 py-1 rounded-full bg-[#F7F3EB] border border-[#DDD2BE] text-[#2D2218] font-mono-tabular select-none whitespace-nowrap text-xs shadow-2xs"
+              title={dict.todayDateLabel}
+            >
+              <Calendar className="w-3.5 h-3.5 text-[#C88A14] shrink-0" />
+              <span className="font-bold text-[#C88A14] whitespace-nowrap">
+                {lang === 'ar' ? todayInfo.nameAr : todayInfo.nameEn}
+              </span>
+              <span className="text-[#DDD2BE]">|</span>
+              <span className="font-bold text-[#2D2218] whitespace-nowrap">
+                {todayDual.hijriDate}
+              </span>
+              <span className="text-[#C88A14] font-bold">·</span>
+              <span className="text-[#5C4B3B] font-medium whitespace-nowrap">
+                {todayDual.gregorianDate}
+              </span>
+            </div>
           </div>
 
-          {/* Action Strip: Today's Count, Language Switcher directly on the right of Settings, Settings Icon */}
-          <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0 ms-auto flex-nowrap">
-            {/* Today's count badge */}
-            <span className="text-[11px] sm:text-xs font-mono-tabular font-semibold text-[#84715E] bg-[#F7F3EB] px-2.5 py-1.5 rounded-xl border border-[#E5DEC9] shrink-0">
-              {lang === 'ar' ? todayInfo.nameAr : todayInfo.shortEn} · {todayCompletedCount}/
-              {todayPlansCount}
-            </span>
+          {/* End: Analytics on the right of Reminders, Reminders on the right of Language Toggle, then Settings */}
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-nowrap">
+            {/* Analytics Icon directly on the right of Reminders (first in RTL order) */}
+            <button
+              type="button"
+              onClick={() => setActiveSection('analytics')}
+              title={dict.navAnalytics}
+              className={`p-2 sm:p-2.5 rounded-xl border transition-all cursor-pointer flex items-center justify-center shadow-2xs shrink-0 ${
+                activeSection === 'analytics'
+                  ? 'bg-[#EFE9DC] border-[#C88A14] text-[#9E650C]'
+                  : 'bg-[#F7F3EB] hover:bg-[#EFE9DC] border-[#DDD2BE] hover:border-[#C88A14] text-[#2D2218]'
+              }`}
+            >
+              <BarChart3 className="w-4 h-4 sm:w-4.5 sm:h-4.5 text-[#C88A14]" />
+            </button>
 
-            {/* Language Switcher Button directly on the right of Settings (على يمين رمز الإعدادات مباشرة) */}
+            {/* Reminders Icon directly on the right of Language Toggle (in RTL) */}
+            <button
+              type="button"
+              onClick={() => setActiveSection('reminders')}
+              title={dict.navReminders}
+              className={`p-2 sm:p-2.5 rounded-xl border transition-all cursor-pointer flex items-center justify-center shadow-2xs shrink-0 ${
+                activeSection === 'reminders'
+                  ? 'bg-[#EFE9DC] border-[#C88A14] text-[#9E650C]'
+                  : 'bg-[#F7F3EB] hover:bg-[#EFE9DC] border-[#DDD2BE] hover:border-[#C88A14] text-[#2D2218]'
+              }`}
+            >
+              <Bell className="w-4 h-4 sm:w-4.5 sm:h-4.5 text-[#C88A14]" />
+            </button>
+
+            {/* Language Switcher Button */}
             <button
               type="button"
               onClick={handleToggleLanguage}
@@ -898,7 +1086,7 @@ export default function App() {
               </span>
             </button>
 
-            {/* Settings Button (رمز الإعدادات) */}
+            {/* Settings Button */}
             <button
               type="button"
               onClick={() => {
@@ -913,114 +1101,57 @@ export default function App() {
           </div>
         </div>
 
-        {/* Row 2: Fixed Horizontal Navigation Menu with Centered Single-Line Date Above It */}
-        <div className="bg-[#F7F3EB]/95 border-t border-[#E5DEC9]">
-          {/* Centered Single-Line Harmonious Date Badge (التاريخ في سطر واحد بتناسق مناسب في الوسط أعلى القائمة الرئيسية) */}
-          <div className="w-full flex items-center justify-center pt-2 pb-1 px-2.5 sm:px-6">
-            <div
-              className="inline-flex items-center justify-center gap-1.5 sm:gap-2.5 px-3 sm:px-4 py-1 rounded-full bg-[#FFFDF9] border border-[#DDD2BE] text-[#2D2218] shadow-2xs font-mono-tabular select-none max-w-full overflow-hidden text-center"
-              title={dict.todayDateLabel}
-            >
-              <Calendar className="w-3.5 h-3.5 text-[#C88A14] shrink-0" />
-              <span className="font-bold text-[#C88A14] whitespace-nowrap text-[11px] sm:text-xs">
-                {lang === 'ar' ? todayInfo.nameAr : todayInfo.nameEn}
-              </span>
-              <span className="text-[#DDD2BE] shrink-0">|</span>
-              <span className="font-bold text-[#2D2218] whitespace-nowrap text-[11px] sm:text-xs">
-                {todayDual.hijriDate}
-              </span>
-              <span className="text-[#C88A14] font-bold shrink-0">·</span>
-              <span className="text-[#5C4B3B] font-medium whitespace-nowrap text-[11px] sm:text-xs">
-                {todayDual.gregorianDate}
-              </span>
-            </div>
-          </div>
-
-          <div className="w-full px-2 sm:px-6 lg:px-8 pb-1 pt-0.5">
-            <nav className="grid grid-cols-4 gap-1.5 sm:gap-3 w-full">
-              {(
-                [
-                  { id: 'schedule', label: dict.navSchedule, Icon: Home },
-                  { id: 'today', label: dict.navToday, Icon: BookOpen },
-                  { id: 'analytics', label: dict.navAnalytics, Icon: BarChart3 },
-                  { id: 'reminders', label: dict.navReminders, Icon: Bell },
-                ] as const
-              ).map((nav) => {
-                const NavIcon = nav.Icon;
-                const isActive = activeSection === nav.id;
-                return (
-                  <button
-                    key={nav.id}
-                    type="button"
-                    onClick={() => setActiveSection(nav.id)}
-                    className={`relative flex flex-col items-center justify-center gap-1 py-1.5 px-1 rounded-xl text-[11px] sm:text-xs font-bold transition-all cursor-pointer ${
-                      isActive
-                        ? 'bg-[#2D2218] text-[#EAB338] shadow-2xs'
-                        : 'text-[#5C4B3B] hover:text-[#261C14] hover:bg-[#EFE9DC]/80'
-                    }`}
-                  >
-                    {nav.id === 'reminders' && totalOverdueCount > 0 && (
-                      <span
-                        className="absolute top-1 end-1.5 sm:end-3 px-1.5 py-0.2 rounded-full bg-[#C53030] text-white text-[9.5px] font-bold ring-1 ring-white shadow-xs animate-pulse"
-                        title={lang === 'ar' ? `${totalOverdueCount} خطة متأخرة` : `${totalOverdueCount} overdue tasks`}
-                      >
-                        {totalOverdueCount}
-                      </span>
-                    )}
-                    <NavIcon
-                      className={`w-4 h-4 shrink-0 ${
-                        isActive ? 'text-[#EAB338]' : 'text-[#C88A14]'
-                      }`}
-                    />
-                    <span className="leading-none truncate max-w-full">{nav.label}</span>
-                  </button>
-                );
-              })}
-            </nav>
+        {/* Mobile Centered Single-Line Date Strip */}
+        <div className="md:hidden w-full flex items-center justify-center py-1 px-2 border-t border-[#E5DEC9] bg-[#F7F3EB]/95">
+          <div
+            className="inline-flex items-center justify-center gap-1.5 px-3 py-0.5 rounded-full bg-[#FFFDF9] border border-[#DDD2BE] text-[#2D2218] font-mono-tabular select-none max-w-full overflow-hidden text-[11px] shadow-2xs"
+            title={dict.todayDateLabel}
+          >
+            <Calendar className="w-3 h-3 text-[#C88A14] shrink-0" />
+            <span className="font-bold text-[#C88A14] whitespace-nowrap">
+              {lang === 'ar' ? todayInfo.nameAr : todayInfo.shortEn}
+            </span>
+            <span className="text-[#DDD2BE]">|</span>
+            <span className="font-bold text-[#2D2218] whitespace-nowrap truncate">
+              {todayDual.hijriDate}
+            </span>
+            <span className="text-[#C88A14] font-bold">·</span>
+            <span className="text-[#5C4B3B] font-medium whitespace-nowrap truncate">
+              {todayDual.gregorianDate}
+            </span>
           </div>
         </div>
 
-        {/* Row 3: PWA Install Strip Underneath Horizontal Navigation with Shortened Description and Install Button on the Left */}
-        <div className="bg-[#EFE9DC]/90 border-t border-b border-[#DDD2BE] px-2.5 sm:px-6 lg:px-8 py-1.5 sm:py-2 flex flex-nowrap items-center justify-between gap-2 w-full">
-          {/* Right/Start: Icon + Concise Description */}
-          <div className="flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm text-[#2D2218] min-w-0 flex-1 overflow-hidden">
-            <Smartphone className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#C88A14] shrink-0" />
-            <span className="font-bold text-[#2D2218] whitespace-nowrap text-xs sm:text-sm">
-              {lang === 'ar' ? 'تثبيت المنصة:' : 'Install:'}
-            </span>
-            <span className="text-[#5C4B3B] text-xs truncate">
-              {lang === 'ar'
-                ? 'وصول سريع ومتابعة مستمرة دون متجر'
-                : 'Quick access & continuous tracking without an app store'}
-            </span>
-          </div>
-
-          {/* Left/End: Install Button strictly on the left of description on the same horizontal line */}
-          <div className="shrink-0">
+        {/* Top Left Bar directly under Date: PWA Install Button */}
+        <div
+          dir="ltr"
+          className="w-full px-3 sm:px-6 lg:px-10 py-1 border-t border-[#E5DEC9]/80 bg-[#F7F3EB]/90 flex items-center justify-start"
+        >
+          <div dir={lang === 'ar' ? 'rtl' : 'ltr'}>
             <PWAInstallButton lang={lang} variant="header" />
           </div>
         </div>
       </header>
 
-      {/* In-App Reminder Notification Banner when triggered */}
+      {/* In-App Reminder Notification Banner when triggered (Soft Comfortable Earthy Theme) */}
       {activeToast && (
-        <div className="bg-[#2D2218] text-[#FFFDF9] border-b border-[#C88A14] px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
+        <div className="bg-[#FBF3DF] text-[#261C14] border-b border-[#C88A14] px-4 sm:px-6 py-3 flex items-center justify-between gap-4 shadow-sm">
           <div className="flex items-center gap-3 text-xs sm:text-sm">
             {activeToast.isPrep ? (
-              <Clock className="w-4 h-4 text-[#EAB338] shrink-0" />
+              <Clock className="w-4 h-4 text-[#C88A14] shrink-0" />
             ) : (
-              <Bell className="w-4 h-4 text-[#EAB338] shrink-0" />
+              <Bell className="w-4 h-4 text-[#C88A14] shrink-0" />
             )}
             <div>
-              <span className="font-bold text-[#EAB338]">{activeToast.title}</span>
-              <span className="mx-2 text-[#84715E]">·</span>
-              <span>{activeToast.body}</span>
+              <span className="font-bold text-[#9E650C]">{activeToast.title}</span>
+              <span className="mx-2 text-[#C88A14]">·</span>
+              <span className="text-[#261C14]">{activeToast.body}</span>
             </div>
           </div>
           <button
             type="button"
             onClick={() => setActiveToast(null)}
-            className="px-2.5 py-1 rounded-md bg-white/10 text-xs hover:bg-white/20 transition-colors cursor-pointer shrink-0"
+            className="px-2.5 py-1 rounded-md bg-[#EFE9DC] border border-[#DDD2BE] text-xs font-semibold text-[#2D2218] hover:bg-[#E5DEC9] transition-colors cursor-pointer shrink-0"
           >
             {lang === 'ar' ? 'إغلاق' : 'Dismiss'}
           </button>
@@ -1028,11 +1159,292 @@ export default function App() {
       )}
 
       {/* Main Content Container */}
-      <main className="flex-1 w-full px-2.5 sm:px-5 lg:px-6 py-2.5 sm:py-4 space-y-3">
-        {/* Compact Hero & Quick Action Strip */}
+      <main className="flex-1 w-full px-3 sm:px-6 lg:px-10 py-4 sm:py-6 space-y-5">
+        {/* HOME VIEW — Original Warm Umber, Parchment, Mustard Gold & Olive Theme (NO Tables Shown on Home!) */}
+        {activeSection === 'home' && (
+          <section className="max-w-5xl mx-auto space-y-5">
+            {/* Centered Title & Greeting (Logo above platform title removed as requested) */}
+            <div className="flex flex-col items-center text-center pt-1 pb-1 space-y-2.5">
+              <h1 className="text-3xl sm:text-4xl font-extrabold font-display-islamic text-[#2D2218] leading-tight">
+                {dict.homePlatformTitle}
+              </h1>
+
+              {/* Thin Line with Centered Gold Diamond + Spaced Title */}
+              <div className="flex flex-col items-center gap-1.5 w-44">
+                <div className="w-full flex items-center gap-2">
+                  <div className="flex-1 h-px bg-[#DDD2BE]" />
+                  <span className="w-2 h-2 rotate-45 bg-[#C88A14] inline-block shrink-0" />
+                  <div className="flex-1 h-px bg-[#DDD2BE]" />
+                </div>
+                <span className="text-[11px] font-bold tracking-[0.28em] text-[#9E6A0C] uppercase">
+                  {dict.homePlatformLatin}
+                </span>
+              </div>
+
+              <p className="text-sm sm:text-base font-bold text-[#5C4B3B] max-w-xl leading-relaxed">
+                {dict.homeWelcomeLine}
+              </p>
+            </div>
+
+            {/* Guiding Compass Callout Card */}
+            <div className="rounded-2xl bg-[#FFFDF9] border border-[#DDD2BE] px-4 py-3.5 flex items-center gap-3 shadow-2xs">
+              <div className="w-9 h-9 rounded-full bg-[#F6E9C8] text-[#9E6A0C] flex items-center justify-center shrink-0">
+                <Compass className="w-5 h-5" />
+              </div>
+              <p className="text-xs sm:text-sm font-medium text-[#2D2218] leading-relaxed">
+                {dict.homeGuidePrompt}
+              </p>
+            </div>
+
+            {/* Clean Feature Cards Grid in Original App Palette (NO tables or schedules on home!) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Card 1 (TOP): Add Quran Plans (Above Self-Paced Sard on all screens) */}
+              <div className="md:col-span-2 gold-card-surface rounded-[24px] border border-[#E6D19E] border-t-[3px] border-t-[#C88A14] p-5 relative overflow-hidden shadow-xs flex flex-col justify-between gap-4">
+                <svg className="w-28 h-28 absolute -bottom-6 -end-6 text-[#C88A14]/10 pointer-events-none" viewBox="0 0 96 96" fill="none" aria-hidden="true">
+                  <rect x="20" y="20" width="56" height="56" rx="4" stroke="currentColor" strokeWidth="2" />
+                  <rect x="20" y="20" width="56" height="56" rx="4" transform="rotate(45 48 48)" stroke="currentColor" strokeWidth="2" />
+                </svg>
+
+                <div className="space-y-3 relative z-10">
+                  <div className="flex items-start gap-3.5">
+                    <div className="w-12 h-12 rounded-2xl bg-[#F6E9C8] border border-[#E5C983] flex items-center justify-center text-[#9E650C] shrink-0">
+                      <PlusCircle className="w-6 h-6" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h2 className="text-lg sm:text-xl font-extrabold text-[#261C14] leading-snug">
+                        {dict.homeCardAddTitle}
+                      </h2>
+                      <p className="text-xs sm:text-sm font-bold text-[#9E650C] mt-0.5">
+                        {dict.homeCardAddSub}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="text-xs sm:text-sm text-[#5C4B3B] leading-relaxed">
+                    {dict.homeCardAddDesc}
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-between gap-3 pt-1 relative z-10">
+                  <button
+                    type="button"
+                    onClick={() => handleOpenAddModal(todayId)}
+                    className="mustard-gradient-btn rounded-full text-[#FFFDF9] px-5 py-2.5 text-xs sm:text-sm font-bold inline-flex items-center gap-2 shadow-xs transition-all cursor-pointer whitespace-nowrap"
+                  >
+                    <span>{dict.homeCardAddCta}</span>
+                    {lang === 'ar' ? (
+                      <ArrowLeft className="w-4 h-4 shrink-0" />
+                    ) : (
+                      <ArrowRight className="w-4 h-4 shrink-0" />
+                    )}
+                  </button>
+                  <span className="text-xs font-medium text-[#84715E]">
+                    {lang === 'ar' ? 'تخصيص مرن' : 'Flexible Setup'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Card 2: Self-Paced Sard & Smart Memorization (Original Olive Green) */}
+              <div className="md:col-span-2 olive-card-surface rounded-[24px] border border-[#C8D4C2] border-t-[3px] border-t-[#4A6144] p-5 relative overflow-hidden shadow-xs flex flex-col justify-between gap-4">
+                <svg className="w-28 h-28 absolute -bottom-6 -end-6 text-[#4A6144]/10 pointer-events-none" viewBox="0 0 96 96" fill="none" aria-hidden="true">
+                  <rect x="20" y="20" width="56" height="56" rx="4" stroke="currentColor" strokeWidth="2" />
+                  <rect x="20" y="20" width="56" height="56" rx="4" transform="rotate(45 48 48)" stroke="currentColor" strokeWidth="2" />
+                </svg>
+
+                <div className="space-y-3 relative z-10">
+                  <div className="flex items-start gap-3.5">
+                    <div className="w-12 h-12 rounded-2xl bg-[#4A6144]/15 border border-[#4A6144]/25 flex items-center justify-center text-[#4A6144] shrink-0">
+                      <BookOpen className="w-6 h-6" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h2 className="text-lg sm:text-xl font-extrabold text-[#261C14] leading-snug">
+                        {dict.homeCardSelfTitle}
+                      </h2>
+                      <p className="text-xs sm:text-sm font-bold text-[#4A6144] mt-0.5">
+                        {dict.homeCardSelfSub}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="text-xs sm:text-sm text-[#5C4B3B] leading-relaxed">
+                    {dict.homeCardSelfDesc}
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-between gap-3 pt-1 relative z-10">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (plans.length === 0) {
+                        setNoPlansAlertOpen(true);
+                      } else if (nextTodayPlan) {
+                        handleOpenPlanScreen(nextTodayPlan.id);
+                      } else if (todayPlansCount > 0) {
+                        setActiveSection('today');
+                      } else {
+                        setActiveSection('schedule');
+                      }
+                    }}
+                    className="rounded-full bg-[#4A6144] hover:bg-[#3B4F36] text-[#FFFDF9] px-5 py-2.5 text-xs sm:text-sm font-bold inline-flex items-center gap-2 shadow-xs transition-colors cursor-pointer whitespace-nowrap"
+                  >
+                    <span>{dict.homeCardSelfCta}</span>
+                    {lang === 'ar' ? (
+                      <ArrowLeft className="w-4 h-4 shrink-0" />
+                    ) : (
+                      <ArrowRight className="w-4 h-4 shrink-0" />
+                    )}
+                  </button>
+                  <span className="text-xs font-medium text-[#84715E] font-mono-tabular">
+                    {todayPlansCount > 0
+                      ? `${todayCompletedCount}/${todayPlansCount} ${dict.todayBadge}`
+                      : lang === 'ar'
+                      ? 'جاهز للبدء'
+                      : 'Ready'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Card 2b: Browser P2P Duo Recitation (Zero Server Load) */}
+              <div className="md:col-span-2 gold-card-surface rounded-[24px] border border-[#E6D19E] border-t-[3px] border-t-[#C88A14] p-5 relative overflow-hidden shadow-xs flex flex-col justify-between gap-4">
+                <svg className="w-28 h-28 absolute -bottom-6 -end-6 text-[#C88A14]/10 pointer-events-none" viewBox="0 0 96 96" fill="none" aria-hidden="true">
+                  <rect x="20" y="20" width="56" height="56" rx="4" stroke="currentColor" strokeWidth="2" />
+                  <rect x="20" y="20" width="56" height="56" rx="4" transform="rotate(45 48 48)" stroke="currentColor" strokeWidth="2" />
+                </svg>
+
+                <div className="space-y-3 relative z-10">
+                  <div className="flex items-start gap-3.5">
+                    <div className="w-12 h-12 rounded-2xl bg-[#F6E9C8] border border-[#E5C983] flex items-center justify-center text-[#9E650C] shrink-0">
+                      <Users className="w-6 h-6" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h2 className="text-lg sm:text-xl font-extrabold text-[#261C14] leading-snug">
+                        {dict.homeCardDuoTitle}
+                      </h2>
+                      <p className="text-xs sm:text-sm font-bold text-[#9E650C] mt-0.5">
+                        {dict.homeCardDuoSub}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="text-xs sm:text-sm text-[#5C4B3B] leading-relaxed">
+                    {dict.homeCardDuoDesc}
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-between gap-3 pt-1 relative z-10">
+                  <button
+                    type="button"
+                    onClick={() => setActiveSection('duo')}
+                    className="mustard-gradient-btn rounded-full text-[#FFFDF9] px-5 py-2.5 text-xs sm:text-sm font-bold inline-flex items-center gap-2 shadow-xs transition-all cursor-pointer whitespace-nowrap"
+                  >
+                    <span>{dict.homeCardDuoCta}</span>
+                    {lang === 'ar' ? (
+                      <ArrowLeft className="w-4 h-4 shrink-0" />
+                    ) : (
+                      <ArrowRight className="w-4 h-4 shrink-0" />
+                    )}
+                  </button>
+                  <span className="text-xs font-medium text-[#84715E]">
+                    {lang === 'ar' ? 'بث P2P مشفّر' : 'Direct WebRTC P2P'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Card 3: Weekly Schedule (Original Warm Umber & Gold) */}
+              <div className="umber-card-surface rounded-[24px] border border-[#DDD2BE] border-t-[3px] border-t-[#2D2218] p-5 relative overflow-hidden shadow-xs flex flex-col justify-between gap-4">
+                <svg className="w-28 h-28 absolute -bottom-6 -end-6 text-[#2D2218]/10 pointer-events-none" viewBox="0 0 96 96" fill="none" aria-hidden="true">
+                  <rect x="20" y="20" width="56" height="56" rx="4" stroke="currentColor" strokeWidth="2" />
+                  <rect x="20" y="20" width="56" height="56" rx="4" transform="rotate(45 48 48)" stroke="currentColor" strokeWidth="2" />
+                </svg>
+
+                <div className="space-y-3 relative z-10">
+                  <div className="flex items-start gap-3.5">
+                    <div className="w-12 h-12 rounded-2xl bg-[#2D2218] border border-[#8F681E]/50 flex items-center justify-center text-[#EAB338] shrink-0">
+                      <CalendarDays className="w-6 h-6" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h2 className="text-lg sm:text-xl font-extrabold text-[#261C14] leading-snug">
+                        {dict.homeCardScheduleTitle}
+                      </h2>
+                      <p className="text-xs sm:text-sm font-bold text-[#8B6514] mt-0.5">
+                        {dict.homeCardScheduleSub}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="text-xs sm:text-sm text-[#5C4B3B] leading-relaxed">
+                    {dict.homeCardScheduleDesc}
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-between gap-3 pt-1 relative z-10">
+                  <button
+                    type="button"
+                    onClick={() => setActiveSection('schedule')}
+                    className="rounded-full bg-[#2D2218] hover:bg-[#3D2F22] text-[#EAB338] px-5 py-2.5 text-xs sm:text-sm font-bold inline-flex items-center gap-2 shadow-xs transition-colors cursor-pointer whitespace-nowrap"
+                  >
+                    <span>{dict.homeCardScheduleCta}</span>
+                    {lang === 'ar' ? (
+                      <ArrowLeft className="w-4 h-4 shrink-0" />
+                    ) : (
+                      <ArrowRight className="w-4 h-4 shrink-0" />
+                    )}
+                  </button>
+                  <span className="text-xs font-medium text-[#84715E] font-mono-tabular">
+                    {plans.length} {lang === 'ar' ? 'خطة' : 'Plans'}
+                  </span>
+                </div>
+              </div>
+
+
+              {/* Card 5: Mutun & Daily Adhkar (Olive & Warm Parchment) */}
+              <div className="olive-card-surface rounded-[24px] border border-[#C8D4C2] border-t-[3px] border-t-[#4A6144] p-5 relative overflow-hidden shadow-xs flex flex-col justify-between gap-4">
+                <svg className="w-28 h-28 absolute -bottom-6 -end-6 text-[#4A6144]/10 pointer-events-none" viewBox="0 0 96 96" fill="none" aria-hidden="true">
+                  <rect x="20" y="20" width="56" height="56" rx="4" stroke="currentColor" strokeWidth="2" />
+                  <rect x="20" y="20" width="56" height="56" rx="4" transform="rotate(45 48 48)" stroke="currentColor" strokeWidth="2" />
+                </svg>
+
+                <div className="space-y-3 relative z-10">
+                  <div className="flex items-start gap-3.5">
+                    <div className="w-12 h-12 rounded-2xl bg-[#4A6144]/15 border border-[#4A6144]/25 flex items-center justify-center text-[#4A6144] shrink-0">
+                      <BookMarked className="w-6 h-6" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h2 className="text-lg sm:text-xl font-extrabold text-[#261C14] leading-snug">
+                        {dict.homeCardMutunTitle}
+                      </h2>
+                      <p className="text-xs sm:text-sm font-bold text-[#4A6144] mt-0.5">
+                        {dict.homeCardMutunSub}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="text-xs sm:text-sm text-[#5C4B3B] leading-relaxed">
+                    {dict.homeCardMutunDesc}
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-between gap-3 pt-1 relative z-10">
+                  <button
+                    type="button"
+                    onClick={() => setActiveSection('mutun')}
+                    className="rounded-full bg-[#4A6144] hover:bg-[#3B4F36] text-[#FFFDF9] px-5 py-2.5 text-xs sm:text-sm font-bold inline-flex items-center gap-2 shadow-xs transition-colors cursor-pointer whitespace-nowrap"
+                  >
+                    <span>{dict.homeCardMutunCta}</span>
+                    {lang === 'ar' ? (
+                      <ArrowLeft className="w-4 h-4 shrink-0" />
+                    ) : (
+                      <ArrowRight className="w-4 h-4 shrink-0" />
+                    )}
+                  </button>
+                  <span className="text-xs font-medium text-[#84715E]">
+                    {lang === 'ar' ? 'قراءة مريحة' : 'Easy Reading'}
+                  </span>
+                </div>
+              </div>
+
+            </div>
+          </section>
+        )}
+        {/* Compact Hero & Contextual Action Strip */}
         {(activeSection === 'schedule' || activeSection === 'today') && (
-          <section className="earthy-gradient-banner rounded-xl sm:rounded-2xl px-3.5 py-2.5 sm:px-5 sm:py-3 text-[#FFFDF9] relative overflow-hidden border border-[#8F681E]/40 shadow-2xs flex items-center justify-between gap-3">
-            <div className="relative z-10 flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
+          <section className="earthy-gradient-banner rounded-xl sm:rounded-2xl px-3.5 py-3 sm:px-5 sm:py-3.5 text-[#FFFDF9] relative overflow-hidden border border-[#8F681E]/40 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="relative z-10 flex flex-col gap-0.5">
               <h1 className="text-base sm:text-lg font-bold font-display-islamic leading-snug text-[#FFFDF9]">
                 {dict.heroTitle}
               </h1>
@@ -1041,13 +1453,44 @@ export default function App() {
               </p>
             </div>
 
-            <div className="relative z-10 shrink-0 flex items-center gap-2">
+            <div className="relative z-10 shrink-0 flex flex-wrap items-center gap-2">
+              {nextTodayPlan && (
+                <button
+                  type="button"
+                  onClick={() => handleOpenPlanScreen(nextTodayPlan.id)}
+                  className="px-3.5 py-2 rounded-xl bg-[#4A6144] hover:bg-[#3F543A] border border-[#82A879]/40 text-xs sm:text-sm font-bold text-[#FFFDF9] shadow-2xs transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5"
+                >
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                  <span>{dict.startTodayBtn}</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() =>
+                  setActiveSection(activeSection === 'today' ? 'schedule' : 'today')
+                }
+                className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 border border-[#EAB338]/35 text-xs sm:text-sm font-bold text-[#FDE68A] transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5"
+              >
+                {activeSection === 'today' ? (
+                  <>
+                    <CalendarDays className="w-4 h-4 shrink-0" />
+                    <span>{dict.navSchedule}</span>
+                  </>
+                ) : (
+                  <>
+                    <BookOpen className="w-4 h-4 shrink-0" />
+                    <span>{dict.navToday}</span>
+                  </>
+                )}
+              </button>
+
               <button
                 type="button"
                 onClick={() => handleOpenAddModal(todayId)}
-                className="mustard-gradient-btn px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-xl text-xs sm:text-sm font-bold text-[#FFFDF9] shadow-2xs transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5"
+                className="mustard-gradient-btn px-3.5 py-2 sm:px-4 rounded-xl text-xs sm:text-sm font-bold text-[#FFFDF9] shadow-2xs transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5"
               >
-                <Plus className="w-4 h-4" />
+                <Plus className="w-4 h-4 shrink-0" />
                 <span>{dict.addPlanBtn}</span>
               </button>
             </div>
@@ -1057,8 +1500,32 @@ export default function App() {
         {/* SCHEDULE & TODAY VIEW */}
         {(activeSection === 'schedule' || activeSection === 'today') && (
           <section className="space-y-3">
+            {/* Welcoming Quick-Start Banner when no plans exist yet */}
+            {plans.length === 0 && (
+              <div className="rounded-2xl bg-[#FFFDF9] border border-[#DDD2BE] p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
+                <div className="space-y-1">
+                  <h2 className="text-sm sm:text-base font-bold font-display-islamic text-[#261C14]">
+                    {dict.emptyScheduleTitle}
+                  </h2>
+                  <p className="text-xs text-[#5C4B3B] leading-relaxed">
+                    {dict.emptyScheduleDesc}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleOpenAddModal(todayId)}
+                    className="mustard-gradient-btn px-4 py-2 rounded-xl text-xs font-bold text-[#FFFDF9] shadow-2xs transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>{dict.addPlanBtn}</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Schedule Controls & Filter Bar */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-[#FFFDF9] p-2 rounded-xl border border-[#DDD2BE]">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-[#FFFDF9] p-2.5 rounded-xl border border-[#DDD2BE]">
               <div className="grid grid-cols-4 gap-1 p-0.5 bg-[#F7F3EB] rounded-lg border border-[#E5DEC9]">
                 {(
                   [
@@ -1072,7 +1539,7 @@ export default function App() {
                     key={tab.id}
                     type="button"
                     onClick={() => setFilterType(tab.id)}
-                    className={`px-2 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer text-center whitespace-nowrap ${
+                    className={`px-2.5 py-1.5 rounded-md text-xs font-semibold transition-colors cursor-pointer text-center whitespace-nowrap ${
                       filterType === tab.id
                         ? 'bg-[#2D2218] text-[#FFFDF9] shadow-2xs'
                         : 'text-[#5C4B3B] hover:text-[#261C14]'
@@ -1084,19 +1551,6 @@ export default function App() {
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                {totalOverdueCount > 0 && (
-                  <div
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#C53030] text-white text-xs font-bold shadow-xs ring-2 ring-[#C53030]/25 animate-pulse shrink-0"
-                    title={
-                      lang === 'ar'
-                        ? `يوجد ${totalOverdueCount} خطة متأخرة لم تكتمل في موعدها`
-                        : `${totalOverdueCount} overdue task(s)`
-                    }
-                  >
-                    <AlertCircle className="w-3.5 h-3.5 text-white" />
-                    <span>{totalOverdueCount} {lang === 'ar' ? 'متأخرة' : 'overdue'}</span>
-                  </div>
-                )}
                 <div className="relative flex-1 min-w-[150px] sm:w-56">
                   <Search className="w-3.5 h-3.5 text-[#84715E] absolute top-1/2 -translate-y-1/2 start-2.5 pointer-events-none" />
                   <input
@@ -1104,25 +1558,21 @@ export default function App() {
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder={dict.searchPlaceholder}
-                    className="w-full ps-8 pe-2.5 py-1 rounded-lg bg-[#F7F3EB] border border-[#DDD2BE] text-xs text-[#261C14] placeholder-[#84715E] focus:outline-none focus:border-[#C88A14]"
+                    className="w-full ps-8 pe-2.5 py-1.5 rounded-lg bg-[#F7F3EB] border border-[#DDD2BE] text-xs text-[#261C14] placeholder-[#84715E] focus:outline-none focus:border-[#C88A14]"
                   />
                 </div>
                 {/* Collapsible Dropdown Schedule Toggle Button */}
                 <button
                   type="button"
                   onClick={handleToggleExpandAllDays}
-                  className="px-2.5 py-1 rounded-lg border border-[#DDD2BE] bg-[#F7F3EB] text-[#5C4B3B] hover:text-[#261C14] hover:bg-[#EFE9DC] text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5 shrink-0"
+                  className="px-2.5 py-1.5 rounded-lg border border-[#DDD2BE] bg-[#F7F3EB] text-[#5C4B3B] hover:text-[#261C14] hover:bg-[#EFE9DC] text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap"
                   title={lang === 'ar' ? 'طي أو توسيع القوائم المنسدلة للخطط' : 'Toggle Dropdown Lists'}
                 >
                   <ChevronDown className="w-3.5 h-3.5 text-[#C88A14]" />
                   <span>
                     {Object.values(collapsedDayIds).some((v) => v)
-                      ? lang === 'ar'
-                        ? 'توسيع القوائم المنسدلة'
-                        : 'Expand All'
-                      : lang === 'ar'
-                      ? 'طي القوائم المنسدلة'
-                      : 'Collapse All'}
+                      ? dict.expandAllBtn
+                      : dict.collapseAllBtn}
                   </span>
                 </button>
 
@@ -1130,9 +1580,10 @@ export default function App() {
                   type="button"
                   onClick={handleResetCompletion}
                   title={dict.clearCompletedBtn}
-                  className="p-1.5 rounded-lg border border-[#DDD2BE] text-[#5C4B3B] hover:text-[#261C14] hover:bg-[#EFE9DC] transition-colors cursor-pointer shrink-0"
+                  className="px-2.5 py-1.5 rounded-lg border border-[#DDD2BE] bg-[#F7F3EB] text-[#5C4B3B] hover:text-[#261C14] hover:bg-[#EFE9DC] transition-colors cursor-pointer shrink-0 flex items-center gap-1.5 text-xs font-semibold whitespace-nowrap"
                 >
-                  <RotateCcw className="w-3.5 h-3.5" />
+                  <RotateCcw className="w-3.5 h-3.5 text-[#84715E]" />
+                  <span className="hidden md:inline">{dict.clearCompletedBtn}</span>
                 </button>
               </div>
             </div>
@@ -1150,7 +1601,6 @@ export default function App() {
                     });
                     const isToday = day.id === todayId;
                   const doneCount = dayPlans.filter((p) => p.status === 'completed').length;
-                  const overdueCount = dayPlans.filter((p) => isPlanOverdue(p, todayId)).length;
                   const dayDual = getCompactDualDate(day.id, lang);
                   const isCollapsed = !!collapsedDayIds[day.id];
 
@@ -1160,8 +1610,6 @@ export default function App() {
                       className={`rounded-2xl bg-[#FFFDF9] border overflow-hidden shadow-2xs transition-all ${
                         isToday
                           ? 'border-[#C88A14] ring-1 ring-[#C88A14]/30'
-                          : overdueCount > 0
-                          ? 'border-[#C53030]/60 ring-2 ring-[#C53030]/15'
                           : 'border-[#DDD2BE]'
                       }`}
                     >
@@ -1171,17 +1619,15 @@ export default function App() {
                         className={`px-3.5 py-2.5 border-b flex items-center justify-between gap-2 cursor-pointer select-none transition-colors ${
                           isToday
                             ? 'bg-[#2D2218] text-[#FFFDF9] border-[#2D2218] hover:bg-[#3D2F22]'
-                            : overdueCount > 0
-                            ? 'bg-[#FFF2EF] text-[#261C14] border-[#F2B8AF] hover:bg-[#FFE9E4]'
                             : 'bg-[#F7F3EB] text-[#261C14] border-[#DDD2BE] hover:bg-[#EFE9DC]'
                         }`}
                         title={lang === 'ar' ? 'اضغط لفتح أو طي القائمة المنسدلة للخطط' : 'Click to toggle dropdown schedule'}
                       >
                         <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
                           {isCollapsed ? (
-                            <ChevronDown className={`w-4 h-4 shrink-0 transition-transform ${isToday ? 'text-[#EAB338]' : overdueCount > 0 ? 'text-[#C53030]' : 'text-[#C88A14]'}`} />
+                            <ChevronDown className={`w-4 h-4 shrink-0 transition-transform ${isToday ? 'text-[#EAB338]' : 'text-[#C88A14]'}`} />
                           ) : (
-                            <ChevronUp className={`w-4 h-4 shrink-0 transition-transform ${isToday ? 'text-[#EAB338]' : overdueCount > 0 ? 'text-[#C53030]' : 'text-[#C88A14]'}`} />
+                            <ChevronUp className={`w-4 h-4 shrink-0 transition-transform ${isToday ? 'text-[#EAB338]' : 'text-[#C88A14]'}`} />
                           )}
                           <span className="font-bold font-display-islamic text-sm sm:text-base">
                             {lang === 'ar' ? day.nameAr : day.nameEn}
@@ -1189,19 +1635,6 @@ export default function App() {
                           {isToday && (
                             <span className="text-[11px] font-semibold text-[#EAB338] bg-[#EAB338]/20 px-2 py-0.5 rounded-md border border-[#EAB338]/30">
                               {dict.todayBadge}
-                            </span>
-                          )}
-                          {overdueCount > 0 && (
-                            <span
-                              className="text-[11px] font-bold text-white bg-[#C53030] px-2.5 py-0.5 rounded-full shadow-xs ring-2 ring-[#C53030]/25 inline-flex items-center gap-1.5 shrink-0 animate-pulse"
-                              title={
-                                lang === 'ar'
-                                  ? `${overdueCount} خطة متأخرة لم تكتمل في موعدها`
-                                  : `${overdueCount} overdue task(s)`
-                              }
-                            >
-                              <AlertCircle className="w-3.5 h-3.5 text-white" />
-                              <span>{overdueCount} {lang === 'ar' ? 'متأخرة' : 'overdue'}</span>
                             </span>
                           )}
                           <span
@@ -1246,34 +1679,17 @@ export default function App() {
                           ) : (
                             dayPlans.map((plan) => {
                               const isCompleted = plan.status === 'completed';
-                              const isOverdue = isPlanOverdue(plan, todayId);
                               const { label: practiceLabel, Icon: PracticeIcon } =
                                 getPlanPracticeButtonMeta(plan.planType);
 
                               return (
                                 <div
                                   key={plan.id}
-                                  className={`p-3 sm:p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 transition-colors ${
-                                    isOverdue ? 'bg-[#FFF2EF] border-s-4 border-s-[#C53030] hover:bg-[#FFE9E4]' : 'hover:bg-[#F7F3EB]/40'
-                                  }`}
+                                  className="p-3 sm:p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 transition-colors hover:bg-[#F7F3EB]/40"
                                 >
                                   {/* Left/Start: Type badge, scope, timing, curriculum, volume, completion date */}
                                   <div className="flex-1 space-y-1.5">
                                     <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                                      {/* Overdue alert indicator badge */}
-                                      {isOverdue && (
-                                        <span
-                                          className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-[#C53030] text-white text-[11px] font-bold shrink-0 shadow-xs ring-2 ring-[#C53030]/25 animate-pulse"
-                                          title={
-                                            lang === 'ar'
-                                              ? 'خطة متأخرة: لم تكتمل في موعدها المحدد لليوم السابق أو قبله'
-                                              : 'Overdue: Plan was not completed on its scheduled day'
-                                          }
-                                        >
-                                          <AlertCircle className="w-3.5 h-3.5 text-white" />
-                                          <span>{lang === 'ar' ? 'متأخرة' : 'Overdue'}</span>
-                                        </span>
-                                      )}
                                       <span
                                         className={`font-bold px-2 py-0.5 rounded-md ${
                                           plan.planType === 'new_memorization'
@@ -1301,22 +1717,9 @@ export default function App() {
                                     </div>
 
                                     <div className="flex flex-wrap items-center gap-2">
-                                      {/* Alert Icon beside plan title for overdue tasks */}
-                                      {isOverdue && (
-                                        <span
-                                          className="inline-flex items-center justify-center p-1 rounded-md bg-[#C53030] text-white shadow-xs shrink-0 ring-2 ring-[#C53030]/20 animate-pulse"
-                                          title={
-                                            lang === 'ar'
-                                              ? 'تنبيه: خطة متأخرة لم تكتمل في موعدها المحدد لليوم السابق أو قبله'
-                                              : 'Alert: Overdue task not completed on schedule'
-                                          }
-                                        >
-                                          <AlertCircle className="w-4 h-4 text-white" />
-                                        </span>
-                                      )}
                                       <h4
                                         className={`text-base font-bold font-display-islamic ${
-                                          isCompleted ? 'line-through opacity-60 text-[#84715E]' : isOverdue ? 'text-[#9B1C1C]' : 'text-[#261C14]'
+                                          isCompleted ? 'line-through opacity-60 text-[#84715E]' : 'text-[#261C14]'
                                         }`}
                                       >
                                         {formatCurriculumTitle(plan, lang)}
@@ -1498,20 +1901,215 @@ export default function App() {
             onTriggerTestQuizReminder={(q) => triggerRandomQuizReminderNotification(q, false)}
           />
         )}
+
+        {/* MUTUN & ADHKAR DEDICATED VIEW */}
+        {activeSection === 'mutun' && <MutunAdhkarSection lang={lang} />}
+
+        {/* BROWSER P2P DUO RECITATION DEDICATED VIEW */}
+        {activeSection === 'duo' && (
+          <DuoRecitationSection
+            lang={lang}
+            defaultRiwayah={defaultRiwayah}
+            initialFriendInviteToken={initialFriendInviteToken}
+            onClearFriendInvite={() => setInitialFriendInviteToken('')}
+            pendingAcceptCallId={pendingAcceptCallId}
+            onClearPendingCall={() => setPendingAcceptCallId(null)}
+          />
+        )}
       </main>
 
-      {/* Quiet Editorial Footer */}
-      <footer className="mt-4 border-t border-[#DDD2BE] bg-[#EFE9DC]/60 py-2.5 px-4 text-center text-[11px] text-[#84715E]">
-        <span>{dict.brandTitle}</span>
-        <span className="mx-1.5">·</span>
-        <span>{dict.brandSubtitle}</span>
-      </footer>
+      {/* Fixed Bottom Navigation Bar (5 Clean Tabs: الرئيسية، اليوم، الثنائي، الأسبوعي، المكتبة) */}
+      <nav
+        aria-label={lang === 'ar' ? 'التنقل الرئيسي' : 'Primary navigation'}
+        className="fixed bottom-0 inset-x-0 z-40 bg-[#FFFDF9]/95 backdrop-blur-md border-t border-[#DDD2BE] shadow-[0_-4px_18px_rgba(45,34,24,0.08)]"
+      >
+        <div className="max-w-5xl mx-auto px-2 sm:px-4 py-1.5 grid grid-cols-5 gap-1 sm:gap-2 items-center">
+          {/* 1. Home (الرئيسية) */}
+          <button
+            type="button"
+            onClick={() => setActiveSection('home')}
+            className={`flex flex-col items-center justify-center gap-0.5 py-1.5 px-1 rounded-xl text-[10.5px] sm:text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+              activeSection === 'home'
+                ? 'bg-[#2D2218] text-[#EAB338] shadow-xs'
+                : 'text-[#5C4B3B] hover:text-[#261C14] hover:bg-[#EFE9DC]'
+            }`}
+          >
+            <Home className={`w-4 h-4 sm:w-4.5 sm:h-4.5 shrink-0 ${activeSection === 'home' ? 'text-[#EAB338]' : 'text-[#C88A14]'}`} />
+            <span className="leading-none truncate max-w-full">{dict.navHome}</span>
+          </button>
+
+          {/* 2. Today / Self (اليوم) */}
+          <button
+            type="button"
+            onClick={() => setActiveSection('today')}
+            className={`flex flex-col items-center justify-center gap-0.5 py-1.5 px-1 rounded-xl text-[10.5px] sm:text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+              activeSection === 'today'
+                ? 'bg-[#2D2218] text-[#EAB338] shadow-xs'
+                : 'text-[#5C4B3B] hover:text-[#261C14] hover:bg-[#EFE9DC]'
+            }`}
+          >
+            <BookOpen className={`w-4 h-4 sm:w-4.5 sm:h-4.5 shrink-0 ${activeSection === 'today' ? 'text-[#EAB338]' : 'text-[#C88A14]'}`} />
+            <span className="leading-none truncate max-w-full">{dict.navToday}</span>
+          </button>
+
+          {/* 3. Browser P2P Duo Sard (الثنائي) */}
+          <button
+            type="button"
+            onClick={() => setActiveSection('duo')}
+            className={`flex flex-col items-center justify-center gap-0.5 py-1.5 px-1 rounded-xl text-[10.5px] sm:text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+              activeSection === 'duo'
+                ? 'bg-[#2D2218] text-[#EAB338] shadow-xs'
+                : 'text-[#5C4B3B] hover:text-[#261C14] hover:bg-[#EFE9DC]'
+            }`}
+          >
+            <Users className={`w-4 h-4 sm:w-4.5 sm:h-4.5 shrink-0 ${activeSection === 'duo' ? 'text-[#EAB338]' : 'text-[#C88A14]'}`} />
+            <span className="leading-none truncate max-w-full">{dict.navDuo}</span>
+          </button>
+
+          {/* 4. Weekly Schedule (الأسبوعي) */}
+          <button
+            type="button"
+            onClick={() => setActiveSection('schedule')}
+            className={`flex flex-col items-center justify-center gap-0.5 py-1.5 px-1 rounded-xl text-[10.5px] sm:text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+              activeSection === 'schedule'
+                ? 'bg-[#2D2218] text-[#EAB338] shadow-xs'
+                : 'text-[#5C4B3B] hover:text-[#261C14] hover:bg-[#EFE9DC]'
+            }`}
+          >
+            <CalendarDays className={`w-4 h-4 sm:w-4.5 sm:h-4.5 shrink-0 ${activeSection === 'schedule' ? 'text-[#EAB338]' : 'text-[#C88A14]'}`} />
+            <span className="leading-none truncate max-w-full">{dict.navSchedule}</span>
+          </button>
+
+          {/* 5. Library (المكتبة) */}
+          <button
+            type="button"
+            onClick={() => setActiveSection('mutun')}
+            className={`flex flex-col items-center justify-center gap-0.5 py-1.5 px-1 rounded-xl text-[10.5px] sm:text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+              activeSection === 'mutun'
+                ? 'bg-[#2D2218] text-[#EAB338] shadow-xs'
+                : 'text-[#5C4B3B] hover:text-[#261C14] hover:bg-[#EFE9DC]'
+            }`}
+          >
+            <BookMarked className={`w-4 h-4 sm:w-4.5 sm:h-4.5 shrink-0 ${activeSection === 'mutun' ? 'text-[#EAB338]' : 'text-[#4A6144]'}`} />
+            <span className="leading-none truncate max-w-full">{dict.navMutun}</span>
+          </button>
+        </div>
+      </nav>
+
+      {/* Global Incoming Friend Call Ringing Window (Both Sides Call Modal Experience) */}
+      {incomingCall && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/65 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-[28px] bg-[#2D2218] text-[#FFFDF9] border-2 border-[#EAB338] p-6 text-center space-y-5 shadow-2xl">
+            <div className="relative w-20 h-20 mx-auto flex items-center justify-center">
+              <span className="absolute inset-0 rounded-full bg-[#EAB338]/30 animate-ping" />
+              <div className="relative w-16 h-16 rounded-full bg-[#4A6144] border-2 border-[#EAB338] flex items-center justify-center text-[#FFFDF9]">
+                <PhoneCall className="w-7 h-7 animate-bounce" />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <p className="text-xs font-bold text-[#EAB338]">
+                {lang === 'ar' ? 'مكالمة سرد ثنائي واردة 🔔' : 'Incoming Duo Sard Call'}
+              </p>
+              <h3 className="text-xl font-extrabold font-display-islamic">
+                {incomingCall.hostName}
+              </h3>
+              <p className="text-xs text-[#E6D7BE]">
+                {(() => {
+                  const rw = getRiwayahLabel(incomingCall.riwayah || 'hafs', lang);
+                  if (incomingCall.curriculumMode === 'page') {
+                    const p1 = incomingCall.pageFrom || 1;
+                    const p2 = incomingCall.pageTo || p1;
+                    return lang === 'ar'
+                      ? `${p1 === p2 ? `صفحة ${p1}` : `الصفحات ${p1} - ${p2}`} · برواية ${rw}`
+                      : `${p1 === p2 ? `Page ${p1}` : `Pages ${p1}-${p2}`} · ${rw}`;
+                  }
+                  const s = SURAH_LIST.find((item) => item.number === incomingCall.surahNumber);
+                  return s
+                    ? lang === 'ar'
+                      ? `سورة ${s.nameAr} (الآيات ${incomingCall.ayahFrom} - ${incomingCall.ayahTo}) · برواية ${rw}`
+                      : `Surah ${s.nameEn} (${incomingCall.ayahFrom} - ${incomingCall.ayahTo}) · ${rw}`
+                    : '';
+                })()}
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-1">
+              <button
+                type="button"
+                onClick={() => handleDeclineIncomingCall(incomingCall.sessionId)}
+                className="py-3 px-4 rounded-2xl bg-[#A84A32] hover:bg-[#8E3B26] text-[#FFFDF9] text-sm font-bold flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+              >
+                <PhoneOff className="w-4 h-4" />
+                <span>{lang === 'ar' ? 'رفض' : 'Decline'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleAcceptIncomingCall(incomingCall.sessionId)}
+                className="py-3 px-4 rounded-2xl bg-[#4A6144] hover:bg-[#3B4F36] border border-[#82A879]/50 text-[#FFFDF9] text-sm font-bold flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+              >
+                <PhoneCall className="w-4 h-4" />
+                <span>{lang === 'ar' ? 'ردّ الآن' : 'Answer'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* No Plans Alert Modal when user clicks "Start Self-Paced Sard" on empty schedule */}
+      {noPlansAlertOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/55 backdrop-blur-xs">
+          <div className="w-full max-w-sm rounded-2xl bg-[#FFFDF9] border-2 border-[#C88A14]/70 shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="px-4 py-3 bg-[#EFE9DC] border-b border-[#DDD2BE] flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-5 h-5 text-[#C88A14] shrink-0" />
+                <h3 className="text-sm sm:text-base font-bold font-display-islamic text-[#2D2218]">
+                  {dict.noPlansAlertTitle}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setNoPlansAlertOpen(false)}
+                className="p-1 rounded-lg hover:bg-[#DDD2BE]/60 text-[#5C4B3B] cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              <p className="text-xs sm:text-sm text-[#5C4B3B] leading-relaxed">
+                {dict.noPlansAlertDesc}
+              </p>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setNoPlansAlertOpen(false)}
+                  className="px-3.5 py-2 rounded-xl bg-[#EFE9DC] hover:bg-[#DDD2BE] text-[#5C4B3B] text-xs font-bold cursor-pointer transition-colors"
+                >
+                  {dict.noPlansAlertCloseBtn}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNoPlansAlertOpen(false);
+                    handleOpenAddModal(todayId);
+                  }}
+                  className="mustard-gradient-btn px-4 py-2 rounded-xl text-[#FFFDF9] text-xs font-bold cursor-pointer inline-flex items-center gap-1.5 shadow-xs"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>{dict.noPlansAlertAddBtn}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add / Edit Plan Modal */}
       <PlanModal
         isOpen={isModalOpen}
         lang={lang}
         initialDay={modalInitialDay}
+        defaultRiwayah={defaultRiwayah}
         editingPlan={editingPlan}
         onClose={() => setIsModalOpen(false)}
         onSave={handleSavePlans}
@@ -1573,6 +2171,35 @@ export default function App() {
                       >
                         English
                       </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-[11px] text-[#5C4B3B] mb-1 font-semibold">
+                      {lang === 'ar' ? 'الرواية الافتراضية' : 'Default Riwayah'}
+                    </div>
+                    <div className="grid grid-cols-3 gap-1 p-0.5 rounded-lg bg-[#EFE9DC] border border-[#DDD2BE]">
+                      {RIWAYAH_OPTIONS.map((rw) => (
+                        <button
+                          key={rw.id}
+                          type="button"
+                          onClick={() => {
+                            setDefaultRiwayah(rw.id);
+                            try {
+                              localStorage.setItem('alutrujjah_riwayah', rw.id);
+                            } catch {
+                              // ignore
+                            }
+                          }}
+                          className={`py-1 rounded-md text-xs font-bold cursor-pointer ${
+                            defaultRiwayah === rw.id
+                              ? 'bg-[#2D2218] text-[#EAB338]'
+                              : 'text-[#5C4B3B] hover:text-[#261C14]'
+                          }`}
+                        >
+                          {lang === 'ar' ? rw.shortAr : rw.shortEn}
+                        </button>
+                      ))}
                     </div>
                   </div>
                 </div>
@@ -1950,6 +2577,7 @@ export default function App() {
               defaultSyncSpeed={defaultSyncSpeed}
               defaultTargetReps={defaultTargetReps}
               defaultQuizLevel={defaultQuizLevel}
+              defaultRiwayah={defaultRiwayah}
               onClose={handleClosePlanScreen}
               onCompletePlanSard={handleCompletePlanSard}
               onOpenSmartMemorization={() => {

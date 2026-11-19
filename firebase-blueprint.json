@@ -1,0 +1,329 @@
+{
+  "entities": {
+    "UserPrivateProfile": {
+      "title": "UserPrivateProfile",
+      "description": "Private user account metadata isolated per owner UID.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 254
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "email", "displayName", "updatedAt"]
+    },
+    "UserDirectoryEntry": {
+      "title": "UserDirectoryEntry",
+      "description": "Zero-PII lookup record keyed by UID for verified display name resolution.",
+      "type": "object",
+      "properties": {
+        "lookupId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["lookupId", "uid", "displayName", "updatedAt"]
+    },
+    "FriendInvite": {
+      "title": "FriendInvite",
+      "description": "Shareable single-owner friend invite link token requiring explicit approval before friendship is formed.",
+      "type": "object",
+      "properties": {
+        "inviteToken": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerName": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "status": {
+          "type": "string",
+          "enum": ["open", "revoked"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["inviteToken", "ownerUid", "ownerName", "status", "createdAt", "updatedAt"]
+    },
+    "FriendRequest": {
+      "title": "FriendRequest",
+      "description": "Pending or approved friend request initiated through a shared invite link.",
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "fromUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "fromName": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "toUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "toName": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "inviteToken": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "accepted", "declined"]
+        },
+        "syncedBySender": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "requestId",
+        "fromUid",
+        "fromName",
+        "toUid",
+        "toName",
+        "inviteToken",
+        "status",
+        "syncedBySender",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "FriendContact": {
+      "title": "FriendContact",
+      "description": "Owner-scoped mutually approved friend contact.",
+      "type": "object",
+      "properties": {
+        "friendUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "friendName": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["friendUid", "friendName", "createdAt", "updatedAt"]
+    },
+    "DuoSession": {
+      "title": "DuoSession",
+      "description": "Direct friend-to-friend encrypted audio-only WebRTC call signaling.",
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "hostUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "hostName": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "guestUid": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "guestName": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "calleeUid": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "callMode": {
+          "type": "string",
+          "enum": ["friend_call"]
+        },
+        "riwayah": {
+          "type": "string",
+          "enum": ["hafs", "qalun", "warsh"]
+        },
+        "curriculumMode": {
+          "type": "string",
+          "enum": ["surah", "ayah", "page"]
+        },
+        "hideVersesForReciter": {
+          "type": "boolean"
+        },
+        "hideVersesForListener": {
+          "type": "boolean"
+        },
+        "activeAyah": {
+          "type": "number"
+        },
+        "reciterSide": {
+          "type": "string",
+          "enum": ["host", "guest"]
+        },
+        "mistakesCount": {
+          "type": "number"
+        },
+        "surahNumber": {
+          "type": "number"
+        },
+        "surahEnd": {
+          "type": "number"
+        },
+        "ayahFrom": {
+          "type": "number"
+        },
+        "ayahTo": {
+          "type": "number"
+        },
+        "pageFrom": {
+          "type": "number"
+        },
+        "pageTo": {
+          "type": "number"
+        },
+        "offerType": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "offerSdp": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "answerType": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "answerSdp": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "status": {
+          "type": "string",
+          "enum": ["ringing", "active", "declined", "ended"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "sessionId",
+        "hostUid",
+        "hostName",
+        "calleeUid",
+        "callMode",
+        "surahNumber",
+        "ayahFrom",
+        "ayahTo",
+        "offerType",
+        "offerSdp",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/private/{docId}": {
+      "schema": { "$ref": "#/entities/UserPrivateProfile" },
+      "description": "Owner-only private user profile storing verified email and display name."
+    },
+    "/userDirectory/{lookupId}": {
+      "schema": { "$ref": "#/entities/UserDirectoryEntry" },
+      "description": "Zero-PII directory keyed by UID for verified user verification."
+    },
+    "/friendInvites/{inviteToken}": {
+      "schema": { "$ref": "#/entities/FriendInvite" },
+      "description": "Shareable personal friend invite tokens requiring explicit approval."
+    },
+    "/friendRequests/{requestId}": {
+      "schema": { "$ref": "#/entities/FriendRequest" },
+      "description": "Consent-gated friend requests sent via invite links."
+    },
+    "/users/{userId}/friends/{friendUid}": {
+      "schema": { "$ref": "#/entities/FriendContact" },
+      "description": "Owner-only mutually approved friend contacts for direct audio calling."
+    },
+    "/duoSessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/DuoSession" },
+      "description": "Direct friend-to-friend audio-only WebRTC call signaling."
+    }
+  }
+}

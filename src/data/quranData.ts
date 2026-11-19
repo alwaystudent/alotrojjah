@@ -19,6 +19,47 @@ export type PlanEvaluation = 'muthabbat' | 'mutaraddid' | 'mutafallit';
 
 export type QuizLevel = 'beginner' | 'intermediate' | 'advanced' | 'hafiz';
 
+export type QuranRiwayah = 'hafs' | 'qalun' | 'warsh';
+
+export const RIWAYAH_OPTIONS: {
+  id: QuranRiwayah;
+  labelAr: string;
+  shortAr: string;
+  labelEn: string;
+  shortEn: string;
+  descAr: string;
+}[] = [
+  {
+    id: 'hafs',
+    labelAr: 'حفص عن عاصم',
+    shortAr: 'حفص',
+    labelEn: "Hafs 'an Asim",
+    shortEn: 'Hafs',
+    descAr: 'مصحف المدينة المنورة — مجمع الملك فهد',
+  },
+  {
+    id: 'qalun',
+    labelAr: 'قالون عن نافع',
+    shortAr: 'قالون',
+    labelEn: "Qalun 'an Nafi'",
+    shortEn: 'Qalun',
+    descAr: 'الخط العثماني برواية الإمام قالون',
+  },
+  {
+    id: 'warsh',
+    labelAr: 'ورش عن نافع',
+    shortAr: 'ورش',
+    labelEn: "Warsh 'an Nafi'",
+    shortEn: 'Warsh',
+    descAr: 'الخط العثماني برواية الإمام ورش',
+  },
+];
+
+export function getRiwayahLabel(riwayah: QuranRiwayah = 'hafs', lang: Language = 'ar'): string {
+  const found = RIWAYAH_OPTIONS.find((r) => r.id === riwayah) || RIWAYAH_OPTIONS[0];
+  return lang === 'ar' ? found.labelAr : found.labelEn;
+}
+
 export interface SurahInfo {
   number: number;
   nameAr: string;
@@ -78,6 +119,7 @@ export interface QuranPlanItem {
   notes?: string;
   repeatWeekly?: boolean;
   mistakesCount?: number;
+  riwayah?: QuranRiwayah;
   completedAt?: string; // التاريخ المسجل عند إتمام الخطة
   createdAt: string;
 }
@@ -488,33 +530,3 @@ export function getEvaluationLabel(evaluation?: PlanEvaluation, lang: Language =
 
 // Empty initial plans as requested ("احذف الخطط المقترحة")
 export const INITIAL_PLANS: QuranPlanItem[] = [];
-
-/**
- * Check if a plan is overdue:
- * Not completed AND scheduled for a previous day (yesterday or earlier).
- */
-export function isPlanOverdue(plan: QuranPlanItem, todayDayId: DayId): boolean {
-  if (plan.status === 'completed') return false;
-
-  const todayIndex = WEEK_DAYS.findIndex((d) => d.id === todayDayId);
-  const planDayIndex = WEEK_DAYS.findIndex((d) => d.id === plan.day);
-
-  if (planDayIndex === -1 || todayIndex === -1) return false;
-
-  // If the plan's day in the weekly cycle is strictly before today (yesterday or earlier)
-  if (planDayIndex < todayIndex) {
-    return true;
-  }
-
-  // If plan was created prior to today and its day is from an earlier week cycle
-  if (plan.createdAt) {
-    const createdTime = new Date(plan.createdAt).getTime();
-    const nowTime = Date.now();
-    const oneDayMs = 24 * 60 * 60 * 1000;
-    if (plan.day !== todayDayId && nowTime - createdTime > oneDayMs && planDayIndex > todayIndex) {
-      return true;
-    }
-  }
-
-  return false;
-}

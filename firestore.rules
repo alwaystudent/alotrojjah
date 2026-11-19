@@ -1,0 +1,402 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Core Primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isVerifiedUser() && request.auth.uid == userId;
+    }
+
+    // Validation Blueprints
+    function isValidUserPrivateProfile(data) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'displayName', 'updatedAt'])
+        && isValidId(data.uid)
+        && data.uid == request.auth.uid
+        && data.email is string
+        && data.email.size() >= 3
+        && data.email.size() <= 254
+        && data.displayName is string
+        && data.displayName.size() >= 1
+        && data.displayName.size() <= 80
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidUserDirectory(data) {
+      return data.keys().hasAll(['lookupId', 'uid', 'displayName', 'updatedAt'])
+        && data.keys().hasOnly(['lookupId', 'uid', 'displayName', 'updatedAt'])
+        && isValidId(data.lookupId)
+        && isValidId(data.uid)
+        && data.displayName is string
+        && data.displayName.size() >= 1
+        && data.displayName.size() <= 80
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidFriendInvite(data) {
+      return data.keys().hasAll(['inviteToken', 'ownerUid', 'ownerName', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['inviteToken', 'ownerUid', 'ownerName', 'status', 'createdAt', 'updatedAt'])
+        && isValidId(data.inviteToken)
+        && isValidId(data.ownerUid)
+        && data.ownerName is string
+        && data.ownerName.size() >= 1
+        && data.ownerName.size() <= 80
+        && data.status in ['open', 'revoked']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidFriendRequest(data) {
+      return data.keys().hasAll([
+          'requestId', 'fromUid', 'fromName', 'toUid', 'toName',
+          'inviteToken', 'status', 'syncedBySender', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'requestId', 'fromUid', 'fromName', 'toUid', 'toName',
+          'inviteToken', 'status', 'syncedBySender', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.requestId)
+        && isValidId(data.fromUid)
+        && data.fromName is string
+        && data.fromName.size() >= 1
+        && data.fromName.size() <= 80
+        && isValidId(data.toUid)
+        && data.toName is string
+        && data.toName.size() >= 1
+        && data.toName.size() <= 80
+        && isValidId(data.inviteToken)
+        && data.status in ['pending', 'accepted', 'declined']
+        && data.syncedBySender is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidFriendContact(data) {
+      return data.keys().hasAll(['friendUid', 'friendName', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['friendUid', 'friendName', 'note', 'createdAt', 'updatedAt'])
+        && isValidId(data.friendUid)
+        && data.friendName is string
+        && data.friendName.size() >= 1
+        && data.friendName.size() <= 80
+        && (!('note' in data) || data.note == null || (data.note is string && data.note.size() <= 120))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidDuoSession(data) {
+      return data.keys().hasAll([
+          'sessionId', 'hostUid', 'hostName', 'calleeUid', 'callMode',
+          'surahNumber', 'ayahFrom', 'ayahTo',
+          'offerType', 'offerSdp', 'status', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'sessionId', 'hostUid', 'hostName', 'guestUid', 'guestName',
+          'calleeUid', 'callMode', 'riwayah', 'curriculumMode',
+          'hideVersesForReciter', 'hideVersesForListener',
+          'activeAyah', 'reciterSide', 'mistakesCount',
+          'surahNumber', 'surahEnd', 'ayahFrom', 'ayahTo', 'pageFrom', 'pageTo',
+          'offerType', 'offerSdp', 'answerType', 'answerSdp',
+          'status', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.sessionId)
+        && isValidId(data.hostUid)
+        && data.hostName is string
+        && data.hostName.size() >= 1
+        && data.hostName.size() <= 80
+        && (!('guestUid' in data) || data.guestUid == null || isValidId(data.guestUid))
+        && (!('guestName' in data) || data.guestName == null || (data.guestName is string && data.guestName.size() <= 80))
+        && isValidId(data.calleeUid)
+        && data.callMode == 'friend_call'
+        && (!('riwayah' in data) || data.riwayah in ['hafs', 'qalun', 'warsh'])
+        && (!('curriculumMode' in data) || data.curriculumMode in ['surah', 'ayah', 'page'])
+        && (!('hideVersesForReciter' in data) || data.hideVersesForReciter is bool)
+        && (!('hideVersesForListener' in data) || data.hideVersesForListener is bool)
+        && (!('activeAyah' in data) || (data.activeAyah is number && data.activeAyah >= 1 && data.activeAyah <= 286))
+        && (!('reciterSide' in data) || data.reciterSide in ['host', 'guest'])
+        && (!('mistakesCount' in data) || (data.mistakesCount is number && data.mistakesCount >= 0 && data.mistakesCount <= 999))
+        && data.surahNumber is number
+        && data.surahNumber >= 1
+        && data.surahNumber <= 114
+        && (!('surahEnd' in data) || (data.surahEnd is number && data.surahEnd >= data.surahNumber && data.surahEnd <= 114))
+        && data.ayahFrom is number
+        && data.ayahFrom >= 1
+        && data.ayahFrom <= 286
+        && data.ayahTo is number
+        && data.ayahTo >= data.ayahFrom
+        && data.ayahTo <= 286
+        && (!('pageFrom' in data) || (data.pageFrom is number && data.pageFrom >= 1 && data.pageFrom <= 604))
+        && (!('pageTo' in data) || (data.pageTo is number && data.pageTo >= 1 && data.pageTo <= 604))
+        && data.offerType is string
+        && data.offerType.size() >= 1
+        && data.offerType.size() <= 20
+        && data.offerSdp is string
+        && data.offerSdp.size() >= 1
+        && data.offerSdp.size() <= 65536
+        && (!('answerType' in data) || data.answerType == null || (data.answerType is string && data.answerType.size() <= 20))
+        && (!('answerSdp' in data) || data.answerSdp == null || (data.answerSdp is string && data.answerSdp.size() <= 65536))
+        && data.status in ['ringing', 'active', 'declined', 'ended']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function hasAcceptedFriendship(uidA, uidB) {
+      return (
+        existsAfter(/databases/$(database)/documents/friendRequests/$(uidA + '_' + uidB))
+        && getAfter(/databases/$(database)/documents/friendRequests/$(uidA + '_' + uidB)).data.status == 'accepted'
+      ) || (
+        existsAfter(/databases/$(database)/documents/friendRequests/$(uidB + '_' + uidA))
+        && getAfter(/databases/$(database)/documents/friendRequests/$(uidB + '_' + uidA)).data.status == 'accepted'
+      );
+    }
+
+    // 1. User Private Profile (PII Isolation)
+    match /users/{userId}/private/{docId} {
+      allow get: if isValidId(userId) && isValidId(docId) && isOwner(userId);
+      allow list: if false;
+      allow create: if isValidId(userId)
+        && isValidId(docId)
+        && isOwner(userId)
+        && isValidUserPrivateProfile(incoming())
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId)
+        && isValidId(docId)
+        && isOwner(userId)
+        && isValidUserPrivateProfile(incoming())
+        && incoming().uid == existing().uid
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'displayName', 'updatedAt']);
+      allow delete: if isValidId(userId) && isValidId(docId) && isOwner(userId);
+    }
+
+    // 2. Zero-PII User Directory
+    match /userDirectory/{lookupId} {
+      allow get: if isVerifiedUser() && isValidId(lookupId);
+      allow list: if false;
+      allow create: if isVerifiedUser()
+        && isValidId(lookupId)
+        && isValidUserDirectory(incoming())
+        && incoming().lookupId == lookupId
+        && incoming().uid == request.auth.uid
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(lookupId)
+        && isValidUserDirectory(incoming())
+        && existing().uid == request.auth.uid
+        && incoming().lookupId == existing().lookupId
+        && incoming().uid == existing().uid
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'updatedAt']);
+      allow delete: if isVerifiedUser()
+        && isValidId(lookupId)
+        && existing().uid == request.auth.uid;
+    }
+
+    // 3. Shareable Friend Invite Tokens (Link-Based Protection)
+    match /friendInvites/{inviteToken} {
+      allow get: if isVerifiedUser() && isValidId(inviteToken);
+      allow list: if isVerifiedUser() && resource.data.ownerUid == request.auth.uid;
+      allow create: if isVerifiedUser()
+        && isValidId(inviteToken)
+        && isValidFriendInvite(incoming())
+        && incoming().inviteToken == inviteToken
+        && incoming().ownerUid == request.auth.uid
+        && incoming().status == 'open'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(inviteToken)
+        && isValidFriendInvite(incoming())
+        && existing().ownerUid == request.auth.uid
+        && incoming().inviteToken == existing().inviteToken
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'ownerName', 'updatedAt']);
+      allow delete: if isVerifiedUser()
+        && isValidId(inviteToken)
+        && existing().ownerUid == request.auth.uid;
+    }
+
+    // 4. Consent-Gated Friend Requests (Approval Required Before Adding Friends)
+    match /friendRequests/{requestId} {
+      allow get: if isVerifiedUser()
+        && isValidId(requestId)
+        && (existing().fromUid == request.auth.uid || existing().toUid == request.auth.uid);
+      allow list: if isVerifiedUser()
+        && (resource.data.toUid == request.auth.uid || resource.data.fromUid == request.auth.uid);
+      allow create: if isVerifiedUser()
+        && isValidId(requestId)
+        && isValidFriendRequest(incoming())
+        && incoming().requestId == requestId
+        && requestId == incoming().fromUid + '_' + incoming().toUid
+        && incoming().fromUid == request.auth.uid
+        && incoming().toUid != request.auth.uid
+        && incoming().status == 'pending'
+        && incoming().syncedBySender == false
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/friendInvites/$(incoming().inviteToken))
+        && get(/databases/$(database)/documents/friendInvites/$(incoming().inviteToken)).data.ownerUid == incoming().toUid
+        && get(/databases/$(database)/documents/friendInvites/$(incoming().inviteToken)).data.status == 'open';
+      allow update: if isVerifiedUser()
+        && isValidId(requestId)
+        && isValidFriendRequest(incoming())
+        && incoming().requestId == existing().requestId
+        && incoming().fromUid == existing().fromUid
+        && incoming().toUid == existing().toUid
+        && incoming().inviteToken == existing().inviteToken
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Action 1: Recipient explicitly accepts or declines pending request
+          (
+            existing().status == 'pending'
+            && existing().toUid == request.auth.uid
+            && incoming().status in ['accepted', 'declined']
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+          )
+          ||
+          // Action 2: Sender marks accepted request as synced after writing own friend record
+          (
+            existing().status == 'accepted'
+            && existing().fromUid == request.auth.uid
+            && incoming().status == 'accepted'
+            && incoming().syncedBySender == true
+            && incoming().diff(existing()).affectedKeys().hasOnly(['syncedBySender', 'updatedAt'])
+          )
+        );
+      allow delete: if isVerifiedUser()
+        && isValidId(requestId)
+        && (existing().fromUid == request.auth.uid || existing().toUid == request.auth.uid);
+    }
+
+    // 5. Owner-Scoped Saved Friends List (Strictly Requires Accepted FriendRequest Consent)
+    match /users/{userId}/friends/{friendUid} {
+      allow get: if isValidId(userId) && isValidId(friendUid) && isOwner(userId);
+      allow list: if isValidId(userId) && isOwner(userId);
+      allow create: if isValidId(userId)
+        && isValidId(friendUid)
+        && isOwner(userId)
+        && isValidFriendContact(incoming())
+        && friendUid != userId
+        && incoming().friendUid == friendUid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/userDirectory/$(friendUid))
+        && hasAcceptedFriendship(userId, friendUid);
+      allow update: if isValidId(userId)
+        && isValidId(friendUid)
+        && isOwner(userId)
+        && isValidFriendContact(incoming())
+        && incoming().friendUid == existing().friendUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['friendName', 'note', 'updatedAt']);
+      allow delete: if isValidId(userId) && isValidId(friendUid) && isOwner(userId);
+    }
+
+    // 6. Direct Friend-to-Friend Audio-Only WebRTC Calls (Voice Rooms Completely Disabled)
+    match /duoSessions/{sessionId} {
+      allow get: if isVerifiedUser()
+        && isValidId(sessionId)
+        && (
+          existing().hostUid == request.auth.uid
+          || existing().guestUid == request.auth.uid
+          || existing().calleeUid == request.auth.uid
+        );
+      allow list: if isVerifiedUser()
+        && resource.data.calleeUid == request.auth.uid;
+
+      allow create: if isVerifiedUser()
+        && isValidId(sessionId)
+        && isValidDuoSession(incoming())
+        && incoming().sessionId == sessionId
+        && incoming().hostUid == request.auth.uid
+        && incoming().status == 'ringing'
+        && incoming().callMode == 'friend_call'
+        && incoming().calleeUid != request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid)/friends/$(incoming().calleeUid));
+
+      allow update: if isVerifiedUser()
+        && isValidId(sessionId)
+        && isValidDuoSession(incoming())
+        && !(existing().status in ['ended', 'declined'])
+        && incoming().sessionId == existing().sessionId
+        && incoming().hostUid == existing().hostUid
+        && incoming().calleeUid == existing().calleeUid
+        && incoming().callMode == existing().callMode
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Action 1: Approved friend callee answers the ringing call
+          (
+            existing().status == 'ringing'
+            && existing().calleeUid == request.auth.uid
+            && request.auth.uid != existing().hostUid
+            && (!('guestUid' in existing()) || existing().guestUid == null)
+            && incoming().guestUid == request.auth.uid
+            && incoming().status == 'active'
+            && incoming().answerType is string
+            && incoming().answerSdp is string
+            && incoming().diff(existing()).affectedKeys().hasOnly(['guestUid', 'guestName', 'answerType', 'answerSdp', 'status', 'updatedAt'])
+          )
+          ||
+          // Action 2: Callee declines an incoming ringing call (Terminal State)
+          (
+            existing().status == 'ringing'
+            && existing().calleeUid == request.auth.uid
+            && incoming().status == 'declined'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+          )
+          ||
+          // Action 3: Caller, Guest, or Callee ends call (Terminal State)
+          (
+            (existing().hostUid == request.auth.uid || existing().guestUid == request.auth.uid || existing().calleeUid == request.auth.uid)
+            && incoming().status == 'ended'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+          )
+          ||
+          // Action 4: Active call participants sync bounded recitation metadata (NO RTCDataChannel)
+          (
+            existing().status == 'active'
+            && incoming().status == 'active'
+            && (existing().hostUid == request.auth.uid || existing().guestUid == request.auth.uid)
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'activeAyah', 'reciterSide', 'mistakesCount',
+              'hideVersesForReciter', 'hideVersesForListener', 'riwayah', 'updatedAt'
+            ])
+          )
+        );
+
+      allow delete: if isVerifiedUser()
+        && isValidId(sessionId)
+        && existing().hostUid == request.auth.uid;
+    }
+  }
+}

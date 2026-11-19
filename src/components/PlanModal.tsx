@@ -6,6 +6,8 @@ import {
   CurriculumScope,
   DayId,
   QuranPlanItem,
+  QuranRiwayah,
+  RIWAYAH_OPTIONS,
   WEEK_DAYS,
   SURAH_LIST,
   JUZ_LIST,
@@ -18,6 +20,7 @@ interface PlanModalProps {
   isOpen: boolean;
   lang: Language;
   initialDay?: DayId;
+  defaultRiwayah?: QuranRiwayah;
   editingPlan?: QuranPlanItem | null;
   onClose: () => void;
   onSave: (plansToInsertOrUpdate: Omit<QuranPlanItem, 'id' | 'createdAt'>[], editingId?: string) => void;
@@ -27,6 +30,7 @@ export const PlanModal: React.FC<PlanModalProps> = ({
   isOpen,
   lang,
   initialDay,
+  defaultRiwayah = 'hafs',
   editingPlan,
   onClose,
   onSave,
@@ -37,6 +41,7 @@ export const PlanModal: React.FC<PlanModalProps> = ({
   const [selectedDays, setSelectedDays] = useState<DayId[]>([initialDay || todayId]);
   const [planType, setPlanType] = useState<PlanType>('sard');
   const [scope, setScope] = useState<CurriculumScope>('surah');
+  const [riwayah, setRiwayah] = useState<QuranRiwayah>(defaultRiwayah);
 
   // Surah scope state
   const [singleSurah, setSingleSurah] = useState<boolean>(true);
@@ -66,6 +71,7 @@ export const PlanModal: React.FC<PlanModalProps> = ({
       setSelectedDays([editingPlan.day]);
       setPlanType(editingPlan.planType);
       setScope(editingPlan.scope);
+      setRiwayah(editingPlan.riwayah || defaultRiwayah);
 
       const sStart = editingPlan.surahStart ?? 2;
       const sEnd = editingPlan.surahEnd ?? sStart;
@@ -92,6 +98,7 @@ export const PlanModal: React.FC<PlanModalProps> = ({
       setSelectedDays([initialDay || todayId]);
       setPlanType('sard');
       setScope('surah');
+      setRiwayah(defaultRiwayah);
       setSingleSurah(true);
       setSurahStart(18);
       setSurahEnd(18);
@@ -107,7 +114,7 @@ export const PlanModal: React.FC<PlanModalProps> = ({
       setMistakesCount(0);
       setRepeatWeekly(false);
     }
-  }, [isOpen, editingPlan, initialDay, todayId]);
+  }, [isOpen, editingPlan, initialDay, todayId, defaultRiwayah]);
 
   if (!isOpen) return null;
 
@@ -155,6 +162,7 @@ export const PlanModal: React.FC<PlanModalProps> = ({
       day,
       planType,
       scope,
+      riwayah,
       surahStart: scope === 'surah' ? s1 : undefined,
       surahEnd: scope === 'surah' ? s2 : undefined,
       juzStart: scope === 'juz' ? j1 : undefined,
@@ -288,6 +296,34 @@ export const PlanModal: React.FC<PlanModalProps> = ({
                   >
                     <span className="text-xs font-bold whitespace-nowrap">{tItem.label}</span>
                     {active && <Check className="w-3.5 h-3.5 text-[#C88A14] shrink-0" />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 2b. Riwayah Selector: حفص | قالون | ورش */}
+          <div>
+            <label className="block text-xs font-bold text-[#261C14] mb-1.5">
+              {lang === 'ar' ? 'الرواية القرآنية' : 'Quran Narration (Riwayah)'}
+            </label>
+            <div className="grid grid-cols-3 gap-2">
+              {RIWAYAH_OPTIONS.map((rw) => {
+                const active = riwayah === rw.id;
+                return (
+                  <button
+                    key={rw.id}
+                    type="button"
+                    onClick={() => setRiwayah(rw.id)}
+                    className={`py-2 px-2.5 rounded-xl border text-center transition-all cursor-pointer flex items-center justify-center gap-1 ${
+                      active
+                        ? 'bg-[#2D2218] border-[#C88A14] text-[#EAB338] shadow-2xs'
+                        : 'bg-[#F7F3EB]/80 border-[#DDD2BE] text-[#5C4B3B] hover:bg-[#EFE9DC]/60'
+                    }`}
+                  >
+                    <span className="text-xs font-bold whitespace-nowrap">
+                      {lang === 'ar' ? rw.labelAr : rw.labelEn}
+                    </span>
                   </button>
                 );
               })}

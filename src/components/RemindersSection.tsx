@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bell, Volume2, VolumeX, CheckCircle2, Clock, Send, Repeat, Check, Sparkles, AlertCircle } from 'lucide-react';
+import { Bell, Volume2, VolumeX, CheckCircle2, Clock, Send, Repeat, Check, Sparkles } from 'lucide-react';
 import {
   Language,
   QuranPlanItem,
@@ -8,7 +8,6 @@ import {
   formatCurriculumTitle,
   getPlanTypeLabel,
   getTodayDayId,
-  isPlanOverdue,
 } from '@/src/data/quranData';
 import { getCompactDualDate } from '@/src/utils/calendar';
 import { t } from '@/src/data/translations';
@@ -61,18 +60,18 @@ export const RemindersSection: React.FC<RemindersSectionProps> = ({
   });
 
   return (
-    <section className="space-y-3.5">
+    <section className="rounded-2xl p-3 sm:p-4 bg-[#EFE9DC] border border-[#DDD2BE] shadow-sm space-y-3.5 text-[#261C14]">
       {/* Compact Header & Controls Strip */}
-      <div className="p-3 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] flex flex-wrap items-center justify-between gap-2.5">
+      <div className="p-3 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] flex flex-wrap items-center justify-between gap-2.5 shadow-2xs">
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-1.5 text-xs font-bold text-[#261C14]">
+          <div className="flex items-center gap-1.5 text-xs font-bold text-[#2D2218]">
             <CheckCircle2
               className={`w-4 h-4 ${
                 notificationPermission === 'granted' ? 'text-[#4A6144]' : 'text-[#C88A14]'
               }`}
             />
             <span>{dict.browserPermissionStatus}:</span>
-            <span className="text-[#5C4B3B]">
+            <span className="text-[#5C4B3B] font-semibold">
               {notificationPermission === 'granted'
                 ? dict.permissionGranted
                 : notificationPermission === 'denied'
@@ -86,13 +85,15 @@ export const RemindersSection: React.FC<RemindersSectionProps> = ({
           <button
             type="button"
             onClick={onToggleSound}
-            className="flex items-center gap-1.5 text-xs font-semibold text-[#261C14] cursor-pointer"
+            className="flex items-center gap-1.5 text-xs font-semibold text-[#2D2218] cursor-pointer"
           >
             <Volume2 className="w-4 h-4 text-[#C88A14]" />
             <span>{dict.soundAlertToggle}:</span>
             <span
-              className={`px-2 py-0.5 rounded-md text-[11px] font-bold ${
-                soundEnabled ? 'bg-[#2D2218] text-[#FFFDF9]' : 'bg-[#EFE9DC] text-[#5C4B3B]'
+              className={`px-2 py-0.5 rounded-md text-[11px] font-bold border ${
+                soundEnabled
+                  ? 'bg-[#4A6144] text-[#FFFDF9] border-[#4A6144]'
+                  : 'bg-[#EFE9DC] text-[#5C4B3B] border-[#DDD2BE]'
               }`}
             >
               {soundEnabled
@@ -111,7 +112,7 @@ export const RemindersSection: React.FC<RemindersSectionProps> = ({
             <button
               type="button"
               onClick={onRequestPermission}
-              className="px-3 py-1.5 rounded-lg border border-[#C88A14] bg-[#FBF5E6] text-xs font-semibold text-[#261C14] hover:bg-[#F6E9C8] transition-colors cursor-pointer flex items-center gap-1.5"
+              className="px-3 py-1.5 rounded-lg border border-[#DDD2BE] bg-[#F7F3EB] text-xs font-semibold text-[#2D2218] hover:bg-[#EFE9DC] transition-colors cursor-pointer flex items-center gap-1.5"
             >
               <Bell className="w-3.5 h-3.5 text-[#C88A14]" />
               <span>{dict.enableNotificationsBtn}</span>
@@ -131,7 +132,7 @@ export const RemindersSection: React.FC<RemindersSectionProps> = ({
       {/* Preparation Alerts Card (تنبيهات الاستعداد قبل موعد الخطة بـ 10 دقائق) */}
       <div className="p-3 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] flex flex-wrap items-center justify-between gap-3 shadow-2xs">
         <div className="space-y-0.5 min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 text-xs font-bold text-[#261C14]">
+          <div className="flex items-center gap-1.5 text-xs font-bold text-[#2D2218]">
             <Clock className="w-4 h-4 text-[#C88A14] shrink-0" />
             <span>{dict.prepAlertsTitle}</span>
           </div>
@@ -144,10 +145,10 @@ export const RemindersSection: React.FC<RemindersSectionProps> = ({
           <button
             type="button"
             onClick={onTogglePrepAlerts}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 border ${
               prepAlertsEnabled
-                ? 'bg-[#4A6144] text-white shadow-2xs'
-                : 'bg-[#EFE9DC] text-[#5C4B3B] hover:bg-[#DDD2BE]'
+                ? 'bg-[#4A6144] text-[#FFFDF9] border-[#4A6144] shadow-2xs'
+                : 'bg-[#F7F3EB] text-[#5C4B3B] border-[#DDD2BE] hover:bg-[#EFE9DC]'
             }`}
           >
             <Check className={`w-3.5 h-3.5 ${prepAlertsEnabled ? 'opacity-100' : 'opacity-0'}`} />
@@ -164,7 +165,7 @@ export const RemindersSection: React.FC<RemindersSectionProps> = ({
           <button
             type="button"
             onClick={() => onTriggerTestReminder(undefined, true)}
-            className="px-2.5 py-1.5 rounded-lg border border-[#C88A14] bg-[#FBF5E6] text-xs font-medium text-[#261C14] hover:bg-[#F6E9C8] transition-colors cursor-pointer"
+            className="px-2.5 py-1.5 rounded-lg border border-[#DDD2BE] bg-[#F7F3EB] text-xs font-semibold text-[#2D2218] hover:bg-[#EFE9DC] transition-colors cursor-pointer"
           >
             {lang === 'ar' ? 'تجربة' : 'Test'}
           </button>
@@ -172,7 +173,7 @@ export const RemindersSection: React.FC<RemindersSectionProps> = ({
       </div>
 
       {/* Automatic Silent Mode Banner for Recitation Sessions */}
-      <div className="p-2.5 rounded-xl bg-[#FBF5E6] border border-[#E8D29F] flex items-center gap-2 text-xs text-[#2D2218]">
+      <div className="p-2.5 rounded-xl bg-[#FBF5E6] border border-[#E6D19E] flex items-center gap-2 text-xs text-[#5C4B3B]">
         <VolumeX className="w-4 h-4 text-[#C88A14] shrink-0" />
         <span className="leading-relaxed">
           {lang === 'ar'
@@ -182,125 +183,110 @@ export const RemindersSection: React.FC<RemindersSectionProps> = ({
       </div>
 
       {/* Scheduled Reminders Table */}
-      <div className="rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] overflow-hidden">
-        <div className="px-4 py-2.5 bg-[#F7F3EB] border-b border-[#DDD2BE] flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <h3 className="text-xs font-bold text-[#261C14]">{dict.upcomingRemindersTitle}</h3>
-            {plans.filter((p) => isPlanOverdue(p, todayId)).length > 0 && (
-              <span
-                className="inline-flex items-center gap-1 text-[10.5px] font-bold text-white bg-[#C53030] px-2 py-0.5 rounded-full shadow-xs ring-2 ring-[#C53030]/25 animate-pulse"
-                title={lang === 'ar' ? 'يوجد مهام متأخرة' : 'Overdue tasks present'}
-              >
-                <AlertCircle className="w-3 h-3 text-white" />
-                <span>
-                  {plans.filter((p) => isPlanOverdue(p, todayId)).length} {lang === 'ar' ? 'متأخرة' : 'overdue'}
-                </span>
-              </span>
-            )}
-          </div>
-          <span className="text-xs text-[#84715E] font-mono-tabular">
+      <div className="rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] overflow-hidden shadow-2xs">
+        <div className="px-4 py-2.5 bg-[#E7DEC9] border-b border-[#DDD2BE] flex items-center justify-between">
+          <h3 className="text-xs font-bold text-[#2D2218]">{dict.upcomingRemindersTitle}</h3>
+          <span className="text-xs text-[#5C4B3B] font-mono-tabular font-semibold">
             {plans.filter((p) => p.reminderEnabled).length}/{sortedPlans.length}
           </span>
         </div>
 
         <div className="divide-y divide-[#EFE9DC]">
-          {sortedPlans.map((plan) => {
-            const dayInfo = WEEK_DAYS.find((d) => d.id === plan.day);
-            const isToday = plan.day === todayId;
-            const isOverdue = isPlanOverdue(plan, todayId);
-            return (
-              <div
-                key={plan.id}
-                className={`px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 transition-colors ${
-                  isOverdue ? 'bg-[#FFF2EF] border-s-4 border-s-[#C53030]' : isToday ? 'bg-[#FBF5E6]/60' : 'hover:bg-[#F7F3EB]/60'
-                }`}
-              >
-                <div className="flex flex-wrap items-center gap-2 text-xs">
-                  {isOverdue && (
-                    <span
-                      className="inline-flex items-center gap-1 text-[11px] font-bold text-white bg-[#C53030] px-2 py-0.5 rounded-md shadow-xs ring-2 ring-[#C53030]/25 animate-pulse"
-                      title={lang === 'ar' ? 'خطة متأخرة لم تكتمل في موعدها' : 'Overdue task'}
-                    >
-                      <AlertCircle className="w-3 h-3 text-white" />
-                      <span>{lang === 'ar' ? 'متأخرة' : 'Overdue'}</span>
+          {sortedPlans.length === 0 ? (
+            <div className="p-6 text-center text-xs text-[#84715E]">
+              {lang === 'ar'
+                ? 'لا توجد خطط مجدولة للتذكير حالياً.'
+                : 'No scheduled plan reminders yet.'}
+            </div>
+          ) : (
+            sortedPlans.map((plan) => {
+              const dayInfo = WEEK_DAYS.find((d) => d.id === plan.day);
+              const isToday = plan.day === todayId;
+              return (
+                <div
+                  key={plan.id}
+                  className={`px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 transition-colors ${
+                    isToday ? 'bg-[#FBF3DF]/65' : 'hover:bg-[#F7F3EB]/70'
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <span className="font-bold text-[#261C14]">
+                      {formatCurriculumTitle(plan, lang)}
                     </span>
-                  )}
-                  <span className={`font-bold ${isOverdue ? 'text-[#9B1C1C]' : 'text-[#261C14]'}`}>
-                    {formatCurriculumTitle(plan, lang)}
-                  </span>
-                  {isToday && (
-                    <span className="text-[11px] font-semibold text-[#C88A14]">
-                      · {dict.todayBadge}
+                    {isToday && (
+                      <span className="text-[11px] font-bold text-[#9E650C] bg-[#F6E9C8] px-1.5 py-0.5 rounded">
+                        {dict.todayBadge}
+                      </span>
+                    )}
+                    <span className="text-[#5C4B3B]">
+                      · {dayInfo ? (lang === 'ar' ? dayInfo.nameAr : dayInfo.nameEn) : ''}{' '}
+                      ({getCompactDualDate(plan.day, lang).hijri} · {getCompactDualDate(plan.day, lang).greg}) ·{' '}
+                      {getPlanTypeLabel(plan.planType, lang)} · {plan.estimatedAyahs} {dict.ayahsUnit}
                     </span>
-                  )}
-                  <span className="text-[#84715E]">
-                    · {dayInfo ? (lang === 'ar' ? dayInfo.nameAr : dayInfo.nameEn) : ''}{' '}
-                    ({getCompactDualDate(plan.day, lang).hijri} · {getCompactDualDate(plan.day, lang).greg}) ·{' '}
-                    {getPlanTypeLabel(plan.planType, lang)} · {plan.estimatedAyahs} {dict.ayahsUnit}
-                  </span>
-                  {plan.repeatWeekly && (
-                    <span className="inline-flex items-center gap-0.5 text-[9.5px] font-bold px-1.5 py-0.2 rounded bg-[#8F681E]/10 text-[#8F681E] border border-[#8F681E]/20">
-                      <Repeat className="w-2.5 h-2.5" />
-                      <span>{dict.repeatWeeklyBadge}</span>
-                    </span>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-1">
-                    <Clock className="w-3.5 h-3.5 text-[#C88A14]" />
-                    <input
-                      type="time"
-                      value={plan.reminderTime}
-                      onChange={(e) => onUpdatePlanReminderTime(plan.id, e.target.value)}
-                      className="px-2 py-0.5 rounded-md bg-[#F7F3EB] border border-[#DDD2BE] text-xs font-mono-tabular text-[#261C14] focus:outline-none focus:border-[#C88A14]"
-                    />
+                    {plan.repeatWeekly && (
+                      <span className="inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded bg-[#C88A14]/15 text-[#9E650C] border border-[#C88A14]/25">
+                        <Repeat className="w-2.5 h-2.5" />
+                        <span>{dict.repeatWeeklyBadge}</span>
+                      </span>
+                    )}
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => onTogglePlanReminder(plan.id)}
-                    className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
-                      plan.reminderEnabled
-                        ? 'bg-[#4A6144] text-white'
-                        : 'bg-[#EFE9DC] text-[#84715E]'
-                    }`}
-                  >
-                    {plan.reminderEnabled
-                      ? lang === 'ar'
-                        ? 'مفعّل'
-                        : 'On'
-                      : lang === 'ar'
-                      ? 'متوقف'
-                      : 'Off'}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1">
+                      <Clock className="w-3.5 h-3.5 text-[#C88A14]" />
+                      <input
+                        type="time"
+                        value={plan.reminderTime}
+                        onChange={(e) => onUpdatePlanReminderTime(plan.id, e.target.value)}
+                        className="px-2 py-0.5 rounded-md bg-[#F7F3EB] border border-[#DDD2BE] text-xs font-mono-tabular text-[#261C14] focus:outline-none focus:border-[#C88A14]"
+                      />
+                    </div>
 
-                  <button
-                    type="button"
-                    onClick={() => onTriggerTestReminder(plan)}
-                    className="px-2 py-1 rounded-md border border-[#DDD2BE] text-xs font-medium text-[#5C4B3B] hover:border-[#C88A14] hover:text-[#261C14] transition-colors cursor-pointer"
-                  >
-                    {lang === 'ar' ? 'تجربة' : 'Test'}
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => onTogglePlanReminder(plan.id)}
+                      className={`px-2.5 py-1 rounded-md text-xs font-bold transition-colors cursor-pointer whitespace-nowrap border ${
+                        plan.reminderEnabled
+                          ? 'bg-[#4A6144] text-[#FFFDF9] border-[#4A6144] hover:bg-[#3E5239]'
+                          : 'bg-[#EFE9DC] text-[#5C4B3B] border-[#DDD2BE] hover:bg-[#E5DEC9]'
+                      }`}
+                    >
+                      {plan.reminderEnabled
+                        ? lang === 'ar'
+                          ? 'مفعّل'
+                          : 'On'
+                        : lang === 'ar'
+                        ? 'متوقف'
+                        : 'Off'}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => onTriggerTestReminder(plan)}
+                      className="px-2 py-1 rounded-md border border-[#DDD2BE] bg-[#F7F3EB] text-xs font-semibold text-[#2D2218] hover:bg-[#EFE9DC] transition-colors cursor-pointer"
+                    >
+                      {lang === 'ar' ? 'تجربة' : 'Test'}
+                    </button>
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })
+          )}
         </div>
       </div>
 
       {/* Scheduled Random Tests Reminders (الاختبارات العشوائية المجدولة والتذكيرات) */}
-      <div className="rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] overflow-hidden space-y-0">
-        <div className="px-4 py-2.5 bg-[#FBF5E6] border-b border-[#E8D29F] flex items-center justify-between">
+      <div className="rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] overflow-hidden space-y-0 shadow-2xs">
+        <div className="px-4 py-2.5 bg-[#E7DEC9] border-b border-[#DDD2BE] flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-[#C88A14]" />
-            <h3 className="text-xs font-bold text-[#261C14]">
+            <h3 className="text-xs font-bold text-[#2D2218]">
               {lang === 'ar'
                 ? 'تذكيرات الاختبارات العشوائية لتثبيت الحفظ (المتقن · المتردد · المتفلت)'
                 : 'Random Retention Tests Reminders'}
             </h3>
           </div>
-          <span className="text-xs text-[#84715E] font-mono-tabular">
+          <span className="text-xs text-[#5C4B3B] font-mono-tabular font-semibold">
             {quizzes.filter((q) => q.reminderEnabled).length}/{quizzes.length}
           </span>
         </div>
@@ -316,51 +302,40 @@ export const RemindersSection: React.FC<RemindersSectionProps> = ({
             {quizzes.map((quiz) => {
               const isDueToday =
                 new Date(quiz.dueDateTimestamp).toDateString() === new Date().toDateString();
-              const isOverdue = quiz.dueDateTimestamp < Date.now() && !isDueToday;
 
               return (
                 <div
                   key={quiz.id}
                   className={`px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 transition-colors ${
-                    isOverdue
-                      ? 'bg-[#FFF2EF] border-s-4 border-s-[#C53030]'
-                      : isDueToday
-                      ? 'bg-[#FBF5E6]/70'
-                      : 'hover:bg-[#F7F3EB]/60'
+                    isDueToday ? 'bg-[#FBF3DF]/65' : 'hover:bg-[#F7F3EB]/70'
                   }`}
                 >
                   <div className="flex flex-wrap items-center gap-2 text-xs">
                     <span
-                      className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                      className={`w-2.5 h-2.5 rounded-full shrink-0 border border-[#DDD2BE] ${
                         quiz.evaluation === 'muthabbat'
                           ? 'bg-[#4A6144]'
                           : quiz.evaluation === 'mutaraddid'
                           ? 'bg-[#C88A14]'
-                          : 'bg-[#C53030]'
+                          : 'bg-[#A84A32]'
                       }`}
                     />
-                    <span className={`font-bold ${isOverdue ? 'text-[#9B1C1C]' : 'text-[#261C14]'}`}>
+                    <span className="font-bold text-[#261C14]">
                       سورة {quiz.surahNameAr} ({quiz.ayahFrom} - {quiz.ayahTo})
                     </span>
-                    <span className="px-2 py-0.5 rounded-md bg-[#EFE9DC] text-[#5C4B3B] text-[10.5px] font-semibold">
+                    <span className="px-2 py-0.5 rounded-md bg-[#EFE9DC] text-[#5C4B3B] border border-[#DDD2BE] text-[10.5px] font-semibold">
                       {quiz.frequencyLabelAr}
                     </span>
-                    <span className="text-[#84715E] text-[11px]">
+                    <span className="text-[#5C4B3B] text-[11px]">
                       · الموعد: {quiz.scheduledDateFormatted}
                     </span>
                     {isDueToday && (
-                      <span className="text-[10px] font-bold text-[#4A6144] px-1.5 py-0.5 rounded-sm bg-[#4A6144]/15">
+                      <span className="text-[10.5px] font-bold text-[#9E650C] px-1.5 py-0.5 rounded-sm bg-[#F6E9C8] border border-[#C88A14]/35">
                         حان اليوم!
                       </span>
                     )}
-                    {isOverdue && (
-                      <span className="inline-flex items-center gap-1 text-[10.5px] font-bold text-white bg-[#C53030] px-2 py-0.5 rounded-md shadow-xs ring-2 ring-[#C53030]/25 animate-pulse">
-                        <AlertCircle className="w-3 h-3 text-white" />
-                        <span>{lang === 'ar' ? 'متأخر' : 'Overdue'}</span>
-                      </span>
-                    )}
                     {quiz.score !== undefined && (
-                      <span className="text-[10px] font-bold text-[#C88A14] font-mono-tabular">
+                      <span className="text-[10.5px] font-bold text-[#4A6144] font-mono-tabular">
                         آخر نتيجة: {quiz.score}%
                       </span>
                     )}
@@ -383,10 +358,10 @@ export const RemindersSection: React.FC<RemindersSectionProps> = ({
                     <button
                       type="button"
                       onClick={() => onToggleQuizReminder && onToggleQuizReminder(quiz.id)}
-                      className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                      className={`px-2.5 py-1 rounded-md text-xs font-bold transition-colors cursor-pointer whitespace-nowrap border ${
                         quiz.reminderEnabled
-                          ? 'bg-[#4A6144] text-white'
-                          : 'bg-[#EFE9DC] text-[#84715E]'
+                          ? 'bg-[#4A6144] text-[#FFFDF9] border-[#4A6144] hover:bg-[#3E5239]'
+                          : 'bg-[#EFE9DC] text-[#5C4B3B] border-[#DDD2BE] hover:bg-[#E5DEC9]'
                       }`}
                     >
                       {quiz.reminderEnabled
@@ -403,7 +378,7 @@ export const RemindersSection: React.FC<RemindersSectionProps> = ({
                       onClick={() =>
                         onTriggerTestQuizReminder && onTriggerTestQuizReminder(quiz)
                       }
-                      className="px-2 py-1 rounded-md border border-[#DDD2BE] text-xs font-medium text-[#5C4B3B] hover:border-[#C88A14] hover:text-[#261C14] transition-colors cursor-pointer"
+                      className="px-2 py-1 rounded-md border border-[#DDD2BE] bg-[#F7F3EB] text-xs font-semibold text-[#2D2218] hover:bg-[#EFE9DC] transition-colors cursor-pointer"
                       title={lang === 'ar' ? 'تجربة إشعار الاختبار' : 'Test Alert'}
                     >
                       {lang === 'ar' ? 'تنبيه' : 'Alert'}
@@ -412,7 +387,7 @@ export const RemindersSection: React.FC<RemindersSectionProps> = ({
                     <button
                       type="button"
                       onClick={() => onStartQuiz && onStartQuiz(quiz)}
-                      className="px-3 py-1 rounded-md bg-[#C88A14] hover:bg-[#B3780C] text-white text-xs font-bold transition-colors cursor-pointer whitespace-nowrap flex items-center gap-1"
+                      className="mustard-gradient-btn px-3 py-1 rounded-md text-[#FFFDF9] text-xs font-bold transition-colors cursor-pointer whitespace-nowrap flex items-center gap-1"
                     >
                       <span>{lang === 'ar' ? 'بدء الاختبار' : 'Quiz'}</span>
                     </button>

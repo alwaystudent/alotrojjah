@@ -66,18 +66,35 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Subtle Islamic 8-point star geometric background pattern */
+/* Subtle Islamic 8-point star geometric background pattern (Original App Theme) */
 .islamic-pattern-subtle {
+  background-color: #F7F3EB;
   background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' stroke='%23C88A14' stroke-width='0.6' stroke-opacity='0.14'%3E%3Cpath d='M30 0L37.5 15L52.5 7.5L45 22.5L60 30L45 37.5L52.5 52.5L37.5 45L30 60L22.5 45L7.5 52.5L15 37.5L0 30L15 22.5L7.5 7.5L22.5 15Z'/%3E%3Ccircle cx='30' cy='30' r='8'/%3E%3C/g%3E%3C/svg%3E");
 }
 
-/* Warm earthy gradient with mustard undertones */
+/* Warm earthy gradient with mustard undertones (Original App Theme) */
 .earthy-gradient-banner {
   background: linear-gradient(135deg, #2D2218 0%, #463525 48%, #6B4F28 82%, #8F681E 100%);
 }
 
 .earthy-card-gradient {
   background: linear-gradient(180deg, #FFFDF9 0%, #F6EFE2 100%);
+}
+
+.olive-card-surface {
+  background: linear-gradient(180deg, #FFFDF9 0%, #EFF4EC 100%);
+}
+
+.gold-card-surface {
+  background: linear-gradient(180deg, #FFFDF9 0%, #FBF3DF 100%);
+}
+
+.umber-card-surface {
+  background: linear-gradient(180deg, #FFFDF9 0%, #F4EDE0 100%);
+}
+
+.soft-earth-card-surface {
+  background: linear-gradient(180deg, #FFFDF9 0%, #EFE6D6 100%);
 }
 
 .mustard-gradient-btn {
@@ -87,4 +104,3 @@
 .mustard-gradient-btn:hover {
   background: linear-gradient(135deg, #C28B14 0%, #9E6A0C 100%);
 }
-
