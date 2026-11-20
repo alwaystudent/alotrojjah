@@ -90,7 +90,7 @@ import { PlanModal } from './components/PlanModal';
 import { AnalyticsSection } from './components/AnalyticsSection';
 import { RemindersSection } from './components/RemindersSection';
 import { MutunAdhkarSection } from './components/MutunAdhkarSection';
-import { ActiveDuoCallInfo, DuoRecitationSection } from './components/DuoRecitationSection';
+import { DuoRecitationSection } from './components/DuoRecitationSection';
 import { SardMushafView } from './components/SardMushafView';
 import { SmartMemorizationSystem } from './components/SmartMemorizationSystem';
 import { RandomQuizModal } from './components/RandomQuizModal';
@@ -214,7 +214,6 @@ export default function App() {
   });
   const [expandedSardPlanId, setExpandedSardPlanId] = useState<string | null>(null);
   const [smartMemorizationPlan, setSmartMemorizationPlan] = useState<QuranPlanItem | null>(null);
-  const [activeDuoCallInfo, setActiveDuoCallInfo] = useState<ActiveDuoCallInfo | null>(null);
 
   // Immediately strip transient URL invite/call query params after capturing them
   // so pulling down to refresh Home never redirects back to Duo Recitation!
@@ -818,11 +817,8 @@ export default function App() {
   };
 
   const playGentleChime = () => {
-    // Never play reminder sound if muted, during active Sard / Smart Memorization, or live Duo voice call
-    const isVoiceCallActive = Boolean(
-      (window as unknown as { __alutrujjahActiveVoiceCall?: boolean }).__alutrujjahActiveVoiceCall
-    );
-    if (!soundEnabled || expandedSardPlanId || smartMemorizationPlan || isVoiceCallActive) return;
+    // Never play reminder sound if muted, during active Sard / Smart Memorization session
+    if (!soundEnabled || expandedSardPlanId || smartMemorizationPlan) return;
     try {
       stopChimeAudio();
       const AudioCtx =
@@ -1570,36 +1566,6 @@ export default function App() {
 
       {/* Main Content Container */}
       <main className="flex-1 w-full px-3 sm:px-6 lg:px-10 pt-3 sm:pt-4 pb-1.5 sm:pb-2 space-y-4">
-        {/* Compact Persistent Active-Call Bar When Navigating Away From Duo Screen */}
-        {activeDuoCallInfo && activeSection !== 'duo' && (
-          <div className="max-w-5xl mx-auto">
-            <button
-              type="button"
-              onClick={() => setActiveSection('duo')}
-              className="w-full rounded-2xl bg-[#2D2218] hover:bg-[#3A2C20] border border-[#C88A14] px-3.5 py-2.5 text-[#FFFDF9] flex items-center justify-between gap-3 shadow-sm cursor-pointer transition-colors"
-            >
-              <div className="flex items-center gap-2.5 min-w-0">
-                <span className="w-2.5 h-2.5 rounded-full bg-[#22C55E] animate-pulse shrink-0" />
-                <PhoneCall className="w-4 h-4 text-[#EAB338] shrink-0" />
-                <span className="text-xs sm:text-sm font-extrabold truncate">
-                  {lang === 'ar'
-                    ? `مكالمة السرد الثنائي نشطة مع ${activeDuoCallInfo.partnerName}`
-                    : `Live Duo Call with ${activeDuoCallInfo.partnerName}`}
-                </span>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <span className="text-xs font-mono-tabular text-[#EAB338] font-bold">
-                  {String(Math.floor(activeDuoCallInfo.elapsedSeconds / 60)).padStart(2, '0')}:
-                  {String(activeDuoCallInfo.elapsedSeconds % 60).padStart(2, '0')}
-                </span>
-                <span className="px-2.5 py-1 rounded-lg bg-[#EAB338] text-[#2D2218] text-[11px] font-extrabold">
-                  {lang === 'ar' ? 'العودة للشاشة' : 'Return'}
-                </span>
-              </div>
-            </button>
-          </div>
-        )}
-
         {/* HOME VIEW — Original Warm Umber, Parchment, Mustard Gold & Olive Theme (NO Tables Shown on Home!) */}
         {activeSection === 'home' && (
           <section className="max-w-5xl mx-auto space-y-4">
@@ -2367,15 +2333,8 @@ export default function App() {
         {/* MUTUN & ADHKAR DEDICATED VIEW */}
         {activeSection === 'mutun' && <MutunAdhkarSection lang={lang} />}
 
-        {/* BROWSER P2P DUO RECITATION DEDICATED VIEW — Always mounted cleanly offscreen when browsing other sections so live WebRTC voice never disconnects */}
-        <div
-          className={
-            activeSection === 'duo'
-              ? 'block'
-              : 'fixed -left-[9999px] top-0 w-px h-px opacity-0 pointer-events-none overflow-hidden'
-          }
-          aria-hidden={activeSection !== 'duo'}
-        >
+        {/* BROWSER P2P DUO RECITATION DEDICATED VIEW */}
+        {activeSection === 'duo' && (
           <DuoRecitationSection
             lang={lang}
             defaultRiwayah={defaultRiwayah}
@@ -2384,9 +2343,8 @@ export default function App() {
             pendingAcceptCallId={pendingAcceptCallId}
             onClearPendingCall={() => setPendingAcceptCallId(null)}
             onOpenPrivacyTerms={() => setIsPrivacyTermsOpen(true)}
-            onActiveCallChange={setActiveDuoCallInfo}
           />
-        </div>
+        )}
       </main>
 
       {/* Fixed Bottom Navigation Bar (5 Clean Tabs: الرئيسية، اليوم، الثنائي، الأسبوعي، المكتبة) */}
@@ -2427,15 +2385,12 @@ export default function App() {
           <button
             type="button"
             onClick={() => setActiveSection('duo')}
-            className={`relative flex flex-col items-center justify-center gap-0.5 py-1.5 px-1 rounded-xl text-[10.5px] sm:text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+            className={`flex flex-col items-center justify-center gap-0.5 py-1.5 px-1 rounded-xl text-[10.5px] sm:text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
               activeSection === 'duo'
                 ? 'bg-[#2D2218] text-[#EAB338] shadow-xs'
                 : 'text-[#5C4B3B] hover:text-[#261C14] hover:bg-[#EFE9DC]'
             }`}
           >
-            {activeDuoCallInfo && activeSection !== 'duo' && (
-              <span className="absolute top-1 end-2 w-2 h-2 rounded-full bg-[#22C55E] animate-pulse" />
-            )}
             <Users className={`w-4 h-4 sm:w-4.5 sm:h-4.5 shrink-0 ${activeSection === 'duo' ? 'text-[#EAB338]' : 'text-[#C88A14]'}`} />
             <span className="leading-none truncate max-w-full">{dict.navDuo}</span>
           </button>

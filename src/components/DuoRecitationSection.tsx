@@ -63,10 +63,6 @@ import {
   Volume1,
   GraduationCap,
   X,
-  Presentation,
-  Send,
-  Lightbulb,
-  Eraser,
 } from 'lucide-react';
 import { auth, db, googleProvider, OperationType, handleFirestoreError } from '../firebase';
 import {
@@ -129,17 +125,6 @@ const EVALUATION_CHOICES: {
   { id: 'needs_review', labelAr: 'يحتاج مراجعة مركزة', labelEn: 'Needs Focused Review' },
 ];
 
-export type DuoParticipantRole = 'student' | 'teacher';
-
-export type DuoBoardHintKind = 'opening_word' | 'tajweed' | 'mutashabih' | 'note';
-
-export interface ActiveDuoCallInfo {
-  sessionId: string;
-  partnerName: string;
-  peerConnState: string;
-  elapsedSeconds: number;
-}
-
 interface DuoRecitationSectionProps {
   lang: Language;
   defaultRiwayah?: QuranRiwayah;
@@ -148,8 +133,9 @@ interface DuoRecitationSectionProps {
   pendingAcceptCallId?: string | null;
   onClearPendingCall?: () => void;
   onOpenPrivacyTerms?: () => void;
-  onActiveCallChange?: (info: ActiveDuoCallInfo | null) => void;
 }
+
+export type DuoParticipantRole = 'student' | 'teacher';
 
 interface DuoSessionDoc {
   sessionId: string;
@@ -175,11 +161,6 @@ interface DuoSessionDoc {
   reciterSide?: 'host' | 'guest';
   mistakesCount?: number;
   markedErrors?: string[];
-  boardHintText?: string;
-  boardHintKind?: DuoBoardHintKind;
-  boardHintSenderName?: string;
-  boardHintSeq?: number;
-  iceEpoch?: number;
   endedByUid?: string | null;
   sessionEvaluation?: SessionEvaluationRating | null;
   callDurationSeconds?: number | null;
@@ -436,7 +417,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   pendingAcceptCallId = null,
   onClearPendingCall,
   onOpenPrivacyTerms,
-  onActiveCallChange,
 }) => {
   const isAr = lang === 'ar';
 
@@ -562,15 +542,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   const [mistakesCount, setMistakesCount] = useState<number>(0);
   const [markedErrors, setMarkedErrors] = useState<string[]>([]);
 
-  // Synchronized Shared Whiteboard / Quick Visual Hints State
-  const [boardHintText, setBoardHintText] = useState<string>('');
-  const [boardHintKind, setBoardHintKind] = useState<DuoBoardHintKind>('note');
-  const [boardHintSenderName, setBoardHintSenderName] = useState<string>('');
-  const [boardHintSeq, setBoardHintSeq] = useState<number>(0);
-  const [boardInputText, setBoardInputText] = useState<string>('');
-  const [boardInputKind, setBoardInputKind] = useState<DuoBoardHintKind>('note');
-  const [isBoardPanelOpen, setIsBoardPanelOpen] = useState<boolean>(false);
-
   // Refs for WebRTC / Streams / Listeners (Strict Audio-Only — zero RTCDataChannel)
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -582,12 +553,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   const meterStreamRef = useRef<MediaStream | null>(null);
   const meterRafRef = useRef<number | null>(null);
   const iceRestartTimerRef = useRef<number | null>(null);
-  const iceEpochRef = useRef<number>(0);
-  const appliedIceOfferEpochRef = useRef<number>(0);
-  const appliedIceAnswerEpochRef = useRef<number>(0);
-  const iceRestartInFlightRef = useRef<boolean>(false);
-  const lastIceRestartAttemptAtRef = useRef<number>(0);
-  const micRecoveryInFlightRef = useRef<boolean>(false);
   const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null);
   const isMicMutedRef = useRef<boolean>(false);
   const unsubSessionRef = useRef<(() => void) | null>(null);
@@ -628,177 +593,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     return () => window.clearInterval(timer);
   }, [sessionId]);
 
-  // Report active call metadata to parent shell so navigation across tabs preserves & shows return bar
-  useEffect(() => {
-    if (!onActiveCallChange) return;
-    if (!sessionId) {
-      onActiveCallChange(null);
-      return;
-    }
-    const resolvedPartner =
-      myRoleInCall === 'host'
-        ? sessionMeta?.guestName || outgoingCallTargetName || (isAr ? 'صديقك' : 'Partner')
-        : sessionMeta?.hostName || (isAr ? 'صديقك' : 'Partner');
-    onActiveCallChange({
-      sessionId,
-      partnerName: resolvedPartner,
-      peerConnState,
-      elapsedSeconds: callElapsedSeconds,
-    });
-  }, [
-    onActiveCallChange,
-    sessionId,
-    myRoleInCall,
-    sessionMeta?.hostName,
-    sessionMeta?.guestName,
-    outgoingCallTargetName,
-    peerConnState,
-    callElapsedSeconds,
-    isAr,
-  ]);
-
-  // Media Session registration during active call so browser keeps audio alive across tab switches
-  useEffect(() => {
-    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
-    if (!sessionId) {
-      try {
-        navigator.mediaSession.playbackState = 'none';
-        navigator.mediaSession.metadata = null;
-      } catch {
-        // ignore
-      }
-      return;
-    }
-    try {
-      if (typeof MediaMetadata !== 'undefined') {
-        navigator.mediaSession.metadata = new MediaMetadata({
-          title: isAr ? 'السرد الثنائي المباشر — مشكاة السرد' : 'Duo Recitation — Mishkat Al-Sard',
-          artist:
-            myRoleInCall === 'host'
-              ? sessionMeta?.guestName || outgoingCallTargetName || (isAr ? 'مكالمة تسميع' : 'Voice Call')
-              : sessionMeta?.hostName || (isAr ? 'مكالمة تسميع' : 'Voice Call'),
-        });
-      }
-      navigator.mediaSession.playbackState = 'playing';
-    } catch {
-      // MediaSession optional
-    }
-  }, [sessionId, myRoleInCall, sessionMeta?.hostName, sessionMeta?.guestName, outgoingCallTargetName, isAr]);
-
-  // Helper to recover local microphone track automatically if OS/Bluetooth/hardware stops it mid-call
-  const recoverLocalMicrophoneTrack = async () => {
-    if (micRecoveryInFlightRef.current) return;
-    if (!sessionIdRef.current || !pcRef.current || pcRef.current.connectionState === 'closed') return;
-    const currentStream = localStreamRef.current;
-    const hasLiveTrack = Boolean(
-      currentStream && currentStream.getAudioTracks().some((t) => t.readyState === 'live')
-    );
-    if (hasLiveTrack) return;
-
-    micRecoveryInFlightRef.current = true;
-    try {
-      const freshStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          channelCount: 1,
-        },
-        video: false,
-      });
-      const newTrack = freshStream.getAudioTracks()[0];
-      if (!newTrack) return;
-      newTrack.enabled = !isMicMutedRef.current;
-      newTrack.onended = () => {
-        if (sessionIdRef.current && sessionStatusRef.current === 'active') {
-          void recoverLocalMicrophoneTrack();
-        }
-      };
-
-      localStreamRef.current = freshStream;
-      memoryManager.registerStream(freshStream);
-
-      const pc = pcRef.current;
-      if (pc && pc.connectionState !== 'closed') {
-        const audioSender = pc
-          .getSenders()
-          .find((s) => s.track?.kind === 'audio' || s.track === null);
-        if (audioSender) {
-          await audioSender.replaceTrack(newTrack);
-        } else {
-          pc.addTrack(newTrack, freshStream);
-        }
-      }
-
-      if (currentStream) {
-        currentStream.getTracks().forEach((oldTrack) => {
-          try {
-            oldTrack.onended = null;
-            oldTrack.stop();
-          } catch {
-            // ignore
-          }
-        });
-      }
-    } catch {
-      // Keep running even if OS denies mic temporarily
-    } finally {
-      micRecoveryInFlightRef.current = false;
-    }
-  };
-
-  // Real Host-Side WebRTC SDP ICE Restart Renegotiation
-  const attemptHostIceRestart = async (targetPc?: RTCPeerConnection | null) => {
-    const pc = targetPc ?? pcRef.current;
-    const activeCallId = sessionIdRef.current;
-    if (!pc || !activeCallId || !auth.currentUser?.emailVerified) return;
-    if (myRoleRef.current !== 'host') return;
-    if (sessionStatusRef.current !== 'active') return;
-    if (pc.connectionState === 'closed') return;
-    if (iceRestartInFlightRef.current) return;
-    const now = Date.now();
-    if (now - lastIceRestartAttemptAtRef.current < 5000) return;
-    if (iceEpochRef.current >= 95) return;
-
-    iceRestartInFlightRef.current = true;
-    lastIceRestartAttemptAtRef.current = now;
-
-    try {
-      await recoverLocalMicrophoneTrack();
-      const restartOffer = await pc.createOffer({
-        iceRestart: true,
-        offerToReceiveAudio: true,
-      });
-      const tunedRestartOffer: RTCSessionDescriptionInit = {
-        type: restartOffer.type,
-        sdp: tuneOpusSdpForVoice(restartOffer.sdp),
-      };
-      try {
-        await pc.setLocalDescription(tunedRestartOffer);
-      } catch {
-        await pc.setLocalDescription(restartOffer);
-      }
-      await waitForIceComplete(pc, 3500);
-
-      if (pcRef.current !== pc || sessionIdRef.current !== activeCallId) return;
-      const finalOffer = pc.localDescription;
-      if (!finalOffer?.sdp) return;
-
-      const nextEpoch = iceEpochRef.current + 1;
-      iceEpochRef.current = nextEpoch;
-      await updateDoc(doc(db, 'duoSessions', activeCallId), {
-        iceEpoch: nextEpoch,
-        offerType: finalOffer.type || 'offer',
-        offerSdp: finalOffer.sdp,
-        updatedAt: serverTimestamp(),
-      });
-    } catch {
-      // Allow subsequent watchdog/retry attempt if transient signaling hiccup
-    } finally {
-      iceRestartInFlightRef.current = false;
-    }
-  };
-
   // Audio Continuity Watchdog + Screen WakeLock during active Duo Call
   useEffect(() => {
     if (!sessionId) return;
@@ -817,18 +611,12 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     };
 
     const ensureAudioFlow = () => {
-      const stream = localStreamRef.current;
-      if (stream) {
-        const hasLiveMic = stream.getAudioTracks().some((t) => t.readyState === 'live');
-        if (!hasLiveMic && sessionStatusRef.current === 'active') {
-          void recoverLocalMicrophoneTrack();
-        } else {
-          stream.getAudioTracks().forEach((track) => {
-            if (track.readyState === 'live') {
-              track.enabled = !isMicMutedRef.current;
-            }
-          });
-        }
+      if (localStreamRef.current) {
+        localStreamRef.current.getAudioTracks().forEach((track) => {
+          if (track.readyState === 'live') {
+            track.enabled = !isMicMutedRef.current;
+          }
+        });
       }
       if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
         audioCtxRef.current.resume().catch(() => {});
@@ -841,38 +629,29 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
           .map((r) => r.track)
           .filter((t): t is MediaStreamTrack => Boolean(t && t.kind === 'audio' && t.readyState === 'live'));
         if (liveReceiverTracks.length > 0) {
-          const rStream = remoteStreamRef.current || new MediaStream();
+          const stream = remoteStreamRef.current || new MediaStream();
           liveReceiverTracks.forEach((track) => {
             track.enabled = true;
-            if (!rStream.getAudioTracks().some((e) => e.id === track.id)) {
-              rStream.addTrack(track);
+            if (!stream.getAudioTracks().some((e) => e.id === track.id)) {
+              stream.addTrack(track);
             }
           });
-          remoteStreamRef.current = rStream;
-          if (el.srcObject !== rStream) {
-            el.srcObject = rStream;
+          remoteStreamRef.current = stream;
+          if (el.srcObject !== stream) {
+            el.srcObject = stream;
           }
           el.muted = false;
-          el.volume = speakerModeRef.current === 'earpiece' ? 0.42 : 1.0;
           if (el.paused) {
             el.play()
               .then(() => setNeedsAudioUnlock(false))
               .catch(() => {});
           }
         }
-
-        if (
-          myRoleRef.current === 'host' &&
-          sessionStatusRef.current === 'active' &&
-          (pc.iceConnectionState === 'failed' || pc.connectionState === 'failed')
-        ) {
-          void attemptHostIceRestart(pc);
-        }
       }
     };
 
     requestScreenWakeLock();
-    const watchdogTimer = window.setInterval(ensureAudioFlow, 2000);
+    const watchdogTimer = window.setInterval(ensureAudioFlow, 2500);
     const onVisibilityOrFocus = () => {
       if (document.visibilityState === 'visible') {
         requestScreenWakeLock();
@@ -882,14 +661,12 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
 
     document.addEventListener('visibilitychange', onVisibilityOrFocus);
     window.addEventListener('focus', onVisibilityOrFocus);
-    window.addEventListener('pageshow', ensureAudioFlow);
     navigator.mediaDevices?.addEventListener?.('devicechange', ensureAudioFlow);
 
     return () => {
       window.clearInterval(watchdogTimer);
       document.removeEventListener('visibilitychange', onVisibilityOrFocus);
       window.removeEventListener('focus', onVisibilityOrFocus);
-      window.removeEventListener('pageshow', ensureAudioFlow);
       navigator.mediaDevices?.removeEventListener?.('devicechange', ensureAudioFlow);
       if (wakeLockRef.current) {
         wakeLockRef.current.release().catch(() => {});
@@ -1183,12 +960,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       remoteAudioRef.current.srcObject = null;
     }
     remoteAnswerAppliedRef.current = false;
-    iceEpochRef.current = 0;
-    appliedIceOfferEpochRef.current = 0;
-    appliedIceAnswerEpochRef.current = 0;
-    iceRestartInFlightRef.current = false;
-    lastIceRestartAttemptAtRef.current = 0;
-    micRecoveryInFlightRef.current = false;
     appliedSinkIdRef.current = '';
     speakerModeRef.current = 'speaker';
     isMicMutedRef.current = false;
@@ -1197,12 +968,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     setMicLevel(0);
     setIsMicMuted(false);
     setOutgoingCallTargetName(null);
-    setBoardHintText('');
-    setBoardHintKind('note');
-    setBoardHintSenderName('');
-    setBoardHintSeq(0);
-    setBoardInputText('');
-    setIsBoardPanelOpen(false);
   };
 
   useEffect(() => {
@@ -1585,7 +1350,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     }
   };
 
-  // Setup Strict Audio-Only Mic + Direct Stream Analyser (no track.clone to prevent capture stalls on mobile OS)
+  // Setup Strict Audio-Only Mic + Isolated Audio Level Meter (cloned track prevents WebAudio stalls from cutting live WebRTC mic)
   const acquireMicrophone = async (): Promise<MediaStream> => {
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
@@ -1598,11 +1363,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     });
     stream.getAudioTracks().forEach((track) => {
       track.enabled = !isMicMutedRef.current;
-      track.onended = () => {
-        if (sessionIdRef.current && sessionStatusRef.current === 'active') {
-          void recoverLocalMicrophoneTrack();
-        }
-      };
     });
     localStreamRef.current = stream;
     memoryManager.registerStream(stream);
@@ -1610,6 +1370,10 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     try {
       const primaryTrack = stream.getAudioTracks()[0];
       if (primaryTrack) {
+        const meterStream = new MediaStream([primaryTrack.clone()]);
+        meterStreamRef.current = meterStream;
+        memoryManager.registerStream(meterStream);
+
         const AudioCtx =
           window.AudioContext ||
           (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -1619,7 +1383,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         if (ctx.state === 'suspended') {
           ctx.resume().catch(() => {});
         }
-        const source = ctx.createMediaStreamSource(stream);
+        const source = ctx.createMediaStreamSource(meterStream);
         const analyser = ctx.createAnalyser();
         analyser.fftSize = 256;
         source.connect(analyser);
@@ -1643,7 +1407,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     return stream;
   };
 
-  // Sync bounded recitation metadata, whiteboard hints & live curriculum via Firestore signaling (strictly NO RTCDataChannel)
+  // Sync bounded recitation metadata & live curriculum via Firestore signaling (strictly NO RTCDataChannel)
   const syncCallControlState = async (
     patch: Partial<{
       activeAyah: number;
@@ -1654,10 +1418,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       hideVersesForListener: boolean;
       hostRole: DuoParticipantRole;
       guestRole: DuoParticipantRole;
-      boardHintText: string;
-      boardHintKind: DuoBoardHintKind;
-      boardHintSenderName: string;
-      boardHintSeq: number;
       riwayah: QuranRiwayah;
       curriculumMode: 'surah' | 'ayah' | 'page';
       surahNumber: number;
@@ -1696,23 +1456,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     if (typeof data.mistakesCount === 'number') setMistakesCount(data.mistakesCount);
     if (Array.isArray(data.markedErrors)) {
       setMarkedErrors(data.markedErrors.slice(0, 80));
-    }
-    if (typeof data.boardHintText === 'string') {
-      setBoardHintText(data.boardHintText);
-    }
-    if (
-      data.boardHintKind === 'opening_word' ||
-      data.boardHintKind === 'tajweed' ||
-      data.boardHintKind === 'mutashabih' ||
-      data.boardHintKind === 'note'
-    ) {
-      setBoardHintKind(data.boardHintKind);
-    }
-    if (typeof data.boardHintSenderName === 'string') {
-      setBoardHintSenderName(data.boardHintSenderName);
-    }
-    if (typeof data.boardHintSeq === 'number') {
-      setBoardHintSeq(data.boardHintSeq);
     }
     if (typeof data.hideVersesForReciter === 'boolean') {
       setHideVersesForReciter(data.hideVersesForReciter);
@@ -1918,25 +1661,18 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
           iceRestartTimerRef.current = null;
         }
         syncRemoteAudioTracksToMediaElement(undefined, pc);
-      } else if (iceState === 'disconnected' || iceState === 'failed') {
+      } else if (iceState === 'disconnected') {
         if (iceRestartTimerRef.current === null) {
           iceRestartTimerRef.current = window.setTimeout(() => {
             iceRestartTimerRef.current = null;
-            if (
-              pcRef.current === pc &&
-              (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed')
-            ) {
-              if (myRoleRef.current === 'host') {
-                void attemptHostIceRestart(pc);
-              } else {
-                try {
-                  pc.restartIce?.();
-                } catch {
-                  // ignore
-                }
+            if (pcRef.current === pc && pc.iceConnectionState === 'disconnected') {
+              try {
+                pc.restartIce?.();
+              } catch {
+                // ignore
               }
             }
-          }, 2000);
+          }, 2500);
         }
       }
     };
@@ -1951,25 +1687,11 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       } else if (state === 'connecting' || state === 'new') {
         setPeerConnState((prev) => (prev === 'ringing' ? prev : 'connecting'));
       } else if (state === 'disconnected') {
-        // Transient network hiccup — allow ICE restart recovery without tearing down call
+        // Transient network hiccup — allow ICE to recover without tearing down immediately
         setPeerConnState((prev) =>
           prev === 'ended' || prev === 'declined' ? prev : 'connecting'
         );
-      } else if (state === 'failed') {
-        // Attempt graceful ICE restart on Host rather than dropping voice call
-        if (sessionIdRef.current && sessionStatusRef.current === 'active') {
-          setPeerConnState('connecting');
-          if (myRoleRef.current === 'host') {
-            void attemptHostIceRestart(pc);
-          }
-        } else {
-          callRingtone.stop();
-          setPeerConnState((prev) =>
-            prev === 'ended' || prev === 'declined' ? prev : 'disconnected'
-          );
-          teardownWebRtcResources();
-        }
-      } else if (state === 'closed') {
+      } else if (state === 'failed' || state === 'closed') {
         callRingtone.stop();
         setPeerConnState((prev) =>
           prev === 'ended' || prev === 'declined' ? prev : 'disconnected'
@@ -2080,11 +1802,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         reciterSide: initialReciterSide,
         mistakesCount: 0,
         markedErrors: [],
-        boardHintText: '',
-        boardHintKind: 'note',
-        boardHintSenderName: '',
-        boardHintSeq: 0,
-        iceEpoch: 0,
         status: 'ringing',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -2092,10 +1809,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
 
       await setDoc(doc(db, 'duoSessions', newSessionId), callPayload);
 
-      iceEpochRef.current = 0;
-      appliedIceOfferEpochRef.current = 0;
-      appliedIceAnswerEpochRef.current = 0;
-      iceRestartInFlightRef.current = false;
       setMyRoleInCall('host');
       setSessionId(newSessionId);
       setSessionMeta(callPayload as unknown as DuoSessionDoc);
@@ -2104,11 +1817,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       setHideVersesForListener(effectiveInitHideListener);
       setMistakesCount(0);
       setMarkedErrors([]);
-      setBoardHintText('');
-      setBoardHintKind('note');
-      setBoardHintSenderName('');
-      setBoardHintSeq(0);
-      setBoardInputText('');
       setActiveAyah(currFields.ayahFrom);
       setOutgoingCallTargetName(targetFriend.friendName);
       setPeerConnState('ringing');
@@ -2158,27 +1866,17 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
             applySyncedSessionSnapshot(data);
           }
 
-          const remoteAnswerEpoch = typeof data.iceEpoch === 'number' ? data.iceEpoch : 0;
-          const isInitialAnswer = !remoteAnswerAppliedRef.current;
-          const isRestartAnswer =
-            remoteAnswerEpoch > 0 &&
-            remoteAnswerEpoch === iceEpochRef.current &&
-            remoteAnswerEpoch > appliedIceAnswerEpochRef.current;
-
           if (
             data.status === 'active' &&
             data.answerSdp &&
             data.answerType &&
-            (isInitialAnswer || isRestartAnswer) &&
+            !remoteAnswerAppliedRef.current &&
             pcRef.current
           ) {
             remoteAnswerAppliedRef.current = true;
-            if (remoteAnswerEpoch > appliedIceAnswerEpochRef.current) {
-              appliedIceAnswerEpochRef.current = remoteAnswerEpoch;
-            }
             callRingtone.stop();
             setOutgoingCallTargetName(null);
-            setPeerConnState((prev) => (prev === 'connected' ? 'connected' : 'connecting'));
+            setPeerConnState('connecting');
             try {
               await pcRef.current.setRemoteDescription(
                 new RTCSessionDescription({
@@ -2187,7 +1885,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                 })
               );
             } catch {
-              if (isInitialAnswer) remoteAnswerAppliedRef.current = false;
+              remoteAnswerAppliedRef.current = false;
             }
           }
         },
@@ -2299,9 +1997,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       });
 
       dismissBackgroundCallNotification(cleanId);
-      iceEpochRef.current = typeof callData.iceEpoch === 'number' ? callData.iceEpoch : 0;
-      appliedIceOfferEpochRef.current = iceEpochRef.current;
-      appliedIceAnswerEpochRef.current = iceEpochRef.current;
       setMyRoleInCall('guest');
       setSessionId(cleanId);
       setSessionMeta({
@@ -2315,7 +2010,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
 
       unsubSessionRef.current = onSnapshot(
         doc(db, 'duoSessions', cleanId),
-        async (nextSnap) => {
+        (nextSnap) => {
           if (!nextSnap.exists()) {
             setPeerConnState('ended');
             teardownWebRtcResources();
@@ -2343,51 +2038,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
           }
           if (updated.status === 'active') {
             applySyncedSessionSnapshot(updated);
-
-            const incomingEpoch = typeof updated.iceEpoch === 'number' ? updated.iceEpoch : 0;
-            if (
-              incomingEpoch > appliedIceOfferEpochRef.current &&
-              updated.offerSdp &&
-              updated.offerType &&
-              pcRef.current &&
-              pcRef.current.connectionState !== 'closed'
-            ) {
-              appliedIceOfferEpochRef.current = incomingEpoch;
-              iceEpochRef.current = incomingEpoch;
-              try {
-                const pc = pcRef.current;
-                await recoverLocalMicrophoneTrack();
-                await pc.setRemoteDescription(
-                  new RTCSessionDescription({
-                    type: updated.offerType as RTCSdpType,
-                    sdp: updated.offerSdp,
-                  })
-                );
-                const restartAnswer = await pc.createAnswer();
-                const tunedRestartAnswer: RTCSessionDescriptionInit = {
-                  type: restartAnswer.type,
-                  sdp: tuneOpusSdpForVoice(restartAnswer.sdp),
-                };
-                try {
-                  await pc.setLocalDescription(tunedRestartAnswer);
-                } catch {
-                  await pc.setLocalDescription(restartAnswer);
-                }
-                await waitForIceComplete(pc, 3500);
-                const finalRestartAnswer = pc.localDescription;
-                if (finalRestartAnswer?.sdp && pcRef.current === pc) {
-                  appliedIceAnswerEpochRef.current = incomingEpoch;
-                  await updateDoc(doc(db, 'duoSessions', cleanId), {
-                    iceEpoch: incomingEpoch,
-                    answerType: finalRestartAnswer.type || 'answer',
-                    answerSdp: finalRestartAnswer.sdp,
-                    updatedAt: serverTimestamp(),
-                  });
-                }
-              } catch {
-                // Allow next offer epoch retry
-              }
-            }
           }
         },
         (err) => {
@@ -2601,53 +2251,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     syncCallControlState({ markedErrors: nextList, mistakesCount: nextCount });
   };
 
-  // Shared Whiteboard / Quick Visual Hints Helpers (مشاركة السبورة والتلميحات المرئية)
-  const sendBoardHint = (
-    rawText: string,
-    kind: DuoBoardHintKind = boardInputKind
-  ) => {
-    const cleanText = rawText.trim().slice(0, 280);
-    if (!cleanText) return;
-    const senderName = (user ? getDisplayNameForUser(user) : '')
-      .trim()
-      .slice(0, 80);
-    const nextSeq = Math.min(10000, boardHintSeq + 1);
-    setBoardHintText(cleanText);
-    setBoardHintKind(kind);
-    setBoardHintSenderName(senderName);
-    setBoardHintSeq(nextSeq);
-    setBoardInputText('');
-    syncCallControlState({
-      boardHintText: cleanText,
-      boardHintKind: kind,
-      boardHintSenderName: senderName,
-      boardHintSeq: nextSeq,
-    });
-  };
-
-  const clearBoardHint = () => {
-    const nextSeq = Math.min(10000, boardHintSeq + 1);
-    setBoardHintText('');
-    setBoardHintSeq(nextSeq);
-    syncCallControlState({
-      boardHintText: '',
-      boardHintSeq: nextSeq,
-    });
-  };
-
-  const sendAyahOpeningHint = (verse: TrustedVerseItem) => {
-    const words = verse.text.trim().split(/\s+/).filter(Boolean);
-    if (words.length === 0) return;
-    const snippet =
-      words.slice(0, Math.min(3, words.length)).join(' ') +
-      (words.length > 3 ? ' ...' : '');
-    const hintStr = isAr
-      ? `آية (${toArabicDigits(verse.ayahNumber)}): ${snippet}`
-      : `Ayah (${verse.ayahNumber}): ${snippet}`;
-    handleSelectAyahSync(verse.ayahNumber);
-    sendBoardHint(hintStr, 'opening_word');
-  };
-
   const handleApplyParticipantRoles = (
     nextHostRole: DuoParticipantRole,
     nextGuestRole: DuoParticipantRole
@@ -2757,52 +2360,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         ? 0
         : Math.max(0, Math.min(verses.length - 1, currIdx + delta));
     handleSelectAyahSync(verses[nextIdx].ayahNumber);
-  };
-
-  const activeVerseObj = useMemo(() => {
-    if (verses.length === 0) return null;
-    return verses.find((v) => v.ayahNumber === activeAyah) || verses[0];
-  }, [verses, activeAyah]);
-
-  const nextVerseObj = useMemo(() => {
-    if (verses.length === 0) return null;
-    const idx = verses.findIndex((v) => v.ayahNumber === activeAyah);
-    if (idx === -1) return verses[1] || null;
-    return verses[idx + 1] || null;
-  }, [verses, activeAyah]);
-
-  const boardHintKindMeta: Record<
-    DuoBoardHintKind,
-    { labelAr: string; labelEn: string; bg: string; border: string; badge: string }
-  > = {
-    opening_word: {
-      labelAr: 'تلميح بداية الآية',
-      labelEn: 'Opening Words Cue',
-      bg: 'bg-[#FBF3DF]',
-      border: 'border-[#C88A14]',
-      badge: 'bg-[#2D2218] text-[#EAB338]',
-    },
-    tajweed: {
-      labelAr: 'تنبيه تجويدي',
-      labelEn: 'Tajweed Cue',
-      bg: 'bg-[#ECFDF3]',
-      border: 'border-[#4A6144]',
-      badge: 'bg-[#15803D] text-[#FFFDF9]',
-    },
-    mutashabih: {
-      labelAr: 'ضبط المتشابهات',
-      labelEn: 'Similar Verse Cue',
-      bg: 'bg-[#F6EFE2]',
-      border: 'border-[#9E650C]',
-      badge: 'bg-[#9E650C] text-[#FFFDF9]',
-    },
-    note: {
-      labelAr: 'توجيه المعلم',
-      labelEn: 'Teacher Hint',
-      bg: 'bg-[#FAF6EE]',
-      border: 'border-[#C88A14]/70',
-      badge: 'bg-[#2D2218] text-[#FFFDF9]',
-    },
   };
 
   // Curriculum Human Summary
@@ -3985,19 +3542,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                 <span>{isAr ? 'تبادل الأدوار' : 'Swap Roles'}</span>
               </button>
 
-              <button
-                type="button"
-                onClick={() => setIsBoardPanelOpen((prev) => !prev)}
-                className={`px-3.5 py-2 rounded-2xl border text-xs sm:text-sm font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${
-                  isBoardPanelOpen || boardHintText.trim().length > 0
-                    ? 'bg-[#2D2218] border-[#C88A14] text-[#EAB338]'
-                    : 'bg-[#FAF7F0] hover:bg-[#EFE9DC] border-[#DDD2BE] text-[#261C14]'
-                }`}
-              >
-                <Presentation className="w-4 h-4 shrink-0" />
-                <span>{isAr ? 'مشاركة السبورة' : 'Shared Board'}</span>
-              </button>
-
               {bothAreStudents ? (
                 <button
                   type="button"
@@ -4040,211 +3584,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
               </button>
             </div>
           </div>
-
-          {/* Live Synced Shared Whiteboard Visual Hint Banner (Visible to BOTH Teacher & Student) */}
-          {boardHintText.trim().length > 0 && (
-            <div
-              className={`rounded-[20px] border-2 p-3.5 sm:p-4 space-y-2 shadow-sm transition-all ${boardHintKindMeta[boardHintKind].bg} ${boardHintKindMeta[boardHintKind].border}`}
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-extrabold inline-flex items-center gap-1.5 ${boardHintKindMeta[boardHintKind].badge}`}
-                  >
-                    <Lightbulb className="w-3.5 h-3.5 shrink-0" />
-                    <span>
-                      {isAr
-                        ? boardHintKindMeta[boardHintKind].labelAr
-                        : boardHintKindMeta[boardHintKind].labelEn}
-                    </span>
-                  </span>
-                  <span className="text-xs font-extrabold text-[#261C14]">
-                    {isAr ? 'السبورة المرئية' : 'Shared Visual Board'}
-                  </span>
-                  {boardHintSenderName && (
-                    <span className="text-[11px] font-bold text-[#5C4B3B]">
-                      {isAr ? `· من: ${boardHintSenderName}` : `· By: ${boardHintSenderName}`}
-                    </span>
-                  )}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={clearBoardHint}
-                  className="px-2.5 py-1 rounded-lg bg-[#FFFDF9] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-[11px] font-bold text-[#5C4B3B] inline-flex items-center gap-1 cursor-pointer"
-                >
-                  <Eraser className="w-3 h-3" />
-                  <span>{isAr ? 'مسح السبورة' : 'Clear Board'}</span>
-                </button>
-              </div>
-
-              <p
-                dir="auto"
-                className="font-uthmani text-xl sm:text-2xl font-bold text-[#261C14] leading-relaxed bg-[#FFFDF9]/85 rounded-xl border border-[#DDD2BE]/80 px-3.5 py-2.5"
-              >
-                {boardHintText}
-              </p>
-            </div>
-          )}
-
-          {/* Teacher / Listener Quick Shared Board Composer Panel */}
-          {isBoardPanelOpen && (
-            <div className="rounded-[20px] bg-[#FAF6EE] border border-[#C88A14]/65 p-3.5 sm:p-4 space-y-3 shadow-xs">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-xl bg-[#2D2218] text-[#EAB338] flex items-center justify-center shrink-0">
-                    <Presentation className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h3 className="text-xs sm:text-sm font-extrabold text-[#261C14]">
-                      {isAr
-                        ? 'مشاركة السبورة والتلميحات السريعة عند التعثر'
-                        : 'Shared Whiteboard & Quick Recitation Hints'}
-                    </h3>
-                    <p className="text-[11px] text-[#5C4B3B]">
-                      {isAr
-                        ? 'تظهر التلميحات فوراً على شاشة القارئ والمُسمِّع دون مقاطعة الصوت'
-                        : 'Instant text cues appear live for both sides without interrupting audio'}
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsBoardPanelOpen(false)}
-                  className="p-1.5 rounded-lg bg-[#FFFDF9] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-[#5C4B3B] cursor-pointer"
-                  aria-label={isAr ? 'إغلاق لوحة السبورة' : 'Close board panel'}
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              {/* 1-Tap Ayah Opening Hints & Preset Cue Chips */}
-              <div className="flex flex-wrap items-center gap-1.5">
-                {activeVerseObj && (
-                  <button
-                    type="button"
-                    onClick={() => sendAyahOpeningHint(activeVerseObj)}
-                    className="px-2.5 py-1.5 rounded-xl bg-[#2D2218] hover:bg-[#3E2F21] text-[#EAB338] text-xs font-extrabold inline-flex items-center gap-1 cursor-pointer"
-                  >
-                    <Lightbulb className="w-3.5 h-3.5 shrink-0" />
-                    <span>
-                      {isAr
-                        ? `تلميح أول الآية الحالية (${toArabicDigits(activeVerseObj.ayahNumber)})`
-                        : `Hint Current Ayah (${activeVerseObj.ayahNumber})`}
-                    </span>
-                  </button>
-                )}
-                {nextVerseObj && (
-                  <button
-                    type="button"
-                    onClick={() => sendAyahOpeningHint(nextVerseObj)}
-                    className="px-2.5 py-1.5 rounded-xl bg-[#F6E9C8] hover:bg-[#EBD5A0] border border-[#C88A14]/60 text-[#261C14] text-xs font-extrabold inline-flex items-center gap-1 cursor-pointer"
-                  >
-                    <Lightbulb className="w-3.5 h-3.5 text-[#9E650C] shrink-0" />
-                    <span>
-                      {isAr
-                        ? `تلميح الآية التالية (${toArabicDigits(nextVerseObj.ayahNumber)})`
-                        : `Hint Next Ayah (${nextVerseObj.ayahNumber})`}
-                    </span>
-                  </button>
-                )}
-                {(
-                  [
-                    {
-                      textAr: 'انتبه للمد الطبيعي والفرعي',
-                      textEn: 'Watch Madd elongation',
-                      kind: 'tajweed' as DuoBoardHintKind,
-                    },
-                    {
-                      textAr: 'تثبت من الغنة والإخفاء',
-                      textEn: 'Mind Ghunnah & Ikhfa',
-                      kind: 'tajweed' as DuoBoardHintKind,
-                    },
-                    {
-                      textAr: 'انتبه لموضع المتشابهة في هذه الآية',
-                      textEn: 'Watch Mutashabih phrasing',
-                      kind: 'mutashabih' as DuoBoardHintKind,
-                    },
-                    {
-                      textAr: 'أعد القراءة من بداية الآية بهدوء',
-                      textEn: 'Restart calmly from Ayah start',
-                      kind: 'note' as DuoBoardHintKind,
-                    },
-                    {
-                      textAr: 'تثبت من الحركات وأواخر الكلمات',
-                      textEn: 'Check vowels & endings',
-                      kind: 'note' as DuoBoardHintKind,
-                    },
-                  ] as const
-                ).map((preset, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => sendBoardHint(isAr ? preset.textAr : preset.textEn, preset.kind)}
-                    className="px-2.5 py-1.5 rounded-xl bg-[#FFFDF9] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-[11px] sm:text-xs font-bold text-[#261C14] cursor-pointer transition-colors"
-                  >
-                    {isAr ? preset.textAr : preset.textEn}
-                  </button>
-                ))}
-              </div>
-
-              {/* Custom Hint Kind + Message Input */}
-              <div className="space-y-2">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {(
-                    [
-                      { id: 'opening_word', ar: 'بداية آية', en: 'Opening' },
-                      { id: 'tajweed', ar: 'تجويد', en: 'Tajweed' },
-                      { id: 'mutashabih', ar: 'متشابهة', en: 'Similar' },
-                      { id: 'note', ar: 'توجيه عام', en: 'Note' },
-                    ] as const
-                  ).map((k) => (
-                    <button
-                      key={k.id}
-                      type="button"
-                      onClick={() => setBoardInputKind(k.id)}
-                      className={`px-2.5 py-1 rounded-lg border text-[11px] font-bold cursor-pointer ${
-                        boardInputKind === k.id
-                          ? 'bg-[#2D2218] border-[#C88A14] text-[#EAB338]'
-                          : 'bg-[#FFFDF9] border-[#DDD2BE] text-[#5C4B3B]'
-                      }`}
-                    >
-                      {isAr ? k.ar : k.en}
-                    </button>
-                  ))}
-                </div>
-
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    sendBoardHint(boardInputText, boardInputKind);
-                  }}
-                  className="flex items-stretch gap-2"
-                >
-                  <input
-                    type="text"
-                    maxLength={280}
-                    value={boardInputText}
-                    onChange={(e) => setBoardInputText(e.target.value)}
-                    placeholder={
-                      isAr
-                        ? 'اكتب أول الكلمات أو تلميحاً سريعاً للطالب...'
-                        : 'Type opening words or a quick visual cue...'
-                    }
-                    className="flex-1 min-w-0 px-3 py-2 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] text-xs sm:text-sm text-[#261C14] focus:outline-none focus:border-[#C88A14]"
-                  />
-                  <button
-                    type="submit"
-                    disabled={!boardInputText.trim()}
-                    className="px-4 py-2 rounded-xl bg-[#166534] hover:bg-[#14532D] disabled:opacity-50 text-[#FFFDF9] text-xs sm:text-sm font-extrabold inline-flex items-center gap-1.5 cursor-pointer shrink-0"
-                  >
-                    <Send className="w-3.5 h-3.5" />
-                    <span>{isAr ? 'إرسال' : 'Send'}</span>
-                  </button>
-                </form>
-              </div>
-            </div>
-          )}
 
           {/* Main Reading Area: Hidden Reciter Screen OR Listener Interactive Word-Tap Mushaf */}
           {shouldHideVersesForMe ? (
@@ -4433,30 +3772,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                               : 'bg-[#FAF7F0] hover:bg-[#EFE9DC]/70 border-[#E5DEC9]'
                           }`}
                         >
-                          <div className="flex items-center justify-between gap-2 pb-1.5 mb-1.5 border-b border-[#EFE9DC]/80">
-                            <span className="text-[11px] font-bold text-[#84715E]">
-                              {isAr
-                                ? `الآية ${toArabicDigits(v.ayahNumber)}`
-                                : `Ayah ${v.ayahNumber}`}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                sendAyahOpeningHint(v);
-                              }}
-                              title={
-                                isAr
-                                  ? 'إرسال تلميح أول هذه الآية للسبورة'
-                                  : 'Send opening cue for this Ayah'
-                              }
-                              className="px-2 py-0.5 rounded-lg bg-[#FFFDF9] hover:bg-[#F6E9C8] border border-[#DDD2BE] text-[11px] font-bold text-[#9E650C] inline-flex items-center gap-1 cursor-pointer transition-colors"
-                            >
-                              <Lightbulb className="w-3 h-3 shrink-0" />
-                              <span>{isAr ? 'تلميح للسبورة' : 'Hint to Board'}</span>
-                            </button>
-                          </div>
-
                           {fadeFirstWordOnly && !isPeeking ? (
                             <div className="flex items-center justify-between gap-2">
                               <p
