@@ -306,7 +306,7 @@ function generateEphemeralSessionId(): string {
   return `SARD-${suffix}`;
 }
 
-function waitForIceComplete(pc: RTCPeerConnection, timeoutMs = 4000): Promise<void> {
+function waitForIceComplete(pc: RTCPeerConnection, timeoutMs = 1800): Promise<void> {
   if (pc.iceGatheringState === 'complete') {
     return Promise.resolve();
   }
@@ -339,7 +339,7 @@ function waitForIceComplete(pc: RTCPeerConnection, timeoutMs = 4000): Promise<vo
         (cand.includes('typ srflx') || cand.includes('typ relay')) &&
         candidateSettleTimer === null
       ) {
-        candidateSettleTimer = setTimeout(done, 1150);
+        candidateSettleTimer = setTimeout(done, 700);
       }
     };
     pc.addEventListener('icegatheringstatechange', onStateChange);
@@ -542,6 +542,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     'idle' | 'ringing' | 'connecting' | 'connected' | 'declined' | 'disconnected' | 'ended'
   >('idle');
   const [isMicMuted, setIsMicMuted] = useState<boolean>(false);
+  const [isMicUnavailable, setIsMicUnavailable] = useState<boolean>(false);
   const [speakerMode, setSpeakerMode] = useState<'speaker' | 'earpiece'>('speaker');
   const [needsAudioUnlock, setNeedsAudioUnlock] = useState<boolean>(false);
   const [micLevel, setMicLevel] = useState<number>(0);
@@ -588,6 +589,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   const iceRestartInFlightRef = useRef<boolean>(false);
   const lastIceRestartAttemptAtRef = useRef<number>(0);
   const micRecoveryInFlightRef = useRef<boolean>(false);
+  const micFallbackModeRef = useRef<boolean>(false);
   const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null);
   const isMicMutedRef = useRef<boolean>(false);
   const unsubSessionRef = useRef<(() => void) | null>(null);
@@ -686,9 +688,10 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   }, [sessionId, myRoleInCall, sessionMeta?.hostName, sessionMeta?.guestName, outgoingCallTargetName, isAr]);
 
   // Helper to recover local microphone track automatically if OS/Bluetooth/hardware stops it mid-call
-  const recoverLocalMicrophoneTrack = async () => {
+  const recoverLocalMicrophoneTrack = async (forceInteractive = false) => {
     if (micRecoveryInFlightRef.current) return;
     if (!sessionIdRef.current || !pcRef.current || pcRef.current.connectionState === 'closed') return;
+    if (micFallbackModeRef.current && !forceInteractive) return;
     const currentStream = localStreamRef.current;
     const hasLiveTrack = Boolean(
       currentStream && currentStream.getAudioTracks().some((t) => t.readyState === 'live')
@@ -708,6 +711,8 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       });
       const newTrack = freshStream.getAudioTracks()[0];
       if (!newTrack) return;
+      micFallbackModeRef.current = false;
+      setIsMicUnavailable(false);
       newTrack.enabled = !isMicMutedRef.current;
       newTrack.onended = () => {
         if (sessionIdRef.current && sessionStatusRef.current === 'active') {
@@ -1189,6 +1194,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     iceRestartInFlightRef.current = false;
     lastIceRestartAttemptAtRef.current = 0;
     micRecoveryInFlightRef.current = false;
+    micFallbackModeRef.current = false;
     appliedSinkIdRef.current = '';
     speakerModeRef.current = 'speaker';
     isMicMutedRef.current = false;
@@ -1196,6 +1202,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     setNeedsAudioUnlock(false);
     setMicLevel(0);
     setIsMicMuted(false);
+    setIsMicUnavailable(false);
     setOutgoingCallTargetName(null);
     setBoardHintText('');
     setBoardHintKind('note');
@@ -1643,6 +1650,22 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     return stream;
   };
 
+  // Acquire mic if available, or fall back cleanly to listen-only (recvonly) so call session always connects
+  const acquireMicrophoneOptional = async (): Promise<MediaStream | null> => {
+    try {
+      const stream = await acquireMicrophone();
+      micFallbackModeRef.current = false;
+      setIsMicUnavailable(false);
+      return stream;
+    } catch {
+      micFallbackModeRef.current = true;
+      setIsMicUnavailable(true);
+      setIsMicMuted(true);
+      isMicMutedRef.current = true;
+      return null;
+    }
+  };
+
   // Sync bounded recitation metadata, whiteboard hints & live curriculum via Firestore signaling (strictly NO RTCDataChannel)
   const syncCallControlState = async (
     patch: Partial<{
@@ -1868,23 +1891,31 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     }
   }, [sessionId, peerConnState]);
 
-  const setupPeerConnection = (stream: MediaStream): RTCPeerConnection => {
+  const setupPeerConnection = (stream: MediaStream | null): RTCPeerConnection => {
     const pc = new RTCPeerConnection(buildRtcConfiguration(highPrivacyRef.current));
     pcRef.current = pc;
 
-    stream.getAudioTracks().forEach((track) => {
-      track.enabled = !isMicMutedRef.current;
-      const sender = pc.addTrack(track, stream);
-      try {
-        const params = sender.getParameters();
-        if (params.encodings && params.encodings.length > 0) {
-          params.encodings[0].maxBitrate = 48000;
-          sender.setParameters(params).catch(() => {});
+    if (stream && stream.getAudioTracks().length > 0) {
+      stream.getAudioTracks().forEach((track) => {
+        track.enabled = !isMicMutedRef.current;
+        const sender = pc.addTrack(track, stream);
+        try {
+          const params = sender.getParameters();
+          if (params.encodings && params.encodings.length > 0) {
+            params.encodings[0].maxBitrate = 48000;
+            sender.setParameters(params).catch(() => {});
+          }
+        } catch {
+          // Sender bitrate tuning optional
         }
+      });
+    } else {
+      try {
+        pc.addTransceiver('audio', { direction: 'sendrecv' });
       } catch {
-        // Sender bitrate tuning optional
+        // Transceiver optional
       }
-    });
+    }
 
     pc.ontrack = (event) => {
       syncRemoteAudioTracksToMediaElement(event, pc);
@@ -2014,6 +2045,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   const startDirectFriendCall = async (targetFriend: FriendContactItem) => {
     if (!user || !user.emailVerified) return;
     callRingtone.unlockAudio();
+    teardownWebRtcResources();
     setLobbyError(null);
     setLastCallSummary(null);
     setLobbyBusy(true);
@@ -2023,7 +2055,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     const sessionPath = `duoSessions/${newSessionId}`;
 
     try {
-      const stream = await acquireMicrophone();
+      const stream = await acquireMicrophoneOptional();
       const pc = setupPeerConnection(stream);
 
       const offer = await pc.createOffer({ offerToReceiveAudio: true });
@@ -2036,7 +2068,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       } catch {
         await pc.setLocalDescription(offer);
       }
-      await waitForIceComplete(pc, 4000);
+      await waitForIceComplete(pc, 1800);
 
       const finalDesc = pc.localDescription;
       if (!finalDesc || !finalDesc.sdp) {
@@ -2118,8 +2150,11 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         doc(db, 'duoSessions', newSessionId),
         async (snap) => {
           if (!snap.exists()) {
-            setPeerConnState('ended');
             teardownWebRtcResources();
+            setShowEvalModal(false);
+            setSessionId(null);
+            setSessionMeta(null);
+            setPeerConnState('idle');
             return;
           }
           const data = snap.data() as DuoSessionDoc;
@@ -2128,15 +2163,20 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
           if (data.status === 'declined') {
             callRingtone.stop();
             setOutgoingCallTargetName(null);
-            setPeerConnState('declined');
             teardownWebRtcResources();
+            setShowEvalModal(false);
+            setSessionId(null);
+            setSessionMeta(null);
+            setPeerConnState('idle');
+            setLobbyError(
+              isAr ? `اعتذر «${targetFriend.friendName}» عن المكالمة.` : `${targetFriend.friendName} declined the call.`
+            );
             return;
           }
 
           if (data.status === 'ended') {
             callRingtone.stop();
             setOutgoingCallTargetName(null);
-            setPeerConnState('ended');
             teardownWebRtcResources();
             if (data.sessionEvaluation) {
               setLastCallSummary({
@@ -2146,15 +2186,18 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                 mistakesCount: data.mistakesCount ?? 0,
                 accuracyPct: data.accuracyPct ?? 100,
               });
-              setShowEvalModal(false);
-              setSessionId(null);
-              setSessionMeta(null);
-              setPeerConnState('idle');
             }
+            setShowEvalModal(false);
+            setSessionId(null);
+            setSessionMeta(null);
+            setPeerConnState('idle');
             return;
           }
 
           if (data.status === 'active') {
+            callRingtone.stop();
+            setOutgoingCallTargetName(null);
+            setPeerConnState((prev) => (prev === 'ringing' ? 'connecting' : prev));
             applySyncedSessionSnapshot(data);
           }
 
@@ -2192,29 +2235,21 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
           }
         },
         (err) => {
-          handleFirestoreError(err, OperationType.GET, sessionPath);
+          console.error('Host session listener error:', err);
         }
       );
     } catch (err) {
       teardownWebRtcResources();
-      if (err instanceof Error && err.message.startsWith('{"error":')) {
-        throw err;
-      }
-      if ((err as { name?: string })?.name === 'NotAllowedError') {
-        setLobbyError(
-          isAr
-            ? 'يرجى السماح للمتصفح بالوصول إلى الميكروفون لبدء الاتصال الصوتي المباشر.'
-            : 'Please allow microphone access to start live P2P audio.'
-        );
-      } else {
-        setLobbyError(
-          err instanceof Error
-            ? err.message
-            : isAr
-            ? 'تعذر بدء الاتصال الصوتي المباشر.'
-            : 'Failed to start direct voice call.'
-        );
-      }
+      setSessionId(null);
+      setSessionMeta(null);
+      setPeerConnState('idle');
+      setLobbyError(
+        err instanceof Error
+          ? err.message
+          : isAr
+          ? 'تعذر بدء الاتصال الصوتي المباشر.'
+          : 'Failed to start direct voice call.'
+      );
     } finally {
       setLobbyBusy(false);
     }
@@ -2227,17 +2262,16 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     callRingtone.unlockAudio();
 
     const cleanId = targetSessionId.trim().toUpperCase();
+    teardownWebRtcResources();
     setLobbyError(null);
     setLastCallSummary(null);
     setLobbyBusy(true);
     const sessionPath = `duoSessions/${cleanId}`;
 
     try {
-      const snap = await getDoc(doc(db, 'duoSessions', cleanId)).catch((err) => {
-        handleFirestoreError(err, OperationType.GET, sessionPath);
-      });
+      const snap = await getDoc(doc(db, 'duoSessions', cleanId));
 
-      if (!snap || !snap.exists()) {
+      if (!snap.exists()) {
         setLobbyError(
           isAr
             ? 'انتهت المكالمة الواردة أو ألغاها المتصل.'
@@ -2256,7 +2290,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         return;
       }
 
-      const stream = await acquireMicrophone();
+      const stream = await acquireMicrophoneOptional();
       const pc = setupPeerConnection(stream);
 
       await pc.setRemoteDescription(
@@ -2276,7 +2310,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       } catch {
         await pc.setLocalDescription(answer);
       }
-      await waitForIceComplete(pc, 4000);
+      await waitForIceComplete(pc, 1800);
 
       const finalAnswer = pc.localDescription;
       if (!finalAnswer || !finalAnswer.sdp) {
@@ -2294,8 +2328,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         answerSdp: finalAnswer.sdp,
         status: 'active',
         updatedAt: serverTimestamp(),
-      }).catch((err) => {
-        handleFirestoreError(err, OperationType.UPDATE, sessionPath);
       });
 
       dismissBackgroundCallNotification(cleanId);
@@ -2311,20 +2343,23 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         status: 'active',
       });
       applySyncedSessionSnapshot(callData);
+      setOutgoingCallTargetName(null);
       setPeerConnState('connecting');
 
       unsubSessionRef.current = onSnapshot(
         doc(db, 'duoSessions', cleanId),
         async (nextSnap) => {
           if (!nextSnap.exists()) {
-            setPeerConnState('ended');
             teardownWebRtcResources();
+            setShowEvalModal(false);
+            setSessionId(null);
+            setSessionMeta(null);
+            setPeerConnState('idle');
             return;
           }
           const updated = nextSnap.data() as DuoSessionDoc;
           setSessionMeta(updated);
           if (updated.status === 'ended' || updated.status === 'declined') {
-            setPeerConnState(updated.status);
             teardownWebRtcResources();
             if (updated.status === 'ended' && updated.sessionEvaluation) {
               setLastCallSummary({
@@ -2334,11 +2369,11 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                 mistakesCount: updated.mistakesCount ?? 0,
                 accuracyPct: updated.accuracyPct ?? 100,
               });
-              setShowEvalModal(false);
-              setSessionId(null);
-              setSessionMeta(null);
-              setPeerConnState('idle');
             }
+            setShowEvalModal(false);
+            setSessionId(null);
+            setSessionMeta(null);
+            setPeerConnState('idle');
             return;
           }
           if (updated.status === 'active') {
@@ -2355,27 +2390,27 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
               appliedIceOfferEpochRef.current = incomingEpoch;
               iceEpochRef.current = incomingEpoch;
               try {
-                const pc = pcRef.current;
+                const activePc = pcRef.current;
                 await recoverLocalMicrophoneTrack();
-                await pc.setRemoteDescription(
+                await activePc.setRemoteDescription(
                   new RTCSessionDescription({
                     type: updated.offerType as RTCSdpType,
                     sdp: updated.offerSdp,
                   })
                 );
-                const restartAnswer = await pc.createAnswer();
+                const restartAnswer = await activePc.createAnswer();
                 const tunedRestartAnswer: RTCSessionDescriptionInit = {
                   type: restartAnswer.type,
                   sdp: tuneOpusSdpForVoice(restartAnswer.sdp),
                 };
                 try {
-                  await pc.setLocalDescription(tunedRestartAnswer);
+                  await activePc.setLocalDescription(tunedRestartAnswer);
                 } catch {
-                  await pc.setLocalDescription(restartAnswer);
+                  await activePc.setLocalDescription(restartAnswer);
                 }
-                await waitForIceComplete(pc, 3500);
-                const finalRestartAnswer = pc.localDescription;
-                if (finalRestartAnswer?.sdp && pcRef.current === pc) {
+                await waitForIceComplete(activePc, 1800);
+                const finalRestartAnswer = activePc.localDescription;
+                if (finalRestartAnswer?.sdp && pcRef.current === activePc) {
                   appliedIceAnswerEpochRef.current = incomingEpoch;
                   await updateDoc(doc(db, 'duoSessions', cleanId), {
                     iceEpoch: incomingEpoch,
@@ -2391,29 +2426,23 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
           }
         },
         (err) => {
-          handleFirestoreError(err, OperationType.GET, sessionPath);
+          console.error('Guest session listener error:', err);
         }
       );
     } catch (err) {
+      handledAutoCallRef.current = null;
       teardownWebRtcResources();
-      if (err instanceof Error && err.message.startsWith('{"error":')) {
-        throw err;
-      }
-      if ((err as { name?: string })?.name === 'NotAllowedError') {
-        setLobbyError(
-          isAr
-            ? 'يرجى السماح بالوصول إلى الميكروفون للرد على المكالمة الصوتية.'
-            : 'Please allow microphone access to answer the voice call.'
-        );
-      } else {
-        setLobbyError(
-          err instanceof Error
-            ? err.message
-            : isAr
-            ? 'تعذر الرد على المكالمة.'
-            : 'Failed to answer call.'
-        );
-      }
+      setSessionId(null);
+      setSessionMeta(null);
+      setPeerConnState('idle');
+      console.error('Answer incoming call error:', sessionPath, err);
+      setLobbyError(
+        err instanceof Error
+          ? err.message
+          : isAr
+          ? 'تعذر الرد على المكالمة وبدء الجلسة. حاول مرة أخرى.'
+          : 'Failed to answer call and start session. Please try again.'
+      );
     } finally {
       setLobbyBusy(false);
     }
@@ -2421,8 +2450,11 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
 
   // Auto-answer when user clicks Answer on the global Incoming Call Modal
   useEffect(() => {
+    if (!pendingAcceptCallId) {
+      handledAutoCallRef.current = null;
+      return;
+    }
     if (
-      pendingAcceptCallId &&
       user &&
       user.emailVerified &&
       handledAutoCallRef.current !== pendingAcceptCallId
@@ -3247,6 +3279,17 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
               : 'Share your invite link with a friend; once approved, start your Duo voice call.'}
           </div>
 
+          {lobbyBusy && (
+            <div className="rounded-xl bg-[#ECFDF3] border-2 border-[#16A34A]/50 p-3 text-xs sm:text-sm text-[#14532D] flex items-center gap-2.5 shadow-2xs">
+              <RefreshCw className="w-4 h-4 text-[#15803D] animate-spin shrink-0" />
+              <p className="font-extrabold">
+                {isAr
+                  ? 'جاري تجهيز الاتصال الصوتي المشفّر وبدء جلسة السرد الثنائي...'
+                  : 'Preparing encrypted audio connection and starting Duo session...'}
+              </p>
+            </div>
+          )}
+
           {lobbyError && (
             <div className="rounded-xl bg-[#FBF3DF] border border-[#C88A14] p-3 text-xs sm:text-sm text-[#261C14] flex items-start gap-2.5">
               <AlertCircle className="w-4 h-4 text-[#C88A14] shrink-0 mt-0.5" />
@@ -3912,26 +3955,37 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
               </button>
             )}
             <div className="flex flex-wrap items-center gap-2 pt-1">
-              <button
-                type="button"
-                onClick={handleToggleMic}
-                className={`px-3.5 py-2 rounded-2xl border text-xs sm:text-sm font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${
-                  isMicMuted
-                    ? 'bg-[#FEE2E2] border-[#FECACA] text-[#B93829]'
-                    : 'bg-[#FAF7F0] hover:bg-[#EFE9DC] border-[#DDD2BE] text-[#261C14]'
-                }`}
-              >
-                {isMicMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                <span>{isMicMuted ? (isAr ? 'صامت' : 'Muted') : isAr ? 'كتم' : 'Mute'}</span>
-                {!isMicMuted && (
-                  <span className="w-6 h-1.5 rounded-full bg-[#DDD2BE] overflow-hidden inline-block ms-0.5">
-                    <span
-                      className="block h-full bg-[#15803D] transition-all duration-75"
-                      style={{ width: `${micLevel}%` }}
-                    />
-                  </span>
-                )}
-              </button>
+              {isMicUnavailable ? (
+                <button
+                  type="button"
+                  onClick={() => void recoverLocalMicrophoneTrack(true)}
+                  className="px-3.5 py-2 rounded-2xl bg-[#FBF3DF] hover:bg-[#F3E2BA] border border-[#C88A14] text-xs sm:text-sm font-extrabold text-[#9E650C] flex items-center gap-1.5 cursor-pointer transition-colors"
+                >
+                  <MicOff className="w-4 h-4 shrink-0" />
+                  <span>{isAr ? 'تفعيل الميكروفون' : 'Enable Mic'}</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleToggleMic}
+                  className={`px-3.5 py-2 rounded-2xl border text-xs sm:text-sm font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${
+                    isMicMuted
+                      ? 'bg-[#FEE2E2] border-[#FECACA] text-[#B93829]'
+                      : 'bg-[#FAF7F0] hover:bg-[#EFE9DC] border-[#DDD2BE] text-[#261C14]'
+                  }`}
+                >
+                  {isMicMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                  <span>{isMicMuted ? (isAr ? 'صامت' : 'Muted') : isAr ? 'كتم' : 'Mute'}</span>
+                  {!isMicMuted && (
+                    <span className="w-6 h-1.5 rounded-full bg-[#DDD2BE] overflow-hidden inline-block ms-0.5">
+                      <span
+                        className="block h-full bg-[#15803D] transition-all duration-75"
+                        style={{ width: `${micLevel}%` }}
+                      />
+                    </span>
+                  )}
+                </button>
+              )}
 
               <button
                 type="button"

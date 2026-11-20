@@ -181,6 +181,7 @@ export default function App() {
   const [authUser, setAuthUser] = useState<User | null>(auth.currentUser);
   const [incomingCall, setIncomingCall] = useState<IncomingDuoCall | null>(null);
   const lastRingingCallIdRef = useRef<string | null>(null);
+  const dismissedCallIdsRef = useRef<Set<string>>(new Set());
   const [isPrivacyTermsOpen, setIsPrivacyTermsOpen] = useState<boolean>(false);
   const [privacyTermsTab, setPrivacyTermsTab] = useState<'privacy' | 'terms'>('privacy');
   const [isSideMenuOpen, setIsSideMenuOpen] = useState<boolean>(false);
@@ -683,6 +684,7 @@ export default function App() {
   };
 
   const handleDeclineIncomingCall = async (targetSessionId: string) => {
+    dismissedCallIdsRef.current.add(targetSessionId);
     callRingtone.stop();
     dismissBackgroundCallNotification(targetSessionId);
     setIncomingCall(null);
@@ -700,6 +702,7 @@ export default function App() {
   };
 
   const handleAcceptIncomingCall = (targetSessionId: string) => {
+    dismissedCallIdsRef.current.add(targetSessionId);
     callRingtone.stop();
     callRingtone.unlockAudio();
     dismissBackgroundCallNotification(targetSessionId);
@@ -725,7 +728,27 @@ export default function App() {
     const unsubCalls = onSnapshot(
       incomingQuery,
       (snap) => {
-        if (snap.empty) {
+        const nowMs = Date.now();
+        const candidateDocs = snap.docs
+          .map((d) => {
+            const raw = d.data() as IncomingDuoCall & {
+              createdAt?: { toMillis?: () => number } | null;
+            };
+            const createdMs =
+              raw.createdAt && typeof raw.createdAt.toMillis === 'function'
+                ? raw.createdAt.toMillis()
+                : nowMs;
+            return { data: raw, createdMs };
+          })
+          .filter(
+            ({ data, createdMs }) =>
+              data?.sessionId &&
+              !dismissedCallIdsRef.current.has(data.sessionId) &&
+              nowMs - createdMs <= 10 * 60 * 1000
+          )
+          .sort((a, b) => b.createdMs - a.createdMs);
+
+        if (candidateDocs.length === 0) {
           if (lastRingingCallIdRef.current) {
             dismissBackgroundCallNotification(lastRingingCallIdRef.current);
             lastRingingCallIdRef.current = null;
@@ -735,8 +758,7 @@ export default function App() {
           return;
         }
 
-        const firstDoc = snap.docs[0];
-        const callData = firstDoc.data() as IncomingDuoCall;
+        const callData = candidateDocs[0].data;
         setIncomingCall(callData);
 
         if (lastRingingCallIdRef.current !== callData.sessionId) {
