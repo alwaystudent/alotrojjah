@@ -142,12 +142,13 @@ const VALID_SECTIONS: ReadonlyArray<AppSection> = [
 interface IncomingCallState {
   ringingCall: IncomingDuoCall | null;
   pendingAcceptCallId: string | null;
+  pendingAcceptCallData: IncomingDuoCall | null;
   dismissedCallIds: Record<string, true>;
 }
 
 type IncomingCallAction =
   | { type: 'SET_INCOMING_CALL'; call: IncomingDuoCall | null }
-  | { type: 'ACCEPT_CALL'; sessionId: string }
+  | { type: 'ACCEPT_CALL'; sessionId: string; callData?: IncomingDuoCall | null }
   | { type: 'DECLINE_CALL'; sessionId: string }
   | { type: 'MARK_CALL_ACTIVE'; sessionId: string }
   | { type: 'CLEAR_PENDING_CALL' }
@@ -170,9 +171,16 @@ function incomingCallReducer(
       return { ...state, ringingCall: action.call };
     }
     case 'ACCEPT_CALL': {
+      const resolvedData =
+        action.callData && action.callData.sessionId === action.sessionId
+          ? action.callData
+          : state.ringingCall && state.ringingCall.sessionId === action.sessionId
+          ? state.ringingCall
+          : null;
       return {
         ringingCall: null,
         pendingAcceptCallId: action.sessionId,
+        pendingAcceptCallData: resolvedData,
         dismissedCallIds: { ...state.dismissedCallIds, [action.sessionId]: true },
       };
     }
@@ -181,6 +189,8 @@ function incomingCallReducer(
         ringingCall: null,
         pendingAcceptCallId:
           state.pendingAcceptCallId === action.sessionId ? null : state.pendingAcceptCallId,
+        pendingAcceptCallData:
+          state.pendingAcceptCallId === action.sessionId ? null : state.pendingAcceptCallData,
         dismissedCallIds: { ...state.dismissedCallIds, [action.sessionId]: true },
       };
     }
@@ -196,15 +206,22 @@ function incomingCallReducer(
       };
     }
     case 'CLEAR_PENDING_CALL': {
-      if (state.pendingAcceptCallId === null) return state;
-      return { ...state, pendingAcceptCallId: null };
+      if (state.pendingAcceptCallId === null && state.pendingAcceptCallData === null) return state;
+      return { ...state, pendingAcceptCallId: null, pendingAcceptCallData: null };
     }
     case 'RESET_ON_SIGN_OUT': {
-      if (state.ringingCall === null && state.pendingAcceptCallId === null) return state;
+      if (
+        state.ringingCall === null &&
+        state.pendingAcceptCallId === null &&
+        state.pendingAcceptCallData === null
+      ) {
+        return state;
+      }
       return {
         ...state,
         ringingCall: null,
         pendingAcceptCallId: null,
+        pendingAcceptCallData: null,
       };
     }
     default:
@@ -260,12 +277,14 @@ export default function App() {
       return {
         ringingCall: null,
         pendingAcceptCallId: initialPendingId,
+        pendingAcceptCallData: null,
         dismissedCallIds: initialPendingId ? { [initialPendingId]: true } : {},
       };
     }
   );
   const incomingCall = callState.ringingCall;
   const pendingAcceptCallId = callState.pendingAcceptCallId;
+  const pendingAcceptCallData = callState.pendingAcceptCallData;
 
   const [authUser, setAuthUser] = useState<User | null>(auth.currentUser);
   const [authRefreshTick, setAuthRefreshTick] = useState<number>(0);
@@ -863,14 +882,14 @@ export default function App() {
   );
 
   const handleAcceptIncomingCall = useCallback(
-    (targetSessionId: string) => {
+    (targetSessionId: string, callData?: IncomingDuoCall | null) => {
       dismissedCallIdsRef.current.add(targetSessionId);
       pendingAcceptCallIdRef.current = targetSessionId;
       setIncomingCall(null);
       callRingtone.stop();
       callRingtone.unlockAudio();
       dismissBackgroundCallNotification(targetSessionId);
-      dispatchCallState({ type: 'ACCEPT_CALL', sessionId: targetSessionId });
+      dispatchCallState({ type: 'ACCEPT_CALL', sessionId: targetSessionId, callData });
       navigateToSection('duo');
     },
     [setIncomingCall, navigateToSection]
@@ -2581,6 +2600,7 @@ export default function App() {
             initialFriendInviteToken={initialFriendInviteToken}
             onClearFriendInvite={() => setInitialFriendInviteToken('')}
             pendingAcceptCallId={pendingAcceptCallId}
+            pendingAcceptCallData={pendingAcceptCallData}
             onClearPendingCall={handleClearPendingCall}
             onOpenPrivacyTerms={() => setIsPrivacyTermsOpen(true)}
             onActiveCallChange={handleActiveDuoCallChange}
@@ -2982,7 +3002,7 @@ export default function App() {
               </button>
               <button
                 type="button"
-                onClick={() => handleAcceptIncomingCall(incomingCall.sessionId)}
+                onClick={() => handleAcceptIncomingCall(incomingCall.sessionId, incomingCall)}
                 className="py-3 px-4 rounded-2xl bg-[#4A6144] hover:bg-[#3B4F36] border border-[#82A879]/50 text-[#FFFDF9] text-sm font-bold flex items-center justify-center gap-2 cursor-pointer shadow-xs"
               >
                 <PhoneCall className="w-4 h-4" />

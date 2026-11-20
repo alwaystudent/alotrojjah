@@ -81,6 +81,7 @@ import {
   FriendContactItem,
   FriendInviteDoc,
   FriendRequestDoc,
+  IncomingDuoCall,
   syncVerifiedUserProfileAndDirectory,
   updateUserPresenceHeartbeat,
   subscribeFriendPresence,
@@ -146,6 +147,7 @@ interface DuoRecitationSectionProps {
   initialFriendInviteToken?: string;
   onClearFriendInvite?: () => void;
   pendingAcceptCallId?: string | null;
+  pendingAcceptCallData?: IncomingDuoCall | null;
   onClearPendingCall?: () => void;
   onOpenPrivacyTerms?: () => void;
   onActiveCallChange?: (info: ActiveDuoCallInfo | null) => void;
@@ -434,6 +436,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   initialFriendInviteToken = '',
   onClearFriendInvite,
   pendingAcceptCallId = null,
+  pendingAcceptCallData = null,
   onClearPendingCall,
   onOpenPrivacyTerms,
   onActiveCallChange,
@@ -2341,7 +2344,10 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   };
 
   // Answer Incoming Direct Friend Call
-  const answerIncomingFriendCall = async (targetSessionId: string) => {
+  const answerIncomingFriendCall = async (
+    targetSessionId: string,
+    prefetchedCallData?: IncomingDuoCall | null
+  ) => {
     const currentUser = auth.currentUser ?? user;
     if (!currentUser || !currentUser.emailVerified) return;
     callRingtone.stop();
@@ -2357,20 +2363,32 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     try {
       await currentUser.getIdToken(false).catch(() => {});
 
-      const snap = await runWithVerifiedTokenRetry(() =>
-        getDoc(doc(db, 'duoSessions', cleanId))
-      );
-
-      if (!snap.exists()) {
-        setLobbyError(
-          isAr
-            ? 'انتهت المكالمة الواردة أو ألغاها المتصل.'
-            : 'Incoming call has ended or been cancelled.'
+      let callData: DuoSessionDoc;
+      if (
+        prefetchedCallData &&
+        prefetchedCallData.sessionId === cleanId &&
+        prefetchedCallData.status === 'ringing' &&
+        prefetchedCallData.calleeUid === currentUser.uid &&
+        Boolean(prefetchedCallData.offerSdp)
+      ) {
+        callData = prefetchedCallData as unknown as DuoSessionDoc;
+      } else {
+        const snap = await runWithVerifiedTokenRetry(() =>
+          getDoc(doc(db, 'duoSessions', cleanId))
         );
-        return;
+
+        if (!snap.exists()) {
+          setLobbyError(
+            isAr
+              ? 'انتهت المكالمة الواردة أو ألغاها المتصل.'
+              : 'Incoming call has ended or been cancelled.'
+          );
+          return;
+        }
+
+        callData = snap.data() as DuoSessionDoc;
       }
 
-      const callData = snap.data() as DuoSessionDoc;
       if (callData.status !== 'ringing' || callData.calleeUid !== currentUser.uid) {
         setLobbyError(
           isAr
@@ -2580,11 +2598,11 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       handledAutoCallRef.current !== pendingAcceptCallId
     ) {
       handledAutoCallRef.current = pendingAcceptCallId;
-      answerIncomingFriendCall(pendingAcceptCallId).finally(() => {
+      answerIncomingFriendCall(pendingAcceptCallId, pendingAcceptCallData).finally(() => {
         onClearPendingCall?.();
       });
     }
-  }, [pendingAcceptCallId, user, authSyncVersion]);
+  }, [pendingAcceptCallId, pendingAcceptCallData, user, authSyncVersion]);
 
   // Compute accuracy percentage based on errors vs verse words in current curriculum
   const totalWordsInVerses = useMemo(() => {

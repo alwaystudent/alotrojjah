@@ -58,6 +58,11 @@ export interface IncomingDuoCall {
   offerSdp: string;
   hideVersesForReciter?: boolean;
   hideVersesForListener?: boolean;
+  hostRole?: 'student' | 'teacher';
+  guestRole?: 'student' | 'teacher';
+  iceEpoch?: number;
+  activeAyah?: number;
+  reciterSide?: 'host' | 'guest';
   status: 'ringing' | 'active' | 'declined' | 'ended';
 }
 
