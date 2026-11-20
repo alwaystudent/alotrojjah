@@ -13,7 +13,7 @@ import {
   where,
   writeBatch,
 } from 'firebase/firestore';
-import { db, OperationType, handleFirestoreError, logFirestoreListenerError } from '../firebase';
+import { db, OperationType, handleFirestoreError } from '../firebase';
 import { QuranRiwayah } from '../data/quranData';
 
 export interface FriendContactItem {
@@ -58,11 +58,6 @@ export interface IncomingDuoCall {
   offerSdp: string;
   hideVersesForReciter?: boolean;
   hideVersesForListener?: boolean;
-  hostRole?: 'student' | 'teacher';
-  guestRole?: 'student' | 'teacher';
-  iceEpoch?: number;
-  activeAyah?: number;
-  reciterSide?: 'host' | 'guest';
   status: 'ringing' | 'active' | 'declined' | 'ended';
 }
 
@@ -98,7 +93,7 @@ export function formatFriendShortCode(uid: string): string {
 }
 
 export async function syncVerifiedUserProfileAndDirectory(user: User): Promise<void> {
-  if (!user?.uid) return;
+  if (!user.emailVerified) return;
 
   const safeName = getDisplayNameForUser(user);
   const safeEmail = (user.email || `${user.uid}@user.local`).slice(0, 254);
@@ -132,34 +127,16 @@ export async function syncVerifiedUserProfileAndDirectory(user: User): Promise<v
 }
 
 export async function updateUserPresenceHeartbeat(user: User): Promise<void> {
-  if (!user?.uid) return;
+  if (!user.emailVerified) return;
   const uidDirPath = `userDirectory/${user.uid}`;
-  const displayName = getDisplayNameForUser(user);
-  const now = Date.now();
   try {
     await updateDoc(doc(db, 'userDirectory', user.uid), {
-      displayName,
-      lastSeen: now,
+      displayName: getDisplayNameForUser(user),
+      lastSeen: Date.now(),
       updatedAt: serverTimestamp(),
     });
   } catch (err) {
-    const code = (err as { code?: unknown })?.code;
-    if (code === 'not-found') {
-      try {
-        await setDoc(doc(db, 'userDirectory', user.uid), {
-          lookupId: user.uid,
-          uid: user.uid,
-          displayName,
-          lastSeen: now,
-          updatedAt: serverTimestamp(),
-        });
-        return;
-      } catch (createErr) {
-        logFirestoreListenerError(createErr, OperationType.WRITE, uidDirPath);
-        return;
-      }
-    }
-    logFirestoreListenerError(err, OperationType.UPDATE, uidDirPath);
+    handleFirestoreError(err, OperationType.UPDATE, uidDirPath);
   }
 }
 
@@ -181,13 +158,13 @@ export function subscribeFriendPresence(
       onPresence(friendUid, isOnline, lastSeen);
     },
     (err) => {
-      logFirestoreListenerError(err, OperationType.GET, dirPath);
+      handleFirestoreError(err, OperationType.GET, dirPath);
     }
   );
 }
 
 export async function getOrCreateMyFriendInvite(user: User): Promise<FriendInviteDoc | null> {
-  if (!user?.uid) return null;
+  if (!user.emailVerified) return null;
   const invitesCol = collection(db, 'friendInvites');
   const q = query(invitesCol, where('ownerUid', '==', user.uid));
 
@@ -226,7 +203,7 @@ export async function getOrCreateMyFriendInvite(user: User): Promise<FriendInvit
 }
 
 export async function regenerateMyFriendInvite(user: User): Promise<FriendInviteDoc | null> {
-  if (!user?.uid) return null;
+  if (!user.emailVerified) return null;
   const q = query(collection(db, 'friendInvites'), where('ownerUid', '==', user.uid));
   try {
     const snap = await getDocs(q);

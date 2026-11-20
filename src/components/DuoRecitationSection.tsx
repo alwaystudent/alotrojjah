@@ -5,6 +5,7 @@ import {
   signInWithPopup,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  sendEmailVerification,
   updateProfile,
   signOut,
 } from 'firebase/auth';
@@ -67,7 +68,7 @@ import {
   Lightbulb,
   Eraser,
 } from 'lucide-react';
-import { auth, db, googleProvider, OperationType, logFirestoreListenerError } from '../firebase';
+import { auth, db, googleProvider, OperationType, handleFirestoreError } from '../firebase';
 import {
   Language,
   QuranRiwayah,
@@ -80,7 +81,6 @@ import {
   FriendContactItem,
   FriendInviteDoc,
   FriendRequestDoc,
-  IncomingDuoCall,
   syncVerifiedUserProfileAndDirectory,
   updateUserPresenceHeartbeat,
   subscribeFriendPresence,
@@ -146,7 +146,6 @@ interface DuoRecitationSectionProps {
   initialFriendInviteToken?: string;
   onClearFriendInvite?: () => void;
   pendingAcceptCallId?: string | null;
-  pendingAcceptCallData?: IncomingDuoCall | null;
   onClearPendingCall?: () => void;
   onOpenPrivacyTerms?: () => void;
   onActiveCallChange?: (info: ActiveDuoCallInfo | null) => void;
@@ -307,7 +306,7 @@ function generateEphemeralSessionId(): string {
   return `SARD-${suffix}`;
 }
 
-function waitForIceComplete(pc: RTCPeerConnection, timeoutMs = 1800): Promise<void> {
+function waitForIceComplete(pc: RTCPeerConnection, timeoutMs = 4000): Promise<void> {
   if (pc.iceGatheringState === 'complete') {
     return Promise.resolve();
   }
@@ -340,7 +339,7 @@ function waitForIceComplete(pc: RTCPeerConnection, timeoutMs = 1800): Promise<vo
         (cand.includes('typ srflx') || cand.includes('typ relay')) &&
         candidateSettleTimer === null
       ) {
-        candidateSettleTimer = setTimeout(done, 700);
+        candidateSettleTimer = setTimeout(done, 1150);
       }
     };
     pc.addEventListener('icegatheringstatechange', onStateChange);
@@ -435,7 +434,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   initialFriendInviteToken = '',
   onClearFriendInvite,
   pendingAcceptCallId = null,
-  pendingAcceptCallData = null,
   onClearPendingCall,
   onOpenPrivacyTerms,
   onActiveCallChange,
@@ -445,7 +443,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   // Auth State
   const [user, setUser] = useState<User | null>(auth.currentUser);
   const [authReady, setAuthReady] = useState<boolean>(false);
-  const [authSyncVersion, setAuthSyncVersion] = useState<number>(0);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [emailInput, setEmailInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
@@ -453,6 +450,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [providerHelpOpen, setProviderHelpOpen] = useState(false);
+  const [verificationMsg, setVerificationMsg] = useState<string | null>(null);
 
   // Notification permission for background call ringing
   const [notifPerm, setNotifPerm] = useState<NotificationPermission | 'unsupported'>(() =>
@@ -544,7 +542,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     'idle' | 'ringing' | 'connecting' | 'connected' | 'declined' | 'disconnected' | 'ended'
   >('idle');
   const [isMicMuted, setIsMicMuted] = useState<boolean>(false);
-  const [isMicUnavailable, setIsMicUnavailable] = useState<boolean>(false);
   const [speakerMode, setSpeakerMode] = useState<'speaker' | 'earpiece'>('speaker');
   const [needsAudioUnlock, setNeedsAudioUnlock] = useState<boolean>(false);
   const [micLevel, setMicLevel] = useState<number>(0);
@@ -583,10 +580,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   const appliedSinkIdRef = useRef<string>('');
   const audioCtxRef = useRef<AudioContext | null>(null);
   const meterStreamRef = useRef<MediaStream | null>(null);
-  const meterTimerRef = useRef<number | null>(null);
-  const isMountedRef = useRef<boolean>(true);
-  const prevSyncedHideReciterRef = useRef<boolean | null>(null);
-  const prevSyncedHideListenerRef = useRef<boolean | null>(null);
+  const meterRafRef = useRef<number | null>(null);
   const iceRestartTimerRef = useRef<number | null>(null);
   const iceEpochRef = useRef<number>(0);
   const appliedIceOfferEpochRef = useRef<number>(0);
@@ -594,7 +588,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   const iceRestartInFlightRef = useRef<boolean>(false);
   const lastIceRestartAttemptAtRef = useRef<number>(0);
   const micRecoveryInFlightRef = useRef<boolean>(false);
-  const micFallbackModeRef = useRef<boolean>(false);
   const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null);
   const isMicMutedRef = useRef<boolean>(false);
   const unsubSessionRef = useRef<(() => void) | null>(null);
@@ -693,10 +686,9 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   }, [sessionId, myRoleInCall, sessionMeta?.hostName, sessionMeta?.guestName, outgoingCallTargetName, isAr]);
 
   // Helper to recover local microphone track automatically if OS/Bluetooth/hardware stops it mid-call
-  const recoverLocalMicrophoneTrack = async (forceInteractive = false) => {
+  const recoverLocalMicrophoneTrack = async () => {
     if (micRecoveryInFlightRef.current) return;
     if (!sessionIdRef.current || !pcRef.current || pcRef.current.connectionState === 'closed') return;
-    if (micFallbackModeRef.current && !forceInteractive) return;
     const currentStream = localStreamRef.current;
     const hasLiveTrack = Boolean(
       currentStream && currentStream.getAudioTracks().some((t) => t.readyState === 'live')
@@ -716,8 +708,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       });
       const newTrack = freshStream.getAudioTracks()[0];
       if (!newTrack) return;
-      micFallbackModeRef.current = false;
-      setIsMicUnavailable(false);
       newTrack.enabled = !isMicMutedRef.current;
       newTrack.onended = () => {
         if (sessionIdRef.current && sessionStatusRef.current === 'active') {
@@ -761,7 +751,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   const attemptHostIceRestart = async (targetPc?: RTCPeerConnection | null) => {
     const pc = targetPc ?? pcRef.current;
     const activeCallId = sessionIdRef.current;
-    if (!pc || !activeCallId || !auth.currentUser) return;
+    if (!pc || !activeCallId || !auth.currentUser?.emailVerified) return;
     if (myRoleRef.current !== 'host') return;
     if (sessionStatusRef.current !== 'active') return;
     if (pc.connectionState === 'closed') return;
@@ -942,7 +932,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     const unsub = onAuthStateChanged(auth, async (nextUser) => {
       setUser(nextUser);
       setAuthReady(true);
-      if (nextUser) {
+      if (nextUser && nextUser.emailVerified) {
         try {
           await syncVerifiedUserProfileAndDirectory(nextUser);
           const inv = await getOrCreateMyFriendInvite(nextUser);
@@ -959,7 +949,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
 
   // Live online presence heartbeat (every 45s while tab visible)
   useEffect(() => {
-    if (!user) return;
+    if (!user || !user.emailVerified) return;
     const beat = () => {
       if (document.visibilityState === 'visible') {
         updateUserPresenceHeartbeat(user).catch(() => {});
@@ -971,41 +961,21 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       window.clearInterval(intervalId);
       document.removeEventListener('visibilitychange', beat);
     };
-  }, [user, authSyncVersion]);
-
-  const friendsUidKey = useMemo(
-    () =>
-      friends
-        .map((f) => f.friendUid)
-        .sort()
-        .join(','),
-    [friends]
-  );
+  }, [user]);
 
   // Subscribe to approved friends' online presence
   useEffect(() => {
-    if (!user?.uid || !friendsUidKey) {
+    if (!user || !user.emailVerified || friends.length === 0) {
       setFriendPresenceMap({});
       return;
     }
 
-    const uids = friendsUidKey.split(',').filter(Boolean);
-    const unsubs = uids.map((fUid) =>
-      subscribeFriendPresence(fUid, (uid, online, lastSeen) => {
-        setFriendPresenceMap((prev) => {
-          const prevEntry = prev[uid];
-          if (
-            prevEntry &&
-            prevEntry.online === online &&
-            Math.abs((prevEntry.lastSeen ?? 0) - (lastSeen ?? 0)) < 15_000
-          ) {
-            return prev;
-          }
-          return {
-            ...prev,
-            [uid]: { online, lastSeen },
-          };
-        });
+    const unsubs = friends.map((fr) =>
+      subscribeFriendPresence(fr.friendUid, (uid, online, lastSeen) => {
+        setFriendPresenceMap((prev) => ({
+          ...prev,
+          [uid]: { online, lastSeen },
+        }));
       })
     );
 
@@ -1031,7 +1001,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       unsubs.forEach((u) => u());
       window.clearInterval(staleTicker);
     };
-  }, [user?.uid, friendsUidKey]);
+  }, [user, friends]);
 
   // Sync invite input if parent passes a token while already mounted in Duo
   useEffect(() => {
@@ -1042,7 +1012,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
 
   // Real-time Approved Friends List + Consent-Gated Friend Requests Listeners
   useEffect(() => {
-    if (!user) {
+    if (!user || !user.emailVerified) {
       setFriends([]);
       setIncomingRequests([]);
       setOutgoingPendingRequests([]);
@@ -1064,7 +1034,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         setFriends(list);
       },
       (err) => {
-        logFirestoreListenerError(err, OperationType.LIST, friendsPath);
+        handleFirestoreError(err, OperationType.LIST, friendsPath);
       }
     );
 
@@ -1079,7 +1049,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         setIncomingRequests(snap.docs.map((d) => d.data() as FriendRequestDoc));
       },
       (err) => {
-        logFirestoreListenerError(err, OperationType.LIST, 'friendRequests');
+        handleFirestoreError(err, OperationType.LIST, 'friendRequests');
       }
     );
 
@@ -1094,7 +1064,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         setOutgoingPendingRequests(allOut.filter((r) => r.status === 'pending'));
       },
       (err) => {
-        logFirestoreListenerError(err, OperationType.LIST, 'friendRequests');
+        handleFirestoreError(err, OperationType.LIST, 'friendRequests');
       }
     );
 
@@ -1103,9 +1073,9 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       unsubIncomingReq();
       unsubOutgoingReq();
     };
-  }, [user?.uid, authSyncVersion]);
+  }, [user]);
 
-  const teardownWebRtcResources = (skipStateReset = false) => {
+  const teardownWebRtcResources = () => {
     callRingtone.stop();
     if (unsubSessionRef.current) {
       try {
@@ -1127,9 +1097,9 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       }
       wakeLockRef.current = null;
     }
-    if (meterTimerRef.current !== null) {
-      window.clearInterval(meterTimerRef.current);
-      meterTimerRef.current = null;
+    if (meterRafRef.current !== null) {
+      cancelAnimationFrame(meterRafRef.current);
+      meterRafRef.current = null;
     }
     if (meterStreamRef.current) {
       meterStreamRef.current.getTracks().forEach((t) => {
@@ -1219,37 +1189,29 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     iceRestartInFlightRef.current = false;
     lastIceRestartAttemptAtRef.current = 0;
     micRecoveryInFlightRef.current = false;
-    micFallbackModeRef.current = false;
     appliedSinkIdRef.current = '';
     speakerModeRef.current = 'speaker';
     isMicMutedRef.current = false;
-    prevSyncedHideReciterRef.current = null;
-    prevSyncedHideListenerRef.current = null;
-    if (!skipStateReset && isMountedRef.current) {
-      setSpeakerMode('speaker');
-      setNeedsAudioUnlock(false);
-      setMicLevel(0);
-      setIsMicMuted(false);
-      setIsMicUnavailable(false);
-      setOutgoingCallTargetName(null);
-      setBoardHintText('');
-      setBoardHintKind('note');
-      setBoardHintSenderName('');
-      setBoardHintSeq(0);
-      setBoardInputText('');
-      setIsBoardPanelOpen(false);
-    }
+    setSpeakerMode('speaker');
+    setNeedsAudioUnlock(false);
+    setMicLevel(0);
+    setIsMicMuted(false);
+    setOutgoingCallTargetName(null);
+    setBoardHintText('');
+    setBoardHintKind('note');
+    setBoardHintSenderName('');
+    setBoardHintSeq(0);
+    setBoardInputText('');
+    setIsBoardPanelOpen(false);
   };
 
   useEffect(() => {
-    isMountedRef.current = true;
     const unregister = memoryManager.register(() => {
-      teardownWebRtcResources(true);
+      teardownWebRtcResources();
     });
     return () => {
-      isMountedRef.current = false;
       unregister();
-      teardownWebRtcResources(true);
+      teardownWebRtcResources();
     };
   }, []);
 
@@ -1329,6 +1291,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     callRingtone.unlockAudio();
     setAuthError(null);
     setProviderHelpOpen(false);
+    setVerificationMsg(null);
     const trimmedEmail = emailInput.trim();
     if (!trimmedEmail || !passwordInput) {
       setAuthError(
@@ -1345,13 +1308,12 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         if (nameInput.trim()) {
           await updateProfile(cred.user, { displayName: nameInput.trim().slice(0, 80) });
         }
-        await cred.user.getIdToken(true).catch(() => {});
-        setUser(cred.user);
-        setAuthSyncVersion((v) => v + 1);
-        window.dispatchEvent(new Event('alutrujjah:auth-refreshed'));
-        await syncVerifiedUserProfileAndDirectory(cred.user).catch(() => {});
-        const inv = await getOrCreateMyFriendInvite(cred.user).catch(() => null);
-        if (inv) setMyInvite(inv);
+        await sendEmailVerification(cred.user);
+        setVerificationMsg(
+          isAr
+            ? 'تم إنشاء الحساب وإرسال رابط التفعيل إلى بريدك الإلكتروني.'
+            : 'Account created and verification email sent.'
+        );
       } else {
         await signInWithEmailAndPassword(auth, trimmedEmail, passwordInput);
       }
@@ -1359,6 +1321,52 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       const mapped = mapFirebaseAuthError(err, lang);
       setAuthError(mapped.message);
       if (mapped.isProviderDisabled) setProviderHelpOpen(true);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleResendVerification = async () => {
+    if (!auth.currentUser) return;
+    setAuthLoading(true);
+    setVerificationMsg(null);
+    try {
+      await sendEmailVerification(auth.currentUser);
+      setVerificationMsg(
+        isAr
+          ? 'تم إعادة إرسال رابط التفعيل إلى بريدك الإلكتروني بنجاح.'
+          : 'Verification link resent to your email.'
+      );
+    } catch (err) {
+      const mapped = mapFirebaseAuthError(err, lang);
+      setVerificationMsg(mapped.message);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleRefreshVerificationStatus = async () => {
+    if (!auth.currentUser) return;
+    setAuthLoading(true);
+    try {
+      await auth.currentUser.reload();
+      await auth.currentUser.getIdToken(true);
+      const refreshed = auth.currentUser;
+      setUser(refreshed ? ({ ...refreshed } as User) : null);
+      if (refreshed && refreshed.emailVerified) {
+        await syncVerifiedUserProfileAndDirectory(refreshed);
+        const inv = await getOrCreateMyFriendInvite(refreshed);
+        setMyInvite(inv);
+      } else {
+        setVerificationMsg(
+          isAr
+            ? 'لم يتم تأكيد البريد الإلكتروني بعد. افتح رسالة التفعيل في بريدك ثم أعد الضغط هنا.'
+            : 'Email is not verified yet. Please click the verification link in your inbox.'
+        );
+      }
+    } catch (err) {
+      const mapped = mapFirebaseAuthError(err, lang);
+      setVerificationMsg(mapped.message);
     } finally {
       setAuthLoading(false);
     }
@@ -1424,7 +1432,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   };
 
   const handleRegenerateInvite = async () => {
-    if (!user) return;
+    if (!user || !user.emailVerified) return;
     setInviteBusy(true);
     try {
       const fresh = await regenerateMyFriendInvite(user);
@@ -1444,7 +1452,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
 
   const handleLookupPastedInvite = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !pasteInviteInput.trim()) return;
+    if (!user || !user.emailVerified || !pasteInviteInput.trim()) return;
     setInviteLookupBusy(true);
     setFriendFeedback(null);
     setPreviewedInvite(null);
@@ -1489,7 +1497,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   };
 
   const handleConfirmSendFriendRequest = async () => {
-    if (!user || !previewedInvite) return;
+    if (!user || !user.emailVerified || !previewedInvite) return;
     setInviteBusy(true);
     setFriendFeedback(null);
     try {
@@ -1532,7 +1540,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   };
 
   const handleApproveRequest = async (req: FriendRequestDoc) => {
-    if (!user) return;
+    if (!user || !user.emailVerified) return;
     setInviteBusy(true);
     try {
       await approveIncomingFriendRequest(user, req);
@@ -1567,17 +1575,13 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   };
 
   const handleRemoveFriend = async (friendUid: string) => {
-    if (!user) return;
+    if (!user || !user.emailVerified) return;
     const friendPath = `users/${user.uid}/friends/${friendUid}`;
     try {
       await deleteDoc(doc(db, 'users', user.uid, 'friends', friendUid));
       setConfirmRemoveFriendUid(null);
     } catch (err) {
-      logFirestoreListenerError(err, OperationType.DELETE, friendPath);
-      setFriendFeedback({
-        type: 'err',
-        msg: isAr ? 'تعذر حذف الصديق، حاول مجدداً.' : 'Could not remove friend. Try again.',
-      });
+      handleFirestoreError(err, OperationType.DELETE, friendPath);
     }
   };
 
@@ -1621,44 +1625,22 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         source.connect(analyser);
         const data = new Uint8Array(analyser.frequencyBinCount);
 
-        let lastSampledLevel = -1;
-        if (meterTimerRef.current !== null) {
-          window.clearInterval(meterTimerRef.current);
-        }
-        meterTimerRef.current = window.setInterval(() => {
-          if (!localStreamRef.current || !isMountedRef.current) return;
-          if (document.visibilityState !== 'visible') return;
+        const tick = () => {
+          if (!localStreamRef.current) return;
           analyser.getByteFrequencyData(data);
           let sum = 0;
           for (let i = 0; i < data.length; i++) sum += data[i];
           const avg = Math.min(100, Math.round((sum / data.length) * 1.4));
-          if (Math.abs(avg - lastSampledLevel) >= 3) {
-            lastSampledLevel = avg;
-            setMicLevel(avg);
-          }
-        }, 140);
+          setMicLevel(avg);
+          meterRafRef.current = requestAnimationFrame(tick);
+        };
+        meterRafRef.current = requestAnimationFrame(tick);
       }
     } catch {
       // Audio meter optional
     }
 
     return stream;
-  };
-
-  // Acquire mic if available, or fall back cleanly to listen-only (recvonly) so call session always connects
-  const acquireMicrophoneOptional = async (): Promise<MediaStream | null> => {
-    try {
-      const stream = await acquireMicrophone();
-      micFallbackModeRef.current = false;
-      setIsMicUnavailable(false);
-      return stream;
-    } catch {
-      micFallbackModeRef.current = true;
-      setIsMicUnavailable(true);
-      setIsMicMuted(true);
-      isMicMutedRef.current = true;
-      return null;
-    }
   };
 
   // Sync bounded recitation metadata, whiteboard hints & live curriculum via Firestore signaling (strictly NO RTCDataChannel)
@@ -1687,7 +1669,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     }>
   ) => {
     const activeCallId = sessionIdRef.current;
-    if (!activeCallId || !auth.currentUser) return;
+    if (!activeCallId || !auth.currentUser?.emailVerified) return;
     if (sessionStatusRef.current !== 'active') return;
     const sessionPath = `duoSessions/${activeCallId}`;
     try {
@@ -1696,7 +1678,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         updatedAt: serverTimestamp(),
       });
     } catch (err) {
-      logFirestoreListenerError(err, OperationType.UPDATE, sessionPath);
+      handleFirestoreError(err, OperationType.UPDATE, sessionPath);
     }
   };
 
@@ -1734,17 +1716,11 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     }
     if (typeof data.hideVersesForReciter === 'boolean') {
       setHideVersesForReciter(data.hideVersesForReciter);
-      if (prevSyncedHideReciterRef.current !== data.hideVersesForReciter) {
-        prevSyncedHideReciterRef.current = data.hideVersesForReciter;
-        setLocalShowVersesOverride(false);
-      }
+      setLocalShowVersesOverride(false);
     }
     if (typeof data.hideVersesForListener === 'boolean') {
       setHideVersesForListener(data.hideVersesForListener);
-      if (prevSyncedHideListenerRef.current !== data.hideVersesForListener) {
-        prevSyncedHideListenerRef.current = data.hideVersesForListener;
-        setLocalShowVersesOverride(false);
-      }
+      setLocalShowVersesOverride(false);
     }
     if (data.riwayah === 'hafs' || data.riwayah === 'qalun' || data.riwayah === 'warsh') {
       setSelectedRiwayah(data.riwayah);
@@ -1892,31 +1868,23 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     }
   }, [sessionId, peerConnState]);
 
-  const setupPeerConnection = (stream: MediaStream | null): RTCPeerConnection => {
+  const setupPeerConnection = (stream: MediaStream): RTCPeerConnection => {
     const pc = new RTCPeerConnection(buildRtcConfiguration(highPrivacyRef.current));
     pcRef.current = pc;
 
-    if (stream && stream.getAudioTracks().length > 0) {
-      stream.getAudioTracks().forEach((track) => {
-        track.enabled = !isMicMutedRef.current;
-        const sender = pc.addTrack(track, stream);
-        try {
-          const params = sender.getParameters();
-          if (params.encodings && params.encodings.length > 0) {
-            params.encodings[0].maxBitrate = 48000;
-            sender.setParameters(params).catch(() => {});
-          }
-        } catch {
-          // Sender bitrate tuning optional
-        }
-      });
-    } else {
+    stream.getAudioTracks().forEach((track) => {
+      track.enabled = !isMicMutedRef.current;
+      const sender = pc.addTrack(track, stream);
       try {
-        pc.addTransceiver('audio', { direction: 'sendrecv' });
+        const params = sender.getParameters();
+        if (params.encodings && params.encodings.length > 0) {
+          params.encodings[0].maxBitrate = 48000;
+          sender.setParameters(params).catch(() => {});
+        }
       } catch {
-        // Transceiver optional
+        // Sender bitrate tuning optional
       }
-    }
+    });
 
     pc.ontrack = (event) => {
       syncRemoteAudioTracksToMediaElement(event, pc);
@@ -2042,66 +2010,10 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     };
   };
 
-  const isPermissionDeniedError = (err: unknown): boolean => {
-    if (!err) return false;
-    const code = (err as { code?: unknown }).code;
-    const msg = err instanceof Error ? err.message : String(err);
-    return (
-      code === 'permission-denied' ||
-      /missing or insufficient permissions|permission[-_]denied/i.test(msg)
-    );
-  };
-
-  const logDuoFirestoreError = (
-    err: unknown,
-    operationType: OperationType,
-    path: string
-  ) => {
-    const errInfo = {
-      error: err instanceof Error ? err.message : String(err),
-      operationType,
-      path,
-      authInfo: {
-        userId: auth.currentUser?.uid,
-        email: auth.currentUser?.email,
-        emailVerified: auth.currentUser?.emailVerified,
-        isAnonymous: auth.currentUser?.isAnonymous,
-        tenantId: auth.currentUser?.tenantId,
-      },
-    };
-    console.error('Firestore Error: ', JSON.stringify(errInfo));
-  };
-
-  const runWithVerifiedTokenRetry = async <T,>(
-    op: () => Promise<T>
-  ): Promise<T> => {
-    try {
-      return await op();
-    } catch (err) {
-      if (!isPermissionDeniedError(err) || !auth.currentUser) {
-        throw err;
-      }
-      await auth.currentUser.reload().catch(() => {});
-      await auth.currentUser.getIdToken(true).catch(() => {});
-      setUser(auth.currentUser);
-      setAuthSyncVersion((v) => v + 1);
-      window.dispatchEvent(new Event('alutrujjah:auth-refreshed'));
-      return await op();
-    }
-  };
-
   // Start Direct Encrypted Friend Audio Call ONLY (Voice rooms completely disabled)
   const startDirectFriendCall = async (targetFriend: FriendContactItem) => {
-    const currentUser = auth.currentUser ?? user;
-    if (!currentUser) return;
-    if (targetFriend.friendUid === currentUser.uid) {
-      setLobbyError(
-        isAr ? 'لا يمكنك الاتصال بنفسك.' : 'You cannot call yourself.'
-      );
-      return;
-    }
+    if (!user || !user.emailVerified) return;
     callRingtone.unlockAudio();
-    teardownWebRtcResources();
     setLobbyError(null);
     setLastCallSummary(null);
     setLobbyBusy(true);
@@ -2111,10 +2023,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     const sessionPath = `duoSessions/${newSessionId}`;
 
     try {
-      // Ensure Firebase ID token carries fresh email_verified claim before signaling write
-      await currentUser.getIdToken(false).catch(() => {});
-
-      const stream = await acquireMicrophoneOptional();
+      const stream = await acquireMicrophone();
       const pc = setupPeerConnection(stream);
 
       const offer = await pc.createOffer({ offerToReceiveAudio: true });
@@ -2127,7 +2036,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       } catch {
         await pc.setLocalDescription(offer);
       }
-      await waitForIceComplete(pc, 1800);
+      await waitForIceComplete(pc, 4000);
 
       const finalDesc = pc.localDescription;
       if (!finalDesc || !finalDesc.sdp) {
@@ -2136,7 +2045,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         );
       }
 
-      const hostDisplayName = getDisplayNameForUser(currentUser);
+      const hostDisplayName = getDisplayNameForUser(user);
       const currFields = buildCurriculumPayloadFields();
 
       const isMixed = hostAppRole !== guestAppRole;
@@ -2156,7 +2065,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
 
       const callPayload: Record<string, unknown> = {
         sessionId: newSessionId,
-        hostUid: currentUser.uid,
+        hostUid: user.uid,
         hostName: hostDisplayName,
         calleeUid: targetFriend.friendUid,
         callMode: 'friend_call',
@@ -2181,9 +2090,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         updatedAt: serverTimestamp(),
       };
 
-      await runWithVerifiedTokenRetry(() =>
-        setDoc(doc(db, 'duoSessions', newSessionId), callPayload)
-      );
+      await setDoc(doc(db, 'duoSessions', newSessionId), callPayload);
 
       iceEpochRef.current = 0;
       appliedIceOfferEpochRef.current = 0;
@@ -2211,11 +2118,8 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         doc(db, 'duoSessions', newSessionId),
         async (snap) => {
           if (!snap.exists()) {
+            setPeerConnState('ended');
             teardownWebRtcResources();
-            setShowEvalModal(false);
-            setSessionId(null);
-            setSessionMeta(null);
-            setPeerConnState('idle');
             return;
           }
           const data = snap.data() as DuoSessionDoc;
@@ -2224,20 +2128,15 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
           if (data.status === 'declined') {
             callRingtone.stop();
             setOutgoingCallTargetName(null);
+            setPeerConnState('declined');
             teardownWebRtcResources();
-            setShowEvalModal(false);
-            setSessionId(null);
-            setSessionMeta(null);
-            setPeerConnState('idle');
-            setLobbyError(
-              isAr ? `اعتذر «${targetFriend.friendName}» عن المكالمة.` : `${targetFriend.friendName} declined the call.`
-            );
             return;
           }
 
           if (data.status === 'ended') {
             callRingtone.stop();
             setOutgoingCallTargetName(null);
+            setPeerConnState('ended');
             teardownWebRtcResources();
             if (data.sessionEvaluation) {
               setLastCallSummary({
@@ -2247,18 +2146,15 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                 mistakesCount: data.mistakesCount ?? 0,
                 accuracyPct: data.accuracyPct ?? 100,
               });
+              setShowEvalModal(false);
+              setSessionId(null);
+              setSessionMeta(null);
+              setPeerConnState('idle');
             }
-            setShowEvalModal(false);
-            setSessionId(null);
-            setSessionMeta(null);
-            setPeerConnState('idle');
             return;
           }
 
           if (data.status === 'active') {
-            callRingtone.stop();
-            setOutgoingCallTargetName(null);
-            setPeerConnState((prev) => (prev === 'ringing' ? 'connecting' : prev));
             applySyncedSessionSnapshot(data);
           }
 
@@ -2296,33 +2192,19 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
           }
         },
         (err) => {
-          console.error('Host session listener error:', err);
+          handleFirestoreError(err, OperationType.GET, sessionPath);
         }
       );
     } catch (err) {
       teardownWebRtcResources();
-      setSessionId(null);
-      setSessionMeta(null);
-      setPeerConnState('idle');
-      if (isPermissionDeniedError(err)) {
-        logDuoFirestoreError(err, OperationType.CREATE, sessionPath);
-        let friendMissing = false;
-        try {
-          const frSnap = await getDoc(
-            doc(db, 'users', currentUser.uid, 'friends', targetFriend.friendUid)
-          );
-          friendMissing = !frSnap.exists();
-        } catch {
-          // ignore
-        }
+      if (err instanceof Error && err.message.startsWith('{"error":')) {
+        throw err;
+      }
+      if ((err as { name?: string })?.name === 'NotAllowedError') {
         setLobbyError(
-          friendMissing
-            ? isAr
-              ? `لم تعد صداقة «${targetFriend.friendName}» مفعّلة في السحابة؛ أعد إضافة الصديق عبر رابط الدعوة ثم حاول مجدداً.`
-              : `"${targetFriend.friendName}" is not synced in your friends list yet. Please re-add and try again.`
-            : isAr
-            ? 'تعذر بدء المكالمة بسبب صلاحيات الجلسة. حاول تحديث الصفحة أو إعادة تسجيل الدخول.'
-            : 'Call blocked by session permissions. Please refresh or sign in again.'
+          isAr
+            ? 'يرجى السماح للمتصفح بالوصول إلى الميكروفون لبدء الاتصال الصوتي المباشر.'
+            : 'Please allow microphone access to start live P2P audio.'
         );
       } else {
         setLobbyError(
@@ -2339,52 +2221,33 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   };
 
   // Answer Incoming Direct Friend Call
-  const answerIncomingFriendCall = async (
-    targetSessionId: string,
-    prefetchedCallData?: IncomingDuoCall | null
-  ) => {
-    const currentUser = auth.currentUser ?? user;
-    if (!currentUser) return;
+  const answerIncomingFriendCall = async (targetSessionId: string) => {
+    if (!user || !user.emailVerified) return;
     callRingtone.stop();
     callRingtone.unlockAudio();
 
     const cleanId = targetSessionId.trim().toUpperCase();
-    teardownWebRtcResources();
     setLobbyError(null);
     setLastCallSummary(null);
     setLobbyBusy(true);
     const sessionPath = `duoSessions/${cleanId}`;
 
     try {
-      await currentUser.getIdToken(false).catch(() => {});
+      const snap = await getDoc(doc(db, 'duoSessions', cleanId)).catch((err) => {
+        handleFirestoreError(err, OperationType.GET, sessionPath);
+      });
 
-      let callData: DuoSessionDoc;
-      if (
-        prefetchedCallData &&
-        prefetchedCallData.sessionId === cleanId &&
-        prefetchedCallData.status === 'ringing' &&
-        prefetchedCallData.calleeUid === currentUser.uid &&
-        Boolean(prefetchedCallData.offerSdp)
-      ) {
-        callData = prefetchedCallData as unknown as DuoSessionDoc;
-      } else {
-        const snap = await runWithVerifiedTokenRetry(() =>
-          getDoc(doc(db, 'duoSessions', cleanId))
+      if (!snap || !snap.exists()) {
+        setLobbyError(
+          isAr
+            ? 'انتهت المكالمة الواردة أو ألغاها المتصل.'
+            : 'Incoming call has ended or been cancelled.'
         );
-
-        if (!snap.exists()) {
-          setLobbyError(
-            isAr
-              ? 'انتهت المكالمة الواردة أو ألغاها المتصل.'
-              : 'Incoming call has ended or been cancelled.'
-          );
-          return;
-        }
-
-        callData = snap.data() as DuoSessionDoc;
+        return;
       }
 
-      if (callData.status !== 'ringing' || callData.calleeUid !== currentUser.uid) {
+      const callData = snap.data() as DuoSessionDoc;
+      if (callData.status !== 'ringing' || callData.calleeUid !== user.uid) {
         setLobbyError(
           isAr
             ? 'هذه المكالمة غير متاحة أو تم الرد عليها مسبقاً.'
@@ -2393,7 +2256,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         return;
       }
 
-      const stream = await acquireMicrophoneOptional();
+      const stream = await acquireMicrophone();
       const pc = setupPeerConnection(stream);
 
       await pc.setRemoteDescription(
@@ -2413,7 +2276,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       } catch {
         await pc.setLocalDescription(answer);
       }
-      await waitForIceComplete(pc, 1800);
+      await waitForIceComplete(pc, 4000);
 
       const finalAnswer = pc.localDescription;
       if (!finalAnswer || !finalAnswer.sdp) {
@@ -2422,18 +2285,18 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         );
       }
 
-      const guestDisplayName = getDisplayNameForUser(currentUser);
+      const guestDisplayName = getDisplayNameForUser(user);
 
-      await runWithVerifiedTokenRetry(() =>
-        updateDoc(doc(db, 'duoSessions', cleanId), {
-          guestUid: currentUser.uid,
-          guestName: guestDisplayName,
-          answerType: finalAnswer.type || 'answer',
-          answerSdp: finalAnswer.sdp,
-          status: 'active',
-          updatedAt: serverTimestamp(),
-        })
-      );
+      await updateDoc(doc(db, 'duoSessions', cleanId), {
+        guestUid: user.uid,
+        guestName: guestDisplayName,
+        answerType: finalAnswer.type || 'answer',
+        answerSdp: finalAnswer.sdp,
+        status: 'active',
+        updatedAt: serverTimestamp(),
+      }).catch((err) => {
+        handleFirestoreError(err, OperationType.UPDATE, sessionPath);
+      });
 
       dismissBackgroundCallNotification(cleanId);
       iceEpochRef.current = typeof callData.iceEpoch === 'number' ? callData.iceEpoch : 0;
@@ -2443,28 +2306,25 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       setSessionId(cleanId);
       setSessionMeta({
         ...callData,
-        guestUid: currentUser.uid,
+        guestUid: user.uid,
         guestName: guestDisplayName,
         status: 'active',
       });
       applySyncedSessionSnapshot(callData);
-      setOutgoingCallTargetName(null);
       setPeerConnState('connecting');
 
       unsubSessionRef.current = onSnapshot(
         doc(db, 'duoSessions', cleanId),
         async (nextSnap) => {
           if (!nextSnap.exists()) {
+            setPeerConnState('ended');
             teardownWebRtcResources();
-            setShowEvalModal(false);
-            setSessionId(null);
-            setSessionMeta(null);
-            setPeerConnState('idle');
             return;
           }
           const updated = nextSnap.data() as DuoSessionDoc;
           setSessionMeta(updated);
           if (updated.status === 'ended' || updated.status === 'declined') {
+            setPeerConnState(updated.status);
             teardownWebRtcResources();
             if (updated.status === 'ended' && updated.sessionEvaluation) {
               setLastCallSummary({
@@ -2474,11 +2334,11 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                 mistakesCount: updated.mistakesCount ?? 0,
                 accuracyPct: updated.accuracyPct ?? 100,
               });
+              setShowEvalModal(false);
+              setSessionId(null);
+              setSessionMeta(null);
+              setPeerConnState('idle');
             }
-            setShowEvalModal(false);
-            setSessionId(null);
-            setSessionMeta(null);
-            setPeerConnState('idle');
             return;
           }
           if (updated.status === 'active') {
@@ -2495,27 +2355,27 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
               appliedIceOfferEpochRef.current = incomingEpoch;
               iceEpochRef.current = incomingEpoch;
               try {
-                const activePc = pcRef.current;
+                const pc = pcRef.current;
                 await recoverLocalMicrophoneTrack();
-                await activePc.setRemoteDescription(
+                await pc.setRemoteDescription(
                   new RTCSessionDescription({
                     type: updated.offerType as RTCSdpType,
                     sdp: updated.offerSdp,
                   })
                 );
-                const restartAnswer = await activePc.createAnswer();
+                const restartAnswer = await pc.createAnswer();
                 const tunedRestartAnswer: RTCSessionDescriptionInit = {
                   type: restartAnswer.type,
                   sdp: tuneOpusSdpForVoice(restartAnswer.sdp),
                 };
                 try {
-                  await activePc.setLocalDescription(tunedRestartAnswer);
+                  await pc.setLocalDescription(tunedRestartAnswer);
                 } catch {
-                  await activePc.setLocalDescription(restartAnswer);
+                  await pc.setLocalDescription(restartAnswer);
                 }
-                await waitForIceComplete(activePc, 1800);
-                const finalRestartAnswer = activePc.localDescription;
-                if (finalRestartAnswer?.sdp && pcRef.current === activePc) {
+                await waitForIceComplete(pc, 3500);
+                const finalRestartAnswer = pc.localDescription;
+                if (finalRestartAnswer?.sdp && pcRef.current === pc) {
                   appliedIceAnswerEpochRef.current = incomingEpoch;
                   await updateDoc(doc(db, 'duoSessions', cleanId), {
                     iceEpoch: incomingEpoch,
@@ -2531,48 +2391,27 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
           }
         },
         (err) => {
-          console.error('Guest session listener error:', err);
+          handleFirestoreError(err, OperationType.GET, sessionPath);
         }
       );
     } catch (err) {
-      handledAutoCallRef.current = null;
       teardownWebRtcResources();
-      setSessionId(null);
-      setSessionMeta(null);
-      setPeerConnState('idle');
-      if (isPermissionDeniedError(err)) {
-        logDuoFirestoreError(err, OperationType.UPDATE, sessionPath);
-        let sessionAlreadyClosed = false;
-        try {
-          const latestSnap = await getDoc(doc(db, 'duoSessions', cleanId));
-          if (!latestSnap.exists()) {
-            sessionAlreadyClosed = true;
-          } else {
-            const latestStatus = (latestSnap.data() as DuoSessionDoc).status;
-            if (latestStatus !== 'ringing') {
-              sessionAlreadyClosed = true;
-            }
-          }
-        } catch {
-          // ignore
-        }
+      if (err instanceof Error && err.message.startsWith('{"error":')) {
+        throw err;
+      }
+      if ((err as { name?: string })?.name === 'NotAllowedError') {
         setLobbyError(
-          sessionAlreadyClosed
-            ? isAr
-              ? 'انتهت المكالمة الواردة أو ألغاها المتصل.'
-              : 'Incoming call has ended or been cancelled.'
-            : isAr
-            ? 'تعذر الرد على المكالمة بسبب صلاحيات الجلسة. حاول تحديث الصفحة أو إعادة تسجيل الدخول.'
-            : 'Could not answer call due to session permissions. Please refresh or sign in again.'
+          isAr
+            ? 'يرجى السماح بالوصول إلى الميكروفون للرد على المكالمة الصوتية.'
+            : 'Please allow microphone access to answer the voice call.'
         );
       } else {
-        console.error('Answer incoming call error:', sessionPath, err);
         setLobbyError(
           err instanceof Error
             ? err.message
             : isAr
-            ? 'تعذر الرد على المكالمة وبدء الجلسة. حاول مرة أخرى.'
-            : 'Failed to answer call and start session. Please try again.'
+            ? 'تعذر الرد على المكالمة.'
+            : 'Failed to answer call.'
         );
       }
     } finally {
@@ -2582,21 +2421,18 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
 
   // Auto-answer when user clicks Answer on the global Incoming Call Modal
   useEffect(() => {
-    if (!pendingAcceptCallId) {
-      handledAutoCallRef.current = null;
-      return;
-    }
-    const activeUser = auth.currentUser ?? user;
     if (
-      activeUser &&
+      pendingAcceptCallId &&
+      user &&
+      user.emailVerified &&
       handledAutoCallRef.current !== pendingAcceptCallId
     ) {
       handledAutoCallRef.current = pendingAcceptCallId;
-      answerIncomingFriendCall(pendingAcceptCallId, pendingAcceptCallData).finally(() => {
+      answerIncomingFriendCall(pendingAcceptCallId).finally(() => {
         onClearPendingCall?.();
       });
     }
-  }, [pendingAcceptCallId, pendingAcceptCallData, user, authSyncVersion]);
+  }, [pendingAcceptCallId, user]);
 
   // Compute accuracy percentage based on errors vs verse words in current curriculum
   const totalWordsInVerses = useMemo(() => {
@@ -2631,7 +2467,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     setShowEvalModal(false);
     setShowCurriculumModal(false);
 
-    if (activeCallId && auth.currentUser) {
+    if (activeCallId && auth.currentUser?.emailVerified) {
       try {
         if (currentMeta?.status !== 'ended' && currentMeta?.status !== 'declined') {
           const endDocPatch: Record<string, unknown> = {
@@ -3169,6 +3005,12 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                 </div>
               )}
 
+              {verificationMsg && (
+                <div className="rounded-xl bg-[#4A6144]/10 border border-[#4A6144]/30 p-3 text-xs text-[#261C14] font-semibold">
+                  {verificationMsg}
+                </div>
+              )}
+
               <button
                 type="button"
                 disabled={authLoading}
@@ -3178,8 +3020,8 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                 <LogIn className="w-4 h-4" />
                 <span>
                   {isAr
-                    ? 'الدخول السريع عبر حساب Google'
-                    : 'Sign In Instantly with Google'}
+                    ? 'الدخول السريع عبر بريد Google (موثّق فوراً)'
+                    : 'Sign In Instantly with Google Email'}
                 </span>
               </button>
 
@@ -3284,8 +3126,8 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                       : 'Please wait...'
                     : authMode === 'register'
                     ? isAr
-                      ? 'إنشاء الحساب والدخول مباشرة'
-                      : 'Create Account & Sign In'
+                      ? 'إنشاء الحساب وإرسال رابط التفعيل'
+                      : 'Create Account & Send Verification'
                     : isAr
                     ? 'دخول بالبريد الإلكتروني'
                     : 'Sign In with Email'}
@@ -3354,8 +3196,49 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         </div>
       )}
 
-      {/* STEP 2: SIGNED-IN USER LOBBY (Email verification gate bypassed) */}
-      {user && !sessionId && (
+      {/* STEP 2: VERIFICATION GATE */}
+      {user && !user.emailVerified && (
+        <div className="rounded-2xl bg-[#FFFDF9] border-2 border-[#C88A14]/60 p-6 max-w-xl mx-auto text-center space-y-4 shadow-xs">
+          <div className="w-12 h-12 mx-auto rounded-2xl bg-[#F6E9C8] text-[#9E650C] flex items-center justify-center">
+            <Mail className="w-6 h-6" />
+          </div>
+          <h2 className="text-lg font-extrabold text-[#261C14]">
+            {isAr ? 'تأكيد البريد الإلكتروني' : 'Verify Your Email'}
+          </h2>
+          <p className="text-xs sm:text-sm text-[#5C4B3B] leading-relaxed">
+            {isAr
+              ? `أُرسل رابط التفعيل إلى (${user.email}). افتحه ثم اضغط «تحقق الآن».`
+              : `Verification link sent to (${user.email}). Click it, then tap "Verify Now".`}
+          </p>
+          {verificationMsg && (
+            <div className="rounded-xl bg-[#FBF3DF] border border-[#C88A14] p-2.5 text-xs font-semibold text-[#261C14]">
+              {verificationMsg}
+            </div>
+          )}
+          <div className="flex flex-wrap items-center justify-center gap-2.5 pt-2">
+            <button
+              type="button"
+              disabled={authLoading}
+              onClick={handleRefreshVerificationStatus}
+              className="mustard-gradient-btn text-[#FFFDF9] px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 cursor-pointer"
+            >
+              <RefreshCw className={`w-4 h-4 ${authLoading ? 'animate-spin' : ''}`} />
+              <span>{isAr ? 'تحقق من التفعيل الآن' : 'Verify Status'}</span>
+            </button>
+            <button
+              type="button"
+              disabled={authLoading}
+              onClick={handleResendVerification}
+              className="px-4 py-2.5 rounded-xl bg-[#F7F3EB] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-xs font-bold text-[#2D2218] cursor-pointer"
+            >
+              {isAr ? 'إعادة إرسال الرابط' : 'Resend Link'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* STEP 3: VERIFIED USER LOBBY */}
+      {user && user.emailVerified && !sessionId && (
         <div className="space-y-4">
           {/* Top Soft Green Guidance Banner */}
           <div className="rounded-xl bg-[#ECFDF3] border border-[#BBF7D0] px-3.5 py-2 text-xs sm:text-sm font-bold text-[#15803D] leading-snug">
@@ -3363,17 +3246,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
               ? 'شارك رابط دعوتك مع صديقك، وعند موافقته يمكنك بدء مكالمة السرد الثنائي.'
               : 'Share your invite link with a friend; once approved, start your Duo voice call.'}
           </div>
-
-          {lobbyBusy && (
-            <div className="rounded-xl bg-[#ECFDF3] border-2 border-[#16A34A]/50 p-3 text-xs sm:text-sm text-[#14532D] flex items-center gap-2.5 shadow-2xs">
-              <RefreshCw className="w-4 h-4 text-[#15803D] animate-spin shrink-0" />
-              <p className="font-extrabold">
-                {isAr
-                  ? 'جاري تجهيز الاتصال الصوتي المشفّر وبدء جلسة السرد الثنائي...'
-                  : 'Preparing encrypted audio connection and starting Duo session...'}
-              </p>
-            </div>
-          )}
 
           {lobbyError && (
             <div className="rounded-xl bg-[#FBF3DF] border border-[#C88A14] p-3 text-xs sm:text-sm text-[#261C14] flex items-start gap-2.5">
@@ -3909,7 +3781,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       )}
 
       {/* STEP 4: ACTIVE CALL VIEW */}
-      {user && sessionId && (
+      {user && user.emailVerified && sessionId && (
         <div className="space-y-3">
           {/* Outgoing Ringing Overlay Modal */}
           {peerConnState === 'ringing' && outgoingCallTargetName && (
@@ -4040,37 +3912,26 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
               </button>
             )}
             <div className="flex flex-wrap items-center gap-2 pt-1">
-              {isMicUnavailable ? (
-                <button
-                  type="button"
-                  onClick={() => void recoverLocalMicrophoneTrack(true)}
-                  className="px-3.5 py-2 rounded-2xl bg-[#FBF3DF] hover:bg-[#F3E2BA] border border-[#C88A14] text-xs sm:text-sm font-extrabold text-[#9E650C] flex items-center gap-1.5 cursor-pointer transition-colors"
-                >
-                  <MicOff className="w-4 h-4 shrink-0" />
-                  <span>{isAr ? 'تفعيل الميكروفون' : 'Enable Mic'}</span>
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleToggleMic}
-                  className={`px-3.5 py-2 rounded-2xl border text-xs sm:text-sm font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${
-                    isMicMuted
-                      ? 'bg-[#FEE2E2] border-[#FECACA] text-[#B93829]'
-                      : 'bg-[#FAF7F0] hover:bg-[#EFE9DC] border-[#DDD2BE] text-[#261C14]'
-                  }`}
-                >
-                  {isMicMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                  <span>{isMicMuted ? (isAr ? 'صامت' : 'Muted') : isAr ? 'كتم' : 'Mute'}</span>
-                  {!isMicMuted && (
-                    <span className="w-6 h-1.5 rounded-full bg-[#DDD2BE] overflow-hidden inline-block ms-0.5">
-                      <span
-                        className="block h-full bg-[#15803D] transition-all duration-75"
-                        style={{ width: `${micLevel}%` }}
-                      />
-                    </span>
-                  )}
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={handleToggleMic}
+                className={`px-3.5 py-2 rounded-2xl border text-xs sm:text-sm font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${
+                  isMicMuted
+                    ? 'bg-[#FEE2E2] border-[#FECACA] text-[#B93829]'
+                    : 'bg-[#FAF7F0] hover:bg-[#EFE9DC] border-[#DDD2BE] text-[#261C14]'
+                }`}
+              >
+                {isMicMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                <span>{isMicMuted ? (isAr ? 'صامت' : 'Muted') : isAr ? 'كتم' : 'Mute'}</span>
+                {!isMicMuted && (
+                  <span className="w-6 h-1.5 rounded-full bg-[#DDD2BE] overflow-hidden inline-block ms-0.5">
+                    <span
+                      className="block h-full bg-[#15803D] transition-all duration-75"
+                      style={{ width: `${micLevel}%` }}
+                    />
+                  </span>
+                )}
+              </button>
 
               <button
                 type="button"
