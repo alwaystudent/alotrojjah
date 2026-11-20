@@ -120,6 +120,7 @@ service cloud.firestore {
           'hideVersesForReciter', 'hideVersesForListener',
           'hostRole', 'guestRole',
           'activeAyah', 'reciterSide', 'mistakesCount', 'markedErrors',
+          'boardHintText', 'boardHintKind', 'boardHintSenderName', 'boardHintSeq', 'iceEpoch',
           'endedByUid', 'sessionEvaluation', 'callDurationSeconds', 'accuracyPct',
           'surahNumber', 'surahEnd', 'ayahFrom', 'ayahTo', 'pageFrom', 'pageTo',
           'offerType', 'offerSdp', 'answerType', 'answerSdp',
@@ -148,6 +149,11 @@ service cloud.firestore {
           && data.markedErrors.size() <= 80
           && (data.markedErrors.size() == 0 || (data.markedErrors[0] is string && data.markedErrors[0].size() >= 1 && data.markedErrors[0].size() <= 80))
         ))
+        && (!('boardHintText' in data) || data.boardHintText == null || (data.boardHintText is string && data.boardHintText.size() <= 280))
+        && (!('boardHintKind' in data) || data.boardHintKind == null || data.boardHintKind in ['opening_word', 'tajweed', 'mutashabih', 'note'])
+        && (!('boardHintSenderName' in data) || data.boardHintSenderName == null || (data.boardHintSenderName is string && data.boardHintSenderName.size() <= 80))
+        && (!('boardHintSeq' in data) || (data.boardHintSeq is number && data.boardHintSeq >= 0 && data.boardHintSeq <= 10000))
+        && (!('iceEpoch' in data) || (data.iceEpoch is number && data.iceEpoch >= 0 && data.iceEpoch <= 100))
         && (!('endedByUid' in data) || data.endedByUid == null || isValidId(data.endedByUid))
         && (!('sessionEvaluation' in data) || data.sessionEvaluation == null || data.sessionEvaluation in ['excellent', 'very_good', 'good_practice', 'needs_review'])
         && (!('callDurationSeconds' in data) || data.callDurationSeconds == null || (data.callDurationSeconds is number && data.callDurationSeconds >= 0 && data.callDurationSeconds <= 86400))
@@ -406,13 +412,15 @@ service cloud.firestore {
             ])
           )
           ||
-          // Action 4: Active call participants sync bounded recitation metadata, marked words & live curriculum (NO RTCDataChannel)
+          // Action 4: Active call participants sync bounded recitation metadata, visual board hints, ICE restart SDP & live curriculum (NO RTCDataChannel)
           (
             existing().status == 'active'
             && incoming().status == 'active'
             && (existing().hostUid == request.auth.uid || existing().guestUid == request.auth.uid)
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'activeAyah', 'reciterSide', 'mistakesCount', 'markedErrors',
+              'boardHintText', 'boardHintKind', 'boardHintSenderName', 'boardHintSeq',
+              'iceEpoch', 'offerType', 'offerSdp', 'answerType', 'answerSdp',
               'hideVersesForReciter', 'hideVersesForListener',
               'hostRole', 'guestRole',
               'riwayah', 'curriculumMode', 'surahNumber', 'surahEnd', 'ayahFrom', 'ayahTo', 'pageFrom', 'pageTo',

@@ -250,6 +250,24 @@
         "markedErrors": {
           "type": "array"
         },
+        "boardHintText": {
+          "type": "string",
+          "maxLength": 280
+        },
+        "boardHintKind": {
+          "type": "string",
+          "enum": ["opening_word", "tajweed", "mutashabih", "note"]
+        },
+        "boardHintSenderName": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "boardHintSeq": {
+          "type": "number"
+        },
+        "iceEpoch": {
+          "type": "number"
+        },
         "endedByUid": {
           "type": "string",
           "maxLength": 128
