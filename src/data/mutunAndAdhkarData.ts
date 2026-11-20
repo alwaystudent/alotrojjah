@@ -1,6 +1,7 @@
 import { Language } from './quranData';
 
-export type MutunCategory = 'tajweed' | 'hadith' | 'aqeedah' | 'usool' | 'books';
+export type LibraryMainCategory = 'books' | 'mutun' | 'adhkar' | 'tafasir';
+export type MutunCategory = 'tajweed' | 'hadith' | 'aqeedah' | 'usool' | 'tafasir' | 'books';
 export type AdhkarCategory = 'morning' | 'evening' | 'after_prayer' | 'sleep' | 'quranic_duas';
 
 export interface MatnBayt {
@@ -20,6 +21,7 @@ export interface MatnChapter {
 
 export interface MatnItem {
   id: string;
+  libraryType?: 'books' | 'mutun' | 'tafasir';
   category: MutunCategory;
   titleAr: string;
   titleEn: string;
@@ -49,12 +51,50 @@ export interface DhikrItem {
   isCustom?: boolean;
 }
 
+export const LIBRARY_MAIN_CATEGORIES: {
+  id: LibraryMainCategory;
+  labelAr: string;
+  labelEn: string;
+  descAr: string;
+  descEn: string;
+}[] = [
+  {
+    id: 'books',
+    labelAr: 'كتب',
+    labelEn: 'Books',
+    descAr: 'الكتب والمراجع والروابط',
+    descEn: 'Books & References',
+  },
+  {
+    id: 'mutun',
+    labelAr: 'متون',
+    labelEn: 'Mutun',
+    descAr: 'المنظومات والمتون العلمية',
+    descEn: 'Classical Texts & Poems',
+  },
+  {
+    id: 'adhkar',
+    labelAr: 'أذكار',
+    labelEn: 'Adhkar',
+    descAr: 'الأذكار والأدعية اليومية',
+    descEn: 'Daily Adhkar & Duas',
+  },
+  {
+    id: 'tafasir',
+    labelAr: 'تفاسير',
+    labelEn: 'Tafasir',
+    descAr: 'التفاسير وعلوم القرآن',
+    descEn: 'Quranic Exegesis',
+  },
+];
+
 export const MUTUN_CATEGORIES: { id: MutunCategory; labelAr: string; labelEn: string }[] = [
   { id: 'tajweed', labelAr: 'التجويد والقراءات', labelEn: 'Tajweed' },
   { id: 'hadith', labelAr: 'الحديث والمصطلح', labelEn: 'Hadith' },
   { id: 'aqeedah', labelAr: 'العقيدة والتوحيد', labelEn: 'Creed' },
   { id: 'usool', labelAr: 'أصول العلم', labelEn: 'Foundations' },
-  { id: 'books', labelAr: 'الكتب والمراجع', labelEn: 'External Books' },
+  { id: 'tafasir', labelAr: 'التفاسير', labelEn: 'Tafasir' },
+  { id: 'books', labelAr: 'الكتب والمراجع', labelEn: 'Books & References' },
 ];
 
 export const ADHKAR_CATEGORIES: { id: AdhkarCategory; labelAr: string; labelEn: string }[] = [
@@ -382,6 +422,98 @@ export const INITIAL_MUTUN_LIST: MatnItem[] = [
       },
     ],
   },
+  {
+    id: 'tafsir-qisar-suwar',
+    libraryType: 'tafasir',
+    category: 'tafasir',
+    titleAr: 'التفسير الميسّر — مختارات من قصار السور',
+    titleEn: 'Concise Tafsir — Selected Short Surahs',
+    authorAr: 'نخبة من علماء التفسير',
+    authorEn: 'Selected Tafsir Scholars',
+    descriptionAr: 'تفسير موجز واضح المعاني لسورة الفاتحة والإخلاص والمعوذتين لترسيخ التدبر أثناء الحفظ.',
+    descriptionEn: 'Clear concise meanings of Al-Fatihah, Al-Ikhlas, and Al-Mu’awwidhatain to support contemplative memorization.',
+    chapters: [
+      {
+        id: 'taf-fatihah',
+        titleAr: 'تفسير سورة الفاتحة',
+        titleEn: 'Tafsir of Surah Al-Fatihah',
+        noteAr: 'أمّ الكتاب وأعظم سورة في القرآن الكريم.',
+        noteEn: 'The Opening of the Quran and its greatest chapter.',
+        items: [
+          {
+            id: 'tf1',
+            firstHalf: '﴿الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ﴾: الثناء على الله بصفاته التي كلّها أوصاف كمال، وبنعمه الظاهرة والباطنة.',
+          },
+          {
+            id: 'tf2',
+            firstHalf: '﴿إِيَّاكَ نَعْبُدُ وَإِيَّاكَ نَسْتَعِينُ﴾: نخصّك وحدك بالعبادة ونستعين بك وحدك في جميع أمورنا.',
+          },
+          {
+            id: 'tf3',
+            firstHalf: '﴿اهْدِنَا الصِّرَاطَ الْمُسْتَقِيمَ﴾: دلّنا وأرشدنا ووفّقنا إلى الطريق الواضح الموصل إلى رضاك وجنتك.',
+          },
+        ],
+      },
+      {
+        id: 'taf-ikhlas',
+        titleAr: 'تفسير سورة الإخلاص والمعوذتين',
+        titleEn: 'Tafsir of Al-Ikhlas & Al-Mu’awwidhatain',
+        items: [
+          {
+            id: 'tf4',
+            firstHalf: '﴿قُلْ هُوَ اللَّهُ أَحَدٌ * اللَّهُ الصَّمَدُ﴾: المتفرّد بالكمال، المقصود في قضاء الحوائج، المنزّه عن الولد والشريك والكفء.',
+          },
+          {
+            id: 'tf5',
+            firstHalf: '﴿قُلْ أَعُوذُ بِرَبِّ الْفَلَقِ﴾ و﴿قُلْ أَعُوذُ بِرَبِّ النَّاسِ﴾: الاعتصام بالله والالتجاء إليه من شرور المخلوقات ووساوس الشيطان.',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'tibyan-nawawi-book',
+    libraryType: 'books',
+    category: 'books',
+    titleAr: 'التبيان في آداب حملة القرآن (مختصر)',
+    titleEn: 'Al-Tibyan on Quran Etiquettes (Digest)',
+    authorAr: 'الإمام يحيى بن شرف النووي',
+    authorEn: 'Imam Yahya ibn Sharaf al-Nawawi',
+    descriptionAr: 'كتاب منهجي نفيس في آداب القارئ والمعلم والمتعلم ومجالس الإقراء والمراجعة.',
+    descriptionEn: 'Classic manual on the manners of teachers, students, and daily Quran recitation circles.',
+    chapters: [
+      {
+        id: 'tib-ch1',
+        titleAr: 'الباب الأول: في فضل تلاوة القرآن وحملته',
+        titleEn: 'Chapter 1: Virtues of Reciting & Carrying the Quran',
+        items: [
+          {
+            id: 'tb1',
+            firstHalf: 'قال رسول الله ﷺ: «خَيْرُكُمْ مَنْ تَعَلَّمَ الْقُرْآنَ وَعَلَّمَهُ». رواه البخاري.',
+          },
+          {
+            id: 'tb2',
+            firstHalf: 'ينبغي للقارئ أن يطهّر قلبه من الشواغل، ويستحضر أنه يناجي ربه عند التلاوة.',
+          },
+        ],
+      },
+      {
+        id: 'tib-ch2',
+        titleAr: 'الباب الثاني: في تعاهد المحفوظ وآداب التسميع',
+        titleEn: 'Chapter 2: Maintaining Memorization & Recitation Circles',
+        items: [
+          {
+            id: 'tb3',
+            firstHalf: 'تأكّد على الحافظ ملازمة المراجعة اليومية وعدم الغفلة عن المحفوظ لئلا يتفلت.',
+          },
+          {
+            id: 'tb4',
+            firstHalf: 'يُستحب الترفّق بالمتعلم وتصحيح الخطأ بلطف وأناة وتشجيعه على التثبيت.',
+          },
+        ],
+      },
+    ],
+  },
 ];
 
 export const INITIAL_ADHKAR_LIST: DhikrItem[] = [
@@ -579,6 +711,20 @@ export const INITIAL_ADHKAR_LIST: DhikrItem[] = [
     sourceEn: 'Quran 2:201',
   },
 ];
+
+export function resolveMatnLibraryGroup(item: MatnItem): 'books' | 'mutun' | 'tafasir' {
+  if (item.libraryType === 'books' || item.libraryType === 'mutun' || item.libraryType === 'tafasir') {
+    return item.libraryType;
+  }
+  if (item.category === 'tafasir') return 'tafasir';
+  if (item.category === 'books' || Boolean(item.externalUrl)) return 'books';
+  return 'mutun';
+}
+
+export function getLibraryMainCategoryLabel(cat: LibraryMainCategory, lang: Language): string {
+  const found = LIBRARY_MAIN_CATEGORIES.find((c) => c.id === cat);
+  return found ? (lang === 'ar' ? found.labelAr : found.labelEn) : cat;
+}
 
 export function getMutunCategoryLabel(cat: MutunCategory, lang: Language): string {
   const found = MUTUN_CATEGORIES.find((c) => c.id === cat);

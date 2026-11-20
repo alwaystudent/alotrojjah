@@ -5,7 +5,6 @@ import {
   signInWithPopup,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
-  sendEmailVerification,
   updateProfile,
   signOut,
 } from 'firebase/auth';
@@ -68,7 +67,7 @@ import {
   Lightbulb,
   Eraser,
 } from 'lucide-react';
-import { auth, db, googleProvider, OperationType, handleFirestoreError } from '../firebase';
+import { auth, db, googleProvider, OperationType, logFirestoreListenerError } from '../firebase';
 import {
   Language,
   QuranRiwayah,
@@ -454,7 +453,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [providerHelpOpen, setProviderHelpOpen] = useState(false);
-  const [verificationMsg, setVerificationMsg] = useState<string | null>(null);
 
   // Notification permission for background call ringing
   const [notifPerm, setNotifPerm] = useState<NotificationPermission | 'unsupported'>(() =>
@@ -585,7 +583,10 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   const appliedSinkIdRef = useRef<string>('');
   const audioCtxRef = useRef<AudioContext | null>(null);
   const meterStreamRef = useRef<MediaStream | null>(null);
-  const meterRafRef = useRef<number | null>(null);
+  const meterTimerRef = useRef<number | null>(null);
+  const isMountedRef = useRef<boolean>(true);
+  const prevSyncedHideReciterRef = useRef<boolean | null>(null);
+  const prevSyncedHideListenerRef = useRef<boolean | null>(null);
   const iceRestartTimerRef = useRef<number | null>(null);
   const iceEpochRef = useRef<number>(0);
   const appliedIceOfferEpochRef = useRef<number>(0);
@@ -760,7 +761,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   const attemptHostIceRestart = async (targetPc?: RTCPeerConnection | null) => {
     const pc = targetPc ?? pcRef.current;
     const activeCallId = sessionIdRef.current;
-    if (!pc || !activeCallId || !auth.currentUser?.emailVerified) return;
+    if (!pc || !activeCallId || !auth.currentUser) return;
     if (myRoleRef.current !== 'host') return;
     if (sessionStatusRef.current !== 'active') return;
     if (pc.connectionState === 'closed') return;
@@ -941,7 +942,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     const unsub = onAuthStateChanged(auth, async (nextUser) => {
       setUser(nextUser);
       setAuthReady(true);
-      if (nextUser && nextUser.emailVerified) {
+      if (nextUser) {
         try {
           await syncVerifiedUserProfileAndDirectory(nextUser);
           const inv = await getOrCreateMyFriendInvite(nextUser);
@@ -958,7 +959,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
 
   // Live online presence heartbeat (every 45s while tab visible)
   useEffect(() => {
-    if (!user || !user.emailVerified) return;
+    if (!user) return;
     const beat = () => {
       if (document.visibilityState === 'visible') {
         updateUserPresenceHeartbeat(user).catch(() => {});
@@ -972,19 +973,39 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     };
   }, [user, authSyncVersion]);
 
+  const friendsUidKey = useMemo(
+    () =>
+      friends
+        .map((f) => f.friendUid)
+        .sort()
+        .join(','),
+    [friends]
+  );
+
   // Subscribe to approved friends' online presence
   useEffect(() => {
-    if (!user || !user.emailVerified || friends.length === 0) {
+    if (!user?.uid || !friendsUidKey) {
       setFriendPresenceMap({});
       return;
     }
 
-    const unsubs = friends.map((fr) =>
-      subscribeFriendPresence(fr.friendUid, (uid, online, lastSeen) => {
-        setFriendPresenceMap((prev) => ({
-          ...prev,
-          [uid]: { online, lastSeen },
-        }));
+    const uids = friendsUidKey.split(',').filter(Boolean);
+    const unsubs = uids.map((fUid) =>
+      subscribeFriendPresence(fUid, (uid, online, lastSeen) => {
+        setFriendPresenceMap((prev) => {
+          const prevEntry = prev[uid];
+          if (
+            prevEntry &&
+            prevEntry.online === online &&
+            Math.abs((prevEntry.lastSeen ?? 0) - (lastSeen ?? 0)) < 15_000
+          ) {
+            return prev;
+          }
+          return {
+            ...prev,
+            [uid]: { online, lastSeen },
+          };
+        });
       })
     );
 
@@ -1010,7 +1031,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       unsubs.forEach((u) => u());
       window.clearInterval(staleTicker);
     };
-  }, [user, friends]);
+  }, [user?.uid, friendsUidKey]);
 
   // Sync invite input if parent passes a token while already mounted in Duo
   useEffect(() => {
@@ -1021,7 +1042,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
 
   // Real-time Approved Friends List + Consent-Gated Friend Requests Listeners
   useEffect(() => {
-    if (!user || !user.emailVerified) {
+    if (!user) {
       setFriends([]);
       setIncomingRequests([]);
       setOutgoingPendingRequests([]);
@@ -1043,7 +1064,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         setFriends(list);
       },
       (err) => {
-        handleFirestoreError(err, OperationType.LIST, friendsPath);
+        logFirestoreListenerError(err, OperationType.LIST, friendsPath);
       }
     );
 
@@ -1058,7 +1079,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         setIncomingRequests(snap.docs.map((d) => d.data() as FriendRequestDoc));
       },
       (err) => {
-        handleFirestoreError(err, OperationType.LIST, 'friendRequests');
+        logFirestoreListenerError(err, OperationType.LIST, 'friendRequests');
       }
     );
 
@@ -1073,7 +1094,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         setOutgoingPendingRequests(allOut.filter((r) => r.status === 'pending'));
       },
       (err) => {
-        handleFirestoreError(err, OperationType.LIST, 'friendRequests');
+        logFirestoreListenerError(err, OperationType.LIST, 'friendRequests');
       }
     );
 
@@ -1082,9 +1103,9 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       unsubIncomingReq();
       unsubOutgoingReq();
     };
-  }, [user, authSyncVersion]);
+  }, [user?.uid, authSyncVersion]);
 
-  const teardownWebRtcResources = () => {
+  const teardownWebRtcResources = (skipStateReset = false) => {
     callRingtone.stop();
     if (unsubSessionRef.current) {
       try {
@@ -1106,9 +1127,9 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       }
       wakeLockRef.current = null;
     }
-    if (meterRafRef.current !== null) {
-      cancelAnimationFrame(meterRafRef.current);
-      meterRafRef.current = null;
+    if (meterTimerRef.current !== null) {
+      window.clearInterval(meterTimerRef.current);
+      meterTimerRef.current = null;
     }
     if (meterStreamRef.current) {
       meterStreamRef.current.getTracks().forEach((t) => {
@@ -1202,27 +1223,33 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     appliedSinkIdRef.current = '';
     speakerModeRef.current = 'speaker';
     isMicMutedRef.current = false;
-    setSpeakerMode('speaker');
-    setNeedsAudioUnlock(false);
-    setMicLevel(0);
-    setIsMicMuted(false);
-    setIsMicUnavailable(false);
-    setOutgoingCallTargetName(null);
-    setBoardHintText('');
-    setBoardHintKind('note');
-    setBoardHintSenderName('');
-    setBoardHintSeq(0);
-    setBoardInputText('');
-    setIsBoardPanelOpen(false);
+    prevSyncedHideReciterRef.current = null;
+    prevSyncedHideListenerRef.current = null;
+    if (!skipStateReset && isMountedRef.current) {
+      setSpeakerMode('speaker');
+      setNeedsAudioUnlock(false);
+      setMicLevel(0);
+      setIsMicMuted(false);
+      setIsMicUnavailable(false);
+      setOutgoingCallTargetName(null);
+      setBoardHintText('');
+      setBoardHintKind('note');
+      setBoardHintSenderName('');
+      setBoardHintSeq(0);
+      setBoardInputText('');
+      setIsBoardPanelOpen(false);
+    }
   };
 
   useEffect(() => {
+    isMountedRef.current = true;
     const unregister = memoryManager.register(() => {
-      teardownWebRtcResources();
+      teardownWebRtcResources(true);
     });
     return () => {
+      isMountedRef.current = false;
       unregister();
-      teardownWebRtcResources();
+      teardownWebRtcResources(true);
     };
   }, []);
 
@@ -1302,7 +1329,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     callRingtone.unlockAudio();
     setAuthError(null);
     setProviderHelpOpen(false);
-    setVerificationMsg(null);
     const trimmedEmail = emailInput.trim();
     if (!trimmedEmail || !passwordInput) {
       setAuthError(
@@ -1319,12 +1345,13 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         if (nameInput.trim()) {
           await updateProfile(cred.user, { displayName: nameInput.trim().slice(0, 80) });
         }
-        await sendEmailVerification(cred.user);
-        setVerificationMsg(
-          isAr
-            ? 'تم إنشاء الحساب وإرسال رابط التفعيل إلى بريدك الإلكتروني.'
-            : 'Account created and verification email sent.'
-        );
+        await cred.user.getIdToken(true).catch(() => {});
+        setUser(cred.user);
+        setAuthSyncVersion((v) => v + 1);
+        window.dispatchEvent(new Event('alutrujjah:auth-refreshed'));
+        await syncVerifiedUserProfileAndDirectory(cred.user).catch(() => {});
+        const inv = await getOrCreateMyFriendInvite(cred.user).catch(() => null);
+        if (inv) setMyInvite(inv);
       } else {
         await signInWithEmailAndPassword(auth, trimmedEmail, passwordInput);
       }
@@ -1332,54 +1359,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       const mapped = mapFirebaseAuthError(err, lang);
       setAuthError(mapped.message);
       if (mapped.isProviderDisabled) setProviderHelpOpen(true);
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  const handleResendVerification = async () => {
-    if (!auth.currentUser) return;
-    setAuthLoading(true);
-    setVerificationMsg(null);
-    try {
-      await sendEmailVerification(auth.currentUser);
-      setVerificationMsg(
-        isAr
-          ? 'تم إعادة إرسال رابط التفعيل إلى بريدك الإلكتروني بنجاح.'
-          : 'Verification link resent to your email.'
-      );
-    } catch (err) {
-      const mapped = mapFirebaseAuthError(err, lang);
-      setVerificationMsg(mapped.message);
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  const handleRefreshVerificationStatus = async () => {
-    if (!auth.currentUser) return;
-    setAuthLoading(true);
-    try {
-      await auth.currentUser.reload();
-      await auth.currentUser.getIdToken(true);
-      const refreshed = auth.currentUser;
-      setUser(refreshed);
-      setAuthSyncVersion((v) => v + 1);
-      window.dispatchEvent(new Event('alutrujjah:auth-refreshed'));
-      if (refreshed && refreshed.emailVerified) {
-        await syncVerifiedUserProfileAndDirectory(refreshed);
-        const inv = await getOrCreateMyFriendInvite(refreshed);
-        setMyInvite(inv);
-      } else {
-        setVerificationMsg(
-          isAr
-            ? 'لم يتم تأكيد البريد الإلكتروني بعد. افتح رسالة التفعيل في بريدك ثم أعد الضغط هنا.'
-            : 'Email is not verified yet. Please click the verification link in your inbox.'
-        );
-      }
-    } catch (err) {
-      const mapped = mapFirebaseAuthError(err, lang);
-      setVerificationMsg(mapped.message);
     } finally {
       setAuthLoading(false);
     }
@@ -1445,7 +1424,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   };
 
   const handleRegenerateInvite = async () => {
-    if (!user || !user.emailVerified) return;
+    if (!user) return;
     setInviteBusy(true);
     try {
       const fresh = await regenerateMyFriendInvite(user);
@@ -1465,7 +1444,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
 
   const handleLookupPastedInvite = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !user.emailVerified || !pasteInviteInput.trim()) return;
+    if (!user || !pasteInviteInput.trim()) return;
     setInviteLookupBusy(true);
     setFriendFeedback(null);
     setPreviewedInvite(null);
@@ -1510,7 +1489,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   };
 
   const handleConfirmSendFriendRequest = async () => {
-    if (!user || !user.emailVerified || !previewedInvite) return;
+    if (!user || !previewedInvite) return;
     setInviteBusy(true);
     setFriendFeedback(null);
     try {
@@ -1553,7 +1532,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   };
 
   const handleApproveRequest = async (req: FriendRequestDoc) => {
-    if (!user || !user.emailVerified) return;
+    if (!user) return;
     setInviteBusy(true);
     try {
       await approveIncomingFriendRequest(user, req);
@@ -1588,13 +1567,17 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   };
 
   const handleRemoveFriend = async (friendUid: string) => {
-    if (!user || !user.emailVerified) return;
+    if (!user) return;
     const friendPath = `users/${user.uid}/friends/${friendUid}`;
     try {
       await deleteDoc(doc(db, 'users', user.uid, 'friends', friendUid));
       setConfirmRemoveFriendUid(null);
     } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, friendPath);
+      logFirestoreListenerError(err, OperationType.DELETE, friendPath);
+      setFriendFeedback({
+        type: 'err',
+        msg: isAr ? 'تعذر حذف الصديق، حاول مجدداً.' : 'Could not remove friend. Try again.',
+      });
     }
   };
 
@@ -1638,16 +1621,22 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         source.connect(analyser);
         const data = new Uint8Array(analyser.frequencyBinCount);
 
-        const tick = () => {
-          if (!localStreamRef.current) return;
+        let lastSampledLevel = -1;
+        if (meterTimerRef.current !== null) {
+          window.clearInterval(meterTimerRef.current);
+        }
+        meterTimerRef.current = window.setInterval(() => {
+          if (!localStreamRef.current || !isMountedRef.current) return;
+          if (document.visibilityState !== 'visible') return;
           analyser.getByteFrequencyData(data);
           let sum = 0;
           for (let i = 0; i < data.length; i++) sum += data[i];
           const avg = Math.min(100, Math.round((sum / data.length) * 1.4));
-          setMicLevel(avg);
-          meterRafRef.current = requestAnimationFrame(tick);
-        };
-        meterRafRef.current = requestAnimationFrame(tick);
+          if (Math.abs(avg - lastSampledLevel) >= 3) {
+            lastSampledLevel = avg;
+            setMicLevel(avg);
+          }
+        }, 140);
       }
     } catch {
       // Audio meter optional
@@ -1698,7 +1687,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     }>
   ) => {
     const activeCallId = sessionIdRef.current;
-    if (!activeCallId || !auth.currentUser?.emailVerified) return;
+    if (!activeCallId || !auth.currentUser) return;
     if (sessionStatusRef.current !== 'active') return;
     const sessionPath = `duoSessions/${activeCallId}`;
     try {
@@ -1707,7 +1696,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         updatedAt: serverTimestamp(),
       });
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, sessionPath);
+      logFirestoreListenerError(err, OperationType.UPDATE, sessionPath);
     }
   };
 
@@ -1745,11 +1734,17 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     }
     if (typeof data.hideVersesForReciter === 'boolean') {
       setHideVersesForReciter(data.hideVersesForReciter);
-      setLocalShowVersesOverride(false);
+      if (prevSyncedHideReciterRef.current !== data.hideVersesForReciter) {
+        prevSyncedHideReciterRef.current = data.hideVersesForReciter;
+        setLocalShowVersesOverride(false);
+      }
     }
     if (typeof data.hideVersesForListener === 'boolean') {
       setHideVersesForListener(data.hideVersesForListener);
-      setLocalShowVersesOverride(false);
+      if (prevSyncedHideListenerRef.current !== data.hideVersesForListener) {
+        prevSyncedHideListenerRef.current = data.hideVersesForListener;
+        setLocalShowVersesOverride(false);
+      }
     }
     if (data.riwayah === 'hafs' || data.riwayah === 'qalun' || data.riwayah === 'warsh') {
       setSelectedRiwayah(data.riwayah);
@@ -2098,7 +2093,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   // Start Direct Encrypted Friend Audio Call ONLY (Voice rooms completely disabled)
   const startDirectFriendCall = async (targetFriend: FriendContactItem) => {
     const currentUser = auth.currentUser ?? user;
-    if (!currentUser || !currentUser.emailVerified) return;
+    if (!currentUser) return;
     if (targetFriend.friendUid === currentUser.uid) {
       setLobbyError(
         isAr ? 'لا يمكنك الاتصال بنفسك.' : 'You cannot call yourself.'
@@ -2326,8 +2321,8 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
               ? `لم تعد صداقة «${targetFriend.friendName}» مفعّلة في السحابة؛ أعد إضافة الصديق عبر رابط الدعوة ثم حاول مجدداً.`
               : `"${targetFriend.friendName}" is not synced in your friends list yet. Please re-add and try again.`
             : isAr
-            ? 'تعذر بدء المكالمة بسبب صلاحيات الحساب. تأكد من تفعيل البريد الإلكتروني ثم أعد المحاولة.'
-            : 'Call blocked by account permissions. Ensure your email is verified and try again.'
+            ? 'تعذر بدء المكالمة بسبب صلاحيات الجلسة. حاول تحديث الصفحة أو إعادة تسجيل الدخول.'
+            : 'Call blocked by session permissions. Please refresh or sign in again.'
         );
       } else {
         setLobbyError(
@@ -2349,7 +2344,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     prefetchedCallData?: IncomingDuoCall | null
   ) => {
     const currentUser = auth.currentUser ?? user;
-    if (!currentUser || !currentUser.emailVerified) return;
+    if (!currentUser) return;
     callRingtone.stop();
     callRingtone.unlockAudio();
 
@@ -2567,8 +2562,8 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
               ? 'انتهت المكالمة الواردة أو ألغاها المتصل.'
               : 'Incoming call has ended or been cancelled.'
             : isAr
-            ? 'تعذر الرد على المكالمة بسبب صلاحيات الحساب. تأكد من تفعيل البريد وحاول مجدداً.'
-            : 'Could not answer call due to account permissions. Ensure your email is verified and try again.'
+            ? 'تعذر الرد على المكالمة بسبب صلاحيات الجلسة. حاول تحديث الصفحة أو إعادة تسجيل الدخول.'
+            : 'Could not answer call due to session permissions. Please refresh or sign in again.'
         );
       } else {
         console.error('Answer incoming call error:', sessionPath, err);
@@ -2594,7 +2589,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     const activeUser = auth.currentUser ?? user;
     if (
       activeUser &&
-      activeUser.emailVerified &&
       handledAutoCallRef.current !== pendingAcceptCallId
     ) {
       handledAutoCallRef.current = pendingAcceptCallId;
@@ -2637,7 +2631,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     setShowEvalModal(false);
     setShowCurriculumModal(false);
 
-    if (activeCallId && auth.currentUser?.emailVerified) {
+    if (activeCallId && auth.currentUser) {
       try {
         if (currentMeta?.status !== 'ended' && currentMeta?.status !== 'declined') {
           const endDocPatch: Record<string, unknown> = {
@@ -3175,12 +3169,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                 </div>
               )}
 
-              {verificationMsg && (
-                <div className="rounded-xl bg-[#4A6144]/10 border border-[#4A6144]/30 p-3 text-xs text-[#261C14] font-semibold">
-                  {verificationMsg}
-                </div>
-              )}
-
               <button
                 type="button"
                 disabled={authLoading}
@@ -3190,8 +3178,8 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                 <LogIn className="w-4 h-4" />
                 <span>
                   {isAr
-                    ? 'الدخول السريع عبر بريد Google (موثّق فوراً)'
-                    : 'Sign In Instantly with Google Email'}
+                    ? 'الدخول السريع عبر حساب Google'
+                    : 'Sign In Instantly with Google'}
                 </span>
               </button>
 
@@ -3296,8 +3284,8 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                       : 'Please wait...'
                     : authMode === 'register'
                     ? isAr
-                      ? 'إنشاء الحساب وإرسال رابط التفعيل'
-                      : 'Create Account & Send Verification'
+                      ? 'إنشاء الحساب والدخول مباشرة'
+                      : 'Create Account & Sign In'
                     : isAr
                     ? 'دخول بالبريد الإلكتروني'
                     : 'Sign In with Email'}
@@ -3366,49 +3354,8 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         </div>
       )}
 
-      {/* STEP 2: VERIFICATION GATE */}
-      {user && !user.emailVerified && (
-        <div className="rounded-2xl bg-[#FFFDF9] border-2 border-[#C88A14]/60 p-6 max-w-xl mx-auto text-center space-y-4 shadow-xs">
-          <div className="w-12 h-12 mx-auto rounded-2xl bg-[#F6E9C8] text-[#9E650C] flex items-center justify-center">
-            <Mail className="w-6 h-6" />
-          </div>
-          <h2 className="text-lg font-extrabold text-[#261C14]">
-            {isAr ? 'تأكيد البريد الإلكتروني' : 'Verify Your Email'}
-          </h2>
-          <p className="text-xs sm:text-sm text-[#5C4B3B] leading-relaxed">
-            {isAr
-              ? `أُرسل رابط التفعيل إلى (${user.email}). افتحه ثم اضغط «تحقق الآن».`
-              : `Verification link sent to (${user.email}). Click it, then tap "Verify Now".`}
-          </p>
-          {verificationMsg && (
-            <div className="rounded-xl bg-[#FBF3DF] border border-[#C88A14] p-2.5 text-xs font-semibold text-[#261C14]">
-              {verificationMsg}
-            </div>
-          )}
-          <div className="flex flex-wrap items-center justify-center gap-2.5 pt-2">
-            <button
-              type="button"
-              disabled={authLoading}
-              onClick={handleRefreshVerificationStatus}
-              className="mustard-gradient-btn text-[#FFFDF9] px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 cursor-pointer"
-            >
-              <RefreshCw className={`w-4 h-4 ${authLoading ? 'animate-spin' : ''}`} />
-              <span>{isAr ? 'تحقق من التفعيل الآن' : 'Verify Status'}</span>
-            </button>
-            <button
-              type="button"
-              disabled={authLoading}
-              onClick={handleResendVerification}
-              className="px-4 py-2.5 rounded-xl bg-[#F7F3EB] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-xs font-bold text-[#2D2218] cursor-pointer"
-            >
-              {isAr ? 'إعادة إرسال الرابط' : 'Resend Link'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* STEP 3: VERIFIED USER LOBBY */}
-      {user && user.emailVerified && !sessionId && (
+      {/* STEP 2: SIGNED-IN USER LOBBY (Email verification gate bypassed) */}
+      {user && !sessionId && (
         <div className="space-y-4">
           {/* Top Soft Green Guidance Banner */}
           <div className="rounded-xl bg-[#ECFDF3] border border-[#BBF7D0] px-3.5 py-2 text-xs sm:text-sm font-bold text-[#15803D] leading-snug">
@@ -3962,7 +3909,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       )}
 
       {/* STEP 4: ACTIVE CALL VIEW */}
-      {user && user.emailVerified && sessionId && (
+      {user && sessionId && (
         <div className="space-y-3">
           {/* Outgoing Ringing Overlay Modal */}
           {peerConnState === 'ringing' && outgoingCallTargetName && (

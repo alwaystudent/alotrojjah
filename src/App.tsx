@@ -62,7 +62,7 @@ import {
   updateDoc,
   where,
 } from 'firebase/firestore';
-import { auth, db, googleProvider, OperationType, handleFirestoreError } from './firebase';
+import { auth, db, googleProvider, OperationType, logFirestoreListenerError } from './firebase';
 import {
   Language,
   PlanType,
@@ -552,7 +552,7 @@ export default function App() {
     const unsubAuth = onAuthStateChanged(auth, async (nextUser) => {
       setAuthUser(nextUser);
       setAuthRefreshTick((n) => n + 1);
-      if (nextUser && nextUser.emailVerified) {
+      if (nextUser) {
         try {
           await syncVerifiedUserProfileAndDirectory(nextUser);
         } catch (err) {
@@ -565,7 +565,7 @@ export default function App() {
       const current = auth.currentUser;
       setAuthUser(current);
       setAuthRefreshTick((n) => n + 1);
-      if (current && current.emailVerified) {
+      if (current) {
         try {
           await syncVerifiedUserProfileAndDirectory(current);
         } catch (err) {
@@ -583,7 +583,7 @@ export default function App() {
 
   // Global listener for incoming pending friend requests & reliable one-time accepted outgoing sync
   useEffect(() => {
-    if (!authUser || !authUser.emailVerified) {
+    if (!authUser) {
       setPendingIncomingFriendReqs([]);
       return;
     }
@@ -666,7 +666,7 @@ export default function App() {
         void processAcceptedOutgoing();
       },
       (err) => {
-        handleFirestoreError(err, OperationType.LIST, `users/${authUser.uid}/friends`);
+        logFirestoreListenerError(err, OperationType.LIST, `users/${authUser.uid}/friends`);
       }
     );
 
@@ -688,7 +688,7 @@ export default function App() {
         setPendingIncomingFriendReqs(filtered);
       },
       (err) => {
-        handleFirestoreError(err, OperationType.LIST, 'friendRequests');
+        logFirestoreListenerError(err, OperationType.LIST, 'friendRequests');
       }
     );
 
@@ -704,7 +704,7 @@ export default function App() {
         void processAcceptedOutgoing();
       },
       (err) => {
-        handleFirestoreError(err, OperationType.LIST, 'friendRequests');
+        logFirestoreListenerError(err, OperationType.LIST, 'friendRequests');
       }
     );
 
@@ -713,7 +713,7 @@ export default function App() {
       unsubIncomingReqs();
       unsubOutgoingReqs();
     };
-  }, [authUser, authRefreshTick]);
+  }, [authUser?.uid, authRefreshTick]);
 
   // Automatically resolve shared invite link when signed in & verified -> show instant alert modal
   useEffect(() => {
@@ -723,7 +723,7 @@ export default function App() {
       setInviteSignInDeferred(false);
       return;
     }
-    if (!authUser || !authUser.emailVerified) {
+    if (!authUser) {
       setInviteModalDoc(null);
       return;
     }
@@ -774,7 +774,7 @@ export default function App() {
   }, [initialFriendInviteToken, authUser, lang]);
 
   const handleConfirmGlobalInvite = async () => {
-    if (!authUser || !authUser.emailVerified || !inviteModalDoc) return;
+    if (!authUser || !inviteModalDoc) return;
     setFriendAlertBusy(true);
     setInviteModalError(null);
     try {
@@ -812,7 +812,7 @@ export default function App() {
   };
 
   const handleApproveGlobalFriendRequest = async (req: FriendRequestDoc) => {
-    if (!authUser || !authUser.emailVerified) return;
+    if (!authUser) return;
     handledIncomingReqIdsRef.current.add(req.requestId);
     setPendingIncomingFriendReqs((prev) => prev.filter((item) => item.requestId !== req.requestId));
     setFriendAlertBusy(true);
@@ -867,7 +867,7 @@ export default function App() {
       dismissBackgroundCallNotification(targetSessionId);
       dispatchCallState({ type: 'DECLINE_CALL', sessionId: targetSessionId });
 
-      if (!auth.currentUser?.emailVerified) return;
+      if (!auth.currentUser) return;
       const callPath = `duoSessions/${targetSessionId}`;
       try {
         await updateDoc(doc(db, 'duoSessions', targetSessionId), {
@@ -907,7 +907,7 @@ export default function App() {
   }, [handleAcceptIncomingCall, handleDeclineIncomingCall]);
 
   useEffect(() => {
-    if (!authUser || !authUser.emailVerified) {
+    if (!authUser) {
       pendingAcceptCallIdRef.current = null;
       activeCallIdRef.current = null;
       setIncomingCall(null);
@@ -985,14 +985,14 @@ export default function App() {
         }
       },
       (err) => {
-        handleFirestoreError(err, OperationType.LIST, 'duoSessions');
+        logFirestoreListenerError(err, OperationType.LIST, 'duoSessions');
       }
     );
 
     return () => {
       unsubCalls();
     };
-  }, [authUser, authRefreshTick, lang, setIncomingCall]);
+  }, [authUser?.uid, authRefreshTick, lang, setIncomingCall]);
 
   // Listen to Service Worker Notification Click actions (Answer / Decline from background notification)
   useEffect(() => {
@@ -1025,8 +1025,13 @@ export default function App() {
   }, [plans]);
 
   const chimeAudioCtxRef = useRef<AudioContext | null>(null);
+  const chimeCloseTimerRef = useRef<number | null>(null);
 
   const stopChimeAudio = () => {
+    if (chimeCloseTimerRef.current !== null) {
+      window.clearTimeout(chimeCloseTimerRef.current);
+      chimeCloseTimerRef.current = null;
+    }
     if (chimeAudioCtxRef.current) {
       try {
         chimeAudioCtxRef.current.close();
@@ -1036,6 +1041,12 @@ export default function App() {
       chimeAudioCtxRef.current = null;
     }
   };
+
+  useEffect(() => {
+    return () => {
+      stopChimeAudio();
+    };
+  }, []);
 
   const playGentleChime = () => {
     // Never play reminder sound if muted, during active Sard / Smart Memorization, or live Duo voice call
@@ -1066,6 +1077,12 @@ export default function App() {
         osc.start(now + idx * 0.14);
         osc.stop(now + idx * 0.14 + 1.15);
       });
+
+      chimeCloseTimerRef.current = window.setTimeout(() => {
+        if (chimeAudioCtxRef.current === ctx) {
+          stopChimeAudio();
+        }
+      }, 1500);
     } catch {
       // AudioContext blocked or unsupported
     }
@@ -2758,33 +2775,6 @@ export default function App() {
                       className="w-full py-2 px-4 rounded-xl bg-[#EFE9DC] text-[#5C4B3B] text-xs font-bold cursor-pointer"
                     >
                       {lang === 'ar' ? 'إغلاق' : 'Dismiss'}
-                    </button>
-                  </div>
-                </>
-              ) : !authUser.emailVerified ? (
-                <>
-                  <p className="text-xs sm:text-sm text-[#261C14] leading-relaxed font-semibold">
-                    {lang === 'ar'
-                      ? 'فعّل بريدك الإلكتروني من شاشة السرد الثنائي أولاً لتظهر لك بيانات الصديق وتتم الموافقة.'
-                      : 'Verify your email in Duo Sard first to accept this friend invite.'}
-                  </p>
-                  <div className="flex items-center justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setInitialFriendInviteToken('')}
-                      className="px-3.5 py-2 rounded-xl bg-[#EFE9DC] text-[#5C4B3B] text-xs font-bold cursor-pointer"
-                    >
-                      {lang === 'ar' ? 'إلغاء' : 'Cancel'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setInviteSignInDeferred(true);
-                        navigateToSection('duo');
-                      }}
-                      className="px-4 py-2 rounded-xl bg-[#166534] text-[#FFFDF9] text-xs font-bold cursor-pointer"
-                    >
-                      {lang === 'ar' ? 'الانتقال للسرد الثنائي' : 'Go to Duo Sard'}
                     </button>
                   </div>
                 </>

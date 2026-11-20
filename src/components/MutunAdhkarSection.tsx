@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   BookOpen,
+  BookOpenCheck,
   Heart,
   Search,
   RotateCcw,
@@ -8,6 +9,7 @@ import {
   Check,
   Sun,
   Moon,
+  MoonStar,
   Sparkles,
   Plus,
   X,
@@ -24,18 +26,27 @@ import {
   ExternalLink,
   Eye,
   FileText,
+  Library,
+  LayoutGrid,
+  Feather,
+  ShieldCheck,
+  Compass,
 } from 'lucide-react';
 import { Language } from '@/src/data/quranData';
 import {
+  LibraryMainCategory,
   MutunCategory,
   AdhkarCategory,
   MatnItem,
   MatnChapter,
   DhikrItem,
+  LIBRARY_MAIN_CATEGORIES,
   MUTUN_CATEGORIES,
   ADHKAR_CATEGORIES,
   INITIAL_MUTUN_LIST,
   INITIAL_ADHKAR_LIST,
+  resolveMatnLibraryGroup,
+  getLibraryMainCategoryLabel,
   getMutunCategoryLabel,
   getAdhkarCategoryLabel,
 } from '@/src/data/mutunAndAdhkarData';
@@ -45,13 +56,67 @@ interface MutunAdhkarSectionProps {
 }
 
 type ReaderSurface = 'ivory' | 'sepia' | 'night';
+type LibraryFilter = 'all' | LibraryMainCategory;
+type AddItemMode = 'matn' | 'book' | 'tafsir' | 'dhikr';
 
 const STORAGE_MUTUN_LIBRARY = 'alutrujjah_mutun_library_v2';
+const STORAGE_LIBRARY_V3_SEEDED = 'alutrujjah_library_v3_seeded';
 const STORAGE_CUSTOM_MUTUN_LEGACY = 'alutrujjah_custom_mutun_v1';
 const STORAGE_CUSTOM_ADHKAR = 'alutrujjah_custom_adhkar_v1';
 const STORAGE_ADHKAR_COUNTS = 'alutrujjah_adhkar_counts_v1';
 const STORAGE_MUTUN_DONE = 'alutrujjah_mutun_done_v1';
 const STORAGE_READER_PREFS = 'alutrujjah_reader_prefs_v1';
+
+function getMainCategoryIcon(cat: LibraryFilter, className = 'w-4 h-4') {
+  switch (cat) {
+    case 'books':
+      return <Library className={className} />;
+    case 'mutun':
+      return <ScrollText className={className} />;
+    case 'adhkar':
+      return <Heart className={className} />;
+    case 'tafasir':
+      return <BookOpenCheck className={className} />;
+    default:
+      return <LayoutGrid className={className} />;
+  }
+}
+
+function getMutunSubCategoryIcon(cat: MutunCategory, className = 'w-3.5 h-3.5') {
+  switch (cat) {
+    case 'tajweed':
+      return <BookOpen className={className} />;
+    case 'hadith':
+      return <Feather className={className} />;
+    case 'aqeedah':
+      return <ShieldCheck className={className} />;
+    case 'usool':
+      return <Compass className={className} />;
+    case 'tafasir':
+      return <BookOpenCheck className={className} />;
+    case 'books':
+      return <Library className={className} />;
+    default:
+      return <ScrollText className={className} />;
+  }
+}
+
+function getAdhkarCategoryIcon(cat: AdhkarCategory, className = 'w-3.5 h-3.5') {
+  switch (cat) {
+    case 'morning':
+      return <Sun className={className} />;
+    case 'evening':
+      return <Moon className={className} />;
+    case 'after_prayer':
+      return <CheckCircle2 className={className} />;
+    case 'sleep':
+      return <MoonStar className={className} />;
+    case 'quranic_duas':
+      return <BookOpen className={className} />;
+    default:
+      return <Heart className={className} />;
+  }
+}
 
 function isSafeHttpUrl(rawUrl: string): boolean {
   try {
@@ -131,7 +196,7 @@ function parseTextToChapters(rawText: string, defaultChapterTitle: string): Matn
 }
 
 export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) => {
-  const [activeTab, setActiveTab] = useState<'mutun' | 'adhkar'>('mutun');
+  const [activeLibraryCat, setActiveLibraryCat] = useState<LibraryFilter>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Comfortable reading preferences
@@ -197,21 +262,36 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
     }
   }, [fontScale, readerSurface, wideLineSpacing]);
 
-  // Full Editable & Deletable Mutun + Books Library
+  // Full Editable & Deletable Mutun + Books + Tafasir Library
   const [mutunList, setMutunList] = useState<MatnItem[]>(() => {
     try {
       const savedV2 = localStorage.getItem(STORAGE_MUTUN_LIBRARY);
       if (savedV2) {
         const parsed = JSON.parse(savedV2);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) {
+          const alreadySeededV3 = localStorage.getItem(STORAGE_LIBRARY_V3_SEEDED) === '1';
+          if (!alreadySeededV3) {
+            localStorage.setItem(STORAGE_LIBRARY_V3_SEEDED, '1');
+            const existingIds = new Set(parsed.map((it: MatnItem) => it.id));
+            const newBuiltIns = INITIAL_MUTUN_LIST.filter(
+              (item) =>
+                (item.id === 'tafsir-qisar-suwar' || item.id === 'tibyan-nawawi-book') &&
+                !existingIds.has(item.id)
+            );
+            return newBuiltIns.length > 0 ? [...parsed, ...newBuiltIns] : parsed;
+          }
+          return parsed;
+        }
       }
       const legacyCustomRaw = localStorage.getItem(STORAGE_CUSTOM_MUTUN_LEGACY);
       if (legacyCustomRaw) {
         const legacy = JSON.parse(legacyCustomRaw);
         if (Array.isArray(legacy) && legacy.length > 0) {
+          localStorage.setItem(STORAGE_LIBRARY_V3_SEEDED, '1');
           return [...legacy, ...INITIAL_MUTUN_LIST];
         }
       }
+      localStorage.setItem(STORAGE_LIBRARY_V3_SEEDED, '1');
     } catch {
       // ignore
     }
@@ -299,12 +379,12 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
   const [confirmRestoreDefaults, setConfirmRestoreDefaults] = useState<boolean>(false);
 
   // Adhkar state
-  const [selectedAdhkarCat, setSelectedAdhkarCat] = useState<'all' | AdhkarCategory>('morning');
+  const [selectedAdhkarCat, setSelectedAdhkarCat] = useState<'all' | AdhkarCategory>('all');
 
   // Add / Edit Modal state
   const [isAddModalOpen, setIsAddModalOpen] = useState<boolean>(false);
   const [editingMatnId, setEditingMatnId] = useState<string | null>(null);
-  const [addMode, setAddMode] = useState<'matn' | 'book' | 'dhikr'>('matn');
+  const [addMode, setAddMode] = useState<AddItemMode>('matn');
   const [newTitle, setNewTitle] = useState<string>('');
   const [newAuthorOrSource, setNewAuthorOrSource] = useState<string>('');
   const [newDescription, setNewDescription] = useState<string>('');
@@ -327,8 +407,37 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
 
   const allAdhkar = useMemo(() => [...customAdhkar, ...INITIAL_ADHKAR_LIST], [customAdhkar]);
 
+  const libraryCounts = useMemo(() => {
+    let books = 0;
+    let mutun = 0;
+    let tafasir = 0;
+    mutunList.forEach((m) => {
+      const grp = resolveMatnLibraryGroup(m);
+      if (grp === 'books') books += 1;
+      else if (grp === 'tafasir') tafasir += 1;
+      else mutun += 1;
+    });
+    const adhkar = allAdhkar.length;
+    return {
+      all: books + mutun + tafasir + adhkar,
+      books,
+      mutun,
+      adhkar,
+      tafasir,
+    };
+  }, [mutunList, allAdhkar]);
+
   const filteredMutun = useMemo(() => {
     return mutunList.filter((m) => {
+      const grp = resolveMatnLibraryGroup(m);
+      if (
+        (activeLibraryCat === 'books' ||
+          activeLibraryCat === 'mutun' ||
+          activeLibraryCat === 'tafasir') &&
+        grp !== activeLibraryCat
+      ) {
+        return false;
+      }
       if (selectedMutunCat !== 'all' && m.category !== selectedMutunCat) return false;
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
@@ -351,7 +460,7 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
       }
       return true;
     });
-  }, [mutunList, selectedMutunCat, searchQuery]);
+  }, [mutunList, activeLibraryCat, selectedMutunCat, searchQuery]);
 
   const filteredAdhkar = useMemo(() => {
     return allAdhkar.filter((d) => {
@@ -455,13 +564,15 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
     setCompletedMutunIds((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
-  const openCreateModal = (mode: 'matn' | 'book' | 'dhikr') => {
+  const openCreateModal = (mode: AddItemMode) => {
     setEditingMatnId(null);
     setAddMode(mode);
     setNewTitle('');
     setNewAuthorOrSource('');
     setNewDescription('');
-    setNewCategoryMutun(mode === 'book' ? 'books' : 'tajweed');
+    setNewCategoryMutun(
+      mode === 'book' ? 'books' : mode === 'tafsir' ? 'tafasir' : 'tajweed'
+    );
     setNewCategoryAdhkar(selectedAdhkarCat === 'all' ? 'morning' : selectedAdhkarCat);
     setNewExternalUrl('');
     setNewExternalViewerMode('direct');
@@ -473,8 +584,9 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
 
   const openEditMatnModal = (matn: MatnItem, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
+    const grp = resolveMatnLibraryGroup(matn);
     setEditingMatnId(matn.id);
-    setAddMode(matn.externalUrl ? 'book' : 'matn');
+    setAddMode(grp === 'books' ? 'book' : grp === 'tafasir' ? 'tafsir' : 'matn');
     setNewTitle(matn.titleAr);
     setNewAuthorOrSource(matn.authorAr);
     setNewDescription(matn.descriptionAr);
@@ -505,36 +617,46 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
         isCustom: true,
       };
       setCustomAdhkar((prev) => [created, ...prev]);
-      setActiveTab('adhkar');
+      setActiveLibraryCat('adhkar');
       setSelectedAdhkarCat(newCategoryAdhkar);
       setIsAddModalOpen(false);
       return;
     }
 
-    // Mode: 'matn' or 'book'
-    if (addMode === 'book') {
-      if (!newExternalUrl.trim() || !isSafeHttpUrl(newExternalUrl)) {
-        setUrlError(
-          lang === 'ar'
-            ? 'يرجى إدخال رابط صحيح يبدأ بـ https:// أو http://'
-            : 'Please enter a valid URL starting with https:// or http://'
-        );
-        return;
-      }
-    } else if (!newContentText.trim() && !editingMatnId) {
+    // Mode: 'matn' | 'book' | 'tafsir'
+    const trimmedUrl = newExternalUrl.trim();
+    const hasContentText = Boolean(newContentText.trim());
+    if (trimmedUrl && !isSafeHttpUrl(trimmedUrl)) {
+      setUrlError(
+        lang === 'ar'
+          ? 'يرجى إدخال رابط صحيح يبدأ بـ https:// أو http://'
+          : 'Please enter a valid URL starting with https:// or http://'
+      );
+      return;
+    }
+    if (addMode === 'book' && !trimmedUrl && !hasContentText && !editingMatnId) {
+      setUrlError(
+        lang === 'ar'
+          ? 'أدخل رابط الكتاب الخارجي أو أضف نصاً مقروءاً للكتاب.'
+          : 'Provide an external book URL or readable text.'
+      );
+      return;
+    }
+    if ((addMode === 'matn' || addMode === 'tafsir') && !hasContentText && !trimmedUrl && !editingMatnId) {
       return;
     }
 
-    const parsedChapters = newContentText.trim()
+    const parsedChapters = hasContentText
       ? parseTextToChapters(newContentText, newTitle.trim())
       : [];
 
-    const cleanedUrl = newExternalUrl.trim() || undefined;
+    const cleanedUrl = trimmedUrl || undefined;
     const isPdfUrl = cleanedUrl ? cleanedUrl.toLowerCase().includes('.pdf') : false;
-    const resolvedViewerMode =
-      addMode === 'book'
-        ? newExternalViewerMode || (isPdfUrl ? 'pdf_viewer' : 'direct')
-        : undefined;
+    const resolvedViewerMode = cleanedUrl
+      ? newExternalViewerMode || (isPdfUrl ? 'pdf_viewer' : 'direct')
+      : undefined;
+    const targetGroup: 'books' | 'mutun' | 'tafasir' =
+      addMode === 'book' ? 'books' : addMode === 'tafsir' ? 'tafasir' : 'mutun';
 
     if (editingMatnId) {
       setMutunList((prev) =>
@@ -542,6 +664,7 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
           m.id === editingMatnId
             ? {
                 ...m,
+                libraryType: targetGroup,
                 category: newCategoryMutun,
                 titleAr: newTitle.trim(),
                 titleEn: newTitle.trim(),
@@ -555,9 +678,9 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
                       : 'External book displayed in the platform reader.'
                     : m.descriptionAr),
                 descriptionEn: newDescription.trim() || m.descriptionEn,
-                externalUrl: addMode === 'book' ? cleanedUrl : undefined,
-                externalViewerMode: addMode === 'book' ? resolvedViewerMode : undefined,
-                chapters: parsedChapters.length > 0 ? parsedChapters : addMode === 'book' ? [] : m.chapters,
+                externalUrl: cleanedUrl,
+                externalViewerMode: resolvedViewerMode,
+                chapters: parsedChapters.length > 0 ? parsedChapters : cleanedUrl ? [] : m.chapters,
               }
             : m
         )
@@ -565,7 +688,8 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
       setExternalViewerOverride(null);
     } else {
       const created: MatnItem = {
-        id: `${addMode === 'book' ? 'book' : 'matn'}-${Date.now()}`,
+        id: `${addMode}-${Date.now()}`,
+        libraryType: targetGroup,
         category: newCategoryMutun,
         titleAr: newTitle.trim(),
         titleEn: newTitle.trim(),
@@ -573,18 +697,26 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
           newAuthorOrSource.trim() ||
           (addMode === 'book'
             ? lang === 'ar'
-              ? 'كتاب عبر رابط خارجي'
-              : 'External Book'
+              ? 'كتاب مضاف للمكتبة'
+              : 'Library Book'
+            : addMode === 'tafsir'
+            ? lang === 'ar'
+              ? 'تفسير مضاف'
+              : 'Tafsir Note'
             : lang === 'ar'
             ? 'إضافة شخصية'
             : 'Personal Note'),
-        authorEn: newAuthorOrSource.trim() || 'External / Custom',
+        authorEn: newAuthorOrSource.trim() || 'Custom / Library',
         descriptionAr:
           newDescription.trim() ||
           (addMode === 'book'
             ? lang === 'ar'
-              ? 'كتاب مضاف عبر رابط خارجي ومهيأ للقراءة المريحة داخل المنصة.'
-              : 'External book configured for comfortable in-app reading.'
+              ? 'كتاب مهيأ للقراءة المريحة داخل المنصة.'
+              : 'Book configured for comfortable in-app reading.'
+            : addMode === 'tafsir'
+            ? lang === 'ar'
+              ? 'مادة تفسير وتدبر مضافة إلى المكتبة.'
+              : 'Tafsir resource added to the library.'
             : lang === 'ar'
             ? 'متن مضاف في مكتبتك الخاصة.'
             : 'Custom added text.'),
@@ -595,7 +727,7 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
         isCustom: true,
       };
       setMutunList((prev) => [created, ...prev]);
-      setActiveTab('mutun');
+      setActiveLibraryCat(targetGroup);
       setActiveMatnId(created.id);
       setActiveChapterId('all');
       setExternalViewerOverride(null);
@@ -753,82 +885,161 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
           : 'max-w-5xl mx-auto space-y-4'
       }
     >
-      {/* Top Banner & Section Switcher */}
+      {/* Top Banner & Action Triggers */}
       <div className="earthy-gradient-banner rounded-2xl p-4 sm:p-5 text-[#FFFFFF] border border-[#876317]/40 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <BookMarked className="w-5 h-5 text-[#E6C25A] shrink-0" />
             <h1 className="text-lg sm:text-2xl font-extrabold font-display-islamic text-[#FFFFFF]">
-              {lang === 'ar'
-                ? 'المكتبة'
-                : 'The Library'}
+              {lang === 'ar' ? 'المكتبة' : 'The Library'}
             </h1>
           </div>
           <p className="text-xs sm:text-sm text-[#E6D7BE]">
             {lang === 'ar'
-              ? 'متون علمية · كتب بروابط خارجية · أذكار يومية'
-              : 'Islamic Mutun · External Books · Daily Adhkar'}
+              ? 'كتب ومراجع · متون علمية · أذكار يومية · تفاسير'
+              : 'Books · Classical Mutun · Daily Adhkar · Tafasir'}
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 shrink-0">
-          {/* Primary Segmented Switcher */}
-          <div className="inline-flex p-1 rounded-xl bg-black/25 border border-[#E6C25A]/30">
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('mutun');
-                setActiveMatnId(null);
-              }}
-              className={`px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                activeTab === 'mutun'
-                  ? 'bg-[#E6C25A] text-[#161E19] shadow-xs'
-                  : 'text-[#F5ECD9] hover:bg-white/10'
-              }`}
-            >
-              <ScrollText className="w-4 h-4 shrink-0" />
-              <span>{lang === 'ar' ? 'المتون والكتب' : 'Mutun & Books'}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab('adhkar')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                activeTab === 'adhkar'
-                  ? 'bg-[#E6C25A] text-[#161E19] shadow-xs'
-                  : 'text-[#F5ECD9] hover:bg-white/10'
-              }`}
-            >
-              <Heart className="w-4 h-4 shrink-0" />
-              <span>{lang === 'ar' ? 'الأذكار اليومية' : 'Daily Adhkar'}</span>
-            </button>
-          </div>
-
           <button
             type="button"
             onClick={() => openCreateModal('book')}
             className="px-3 py-2 rounded-xl bg-[#96701E] hover:bg-[#876317] text-[#FFFFFF] border border-[#F6D365]/40 text-xs font-bold cursor-pointer inline-flex items-center gap-1.5 transition-colors shadow-2xs"
           >
-            <Link2 className="w-4 h-4" />
-            <span>{lang === 'ar' ? 'إضافة كتاب برابط' : 'Add Book Link'}</span>
+            <Library className="w-4 h-4" />
+            <span>{lang === 'ar' ? 'إضافة كتاب' : 'Add Book'}</span>
           </button>
 
           <button
             type="button"
-            onClick={() => openCreateModal(activeTab === 'mutun' ? 'matn' : 'dhikr')}
+            onClick={() =>
+              openCreateModal(
+                activeLibraryCat === 'adhkar'
+                  ? 'dhikr'
+                  : activeLibraryCat === 'tafasir'
+                  ? 'tafsir'
+                  : activeLibraryCat === 'books'
+                  ? 'book'
+                  : 'matn'
+              )
+            }
             className="px-3 py-2 rounded-xl bg-[#0E6340] hover:bg-[#0A4D31] text-[#FFFFFF] border border-[#82A879]/40 text-xs font-bold cursor-pointer inline-flex items-center gap-1.5 transition-colors shadow-2xs"
           >
             <Plus className="w-4 h-4" />
             <span>
-              {activeTab === 'mutun'
+              {activeLibraryCat === 'adhkar'
                 ? lang === 'ar'
-                  ? 'إضافة متن'
-                  : 'Add Text'
+                  ? 'إضافة ذكر'
+                  : 'Add Dhikr'
+                : activeLibraryCat === 'tafasir'
+                ? lang === 'ar'
+                  ? 'إضافة تفسير'
+                  : 'Add Tafsir'
                 : lang === 'ar'
-                ? 'إضافة ذكر'
-                : 'Add Dhikr'}
+                ? 'إضافة متن / محتوى'
+                : 'Add Content'}
             </span>
           </button>
+        </div>
+      </div>
+
+      {/* 4-Way Primary Library Classification Bar (الكل · كتب · متون · أذكار · تفاسير) */}
+      <div className="rounded-2xl bg-[#FFFFFF] border border-[#C5CEBF] p-2.5 sm:p-3 shadow-2xs">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setActiveLibraryCat('all');
+              setSelectedMutunCat('all');
+              setActiveMatnId(null);
+            }}
+            className={`px-3 py-2.5 rounded-xl border text-start transition-all cursor-pointer flex items-center justify-between gap-2 ${
+              activeLibraryCat === 'all'
+                ? 'bg-[#0E5C3E] text-[#FFFFFF] border-[#0E5C3E] shadow-xs'
+                : 'bg-[#F4F5EE] text-[#161E19] border-[#C5CEBF]/70 hover:bg-[#EAF0E7]'
+            }`}
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <span
+                className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                  activeLibraryCat === 'all'
+                    ? 'bg-[#FFFFFF]/15 text-[#E6C25A]'
+                    : 'bg-[#FFFFFF] text-[#0E5C3E] border border-[#C5CEBF]'
+                }`}
+              >
+                <LayoutGrid className="w-4 h-4" />
+              </span>
+              <span className="text-xs sm:text-sm font-extrabold truncate">
+                {lang === 'ar' ? 'الكل' : 'All'}
+              </span>
+            </div>
+            <span
+              className={`text-xs font-mono-tabular font-bold shrink-0 ${
+                activeLibraryCat === 'all' ? 'text-[#E6C25A]' : 'text-[#6A766E]'
+              }`}
+            >
+              {libraryCounts.all}
+            </span>
+          </button>
+
+          {LIBRARY_MAIN_CATEGORIES.map((cat) => {
+            const isActive = activeLibraryCat === cat.id;
+            const count = libraryCounts[cat.id];
+            const iconBoxClass =
+              cat.id === 'books'
+                ? isActive
+                  ? 'bg-[#FFFFFF]/15 text-[#E6C25A]'
+                  : 'bg-[#FBF5E6] text-[#96701E] border border-[#DEC994]'
+                : cat.id === 'mutun'
+                ? isActive
+                  ? 'bg-[#FFFFFF]/15 text-[#E6C25A]'
+                  : 'bg-[#EAF0E7] text-[#0E5C3E] border border-[#C5CEBF]'
+                : cat.id === 'adhkar'
+                ? isActive
+                  ? 'bg-[#FFFFFF]/15 text-[#E6C25A]'
+                  : 'bg-[#EDF5EF] text-[#1D6B4A] border border-[#BBD7C4]'
+                : isActive
+                ? 'bg-[#FFFFFF]/15 text-[#E6C25A]'
+                : 'bg-[#F7EFE2] text-[#7C4D12] border border-[#DFC7A2]';
+
+            return (
+              <button
+                key={cat.id}
+                type="button"
+                onClick={() => {
+                  setActiveLibraryCat(cat.id);
+                  setSelectedMutunCat('all');
+                  setActiveMatnId(null);
+                }}
+                className={`px-3 py-2.5 rounded-xl border text-start transition-all cursor-pointer flex items-center justify-between gap-2 ${
+                  isActive
+                    ? 'bg-[#0E5C3E] text-[#FFFFFF] border-[#0E5C3E] shadow-xs'
+                    : 'bg-[#F4F5EE] text-[#161E19] border-[#C5CEBF]/70 hover:bg-[#EAF0E7]'
+                }`}
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span
+                    className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${iconBoxClass}`}
+                  >
+                    {getMainCategoryIcon(cat.id, 'w-4 h-4')}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="text-xs sm:text-sm font-extrabold truncate">
+                      {lang === 'ar' ? cat.labelAr : cat.labelEn}
+                    </div>
+                  </div>
+                </div>
+                <span
+                  className={`text-xs font-mono-tabular font-bold shrink-0 ${
+                    isActive ? 'text-[#E6C25A]' : 'text-[#6A766E]'
+                  }`}
+                >
+                  {count}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -841,13 +1052,25 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder={
-              activeTab === 'mutun'
+              activeLibraryCat === 'adhkar'
                 ? lang === 'ar'
-                  ? 'ابحث في المتون والكتب...'
-                  : 'Search texts or books...'
+                  ? 'ابحث في الأذكار والأدعية...'
+                  : 'Search adhkar & duas...'
+                : activeLibraryCat === 'books'
+                ? lang === 'ar'
+                  ? 'ابحث في الكتب والمراجع...'
+                  : 'Search books & references...'
+                : activeLibraryCat === 'tafasir'
+                ? lang === 'ar'
+                  ? 'ابحث في التفاسير...'
+                  : 'Search tafasir...'
+                : activeLibraryCat === 'mutun'
+                ? lang === 'ar'
+                  ? 'ابحث في المتون العلمية...'
+                  : 'Search mutun...'
                 : lang === 'ar'
-                ? 'ابحث في الأذكار والأدعية...'
-                : 'Search adhkar & duas...'
+                ? 'ابحث في الكتب والمتون والأذكار والتفاسير...'
+                : 'Search entire library...'
             }
             className="w-full ps-8 pe-3 py-1.5 rounded-xl bg-[#F4F5EE] border border-[#C5CEBF] text-xs text-[#161E19] placeholder-[#6A766E] focus:outline-none focus:border-[#96701E]"
           />
@@ -978,41 +1201,67 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
       </div>
 
       {/* ================================================================= */}
-      {/* TAB 1: MUTUN & EXTERNAL BOOKS                                     */}
+      {/* TAB 1: BOOKS, MUTUN & TAFASIR                                     */}
       {/* ================================================================= */}
-      {activeTab === 'mutun' && (
+      {activeLibraryCat !== 'adhkar' && (
         <div className="space-y-4">
           {!activeMatn ? (
             <>
-              {/* Category Filter Chips + Restore Defaults */}
+              {activeLibraryCat === 'all' && (
+                <div className="flex items-center gap-2 pt-1">
+                  <Library className="w-4 h-4 text-[#96701E] shrink-0" />
+                  <h2 className="text-sm sm:text-base font-extrabold text-[#161E19]">
+                    {lang === 'ar' ? 'الكتب والمتون والتفاسير' : 'Books, Mutun & Tafasir'}
+                  </h2>
+                </div>
+              )}
+
+              {/* Sub-Category Filter Buttons (shown for All & Mutun) + Restore Defaults */}
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedMutunCat('all')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
-                      selectedMutunCat === 'all'
-                        ? 'bg-[#0E5C3E] text-[#E6C25A] border-[#0E5C3E]'
-                        : 'bg-[#FFFFFF] text-[#4B5650] border-[#C5CEBF] hover:bg-[#EAF0E7]'
-                    }`}
-                  >
-                    {lang === 'ar' ? 'الكل' : 'All'} ({mutunList.length})
-                  </button>
-                  {MUTUN_CATEGORIES.map((cat) => (
+                {(activeLibraryCat === 'all' || activeLibraryCat === 'mutun') ? (
+                  <div className="flex flex-wrap items-center gap-1.5">
                     <button
-                      key={cat.id}
                       type="button"
-                      onClick={() => setSelectedMutunCat(cat.id)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
-                        selectedMutunCat === cat.id
+                      onClick={() => setSelectedMutunCat('all')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer inline-flex items-center gap-1.5 ${
+                        selectedMutunCat === 'all'
                           ? 'bg-[#0E5C3E] text-[#E6C25A] border-[#0E5C3E]'
                           : 'bg-[#FFFFFF] text-[#4B5650] border-[#C5CEBF] hover:bg-[#EAF0E7]'
                       }`}
                     >
-                      {lang === 'ar' ? cat.labelAr : cat.labelEn}
+                      <LayoutGrid className="w-3.5 h-3.5 shrink-0" />
+                      <span>
+                        {lang === 'ar' ? 'الكل' : 'All'} ({activeLibraryCat === 'mutun' ? libraryCounts.mutun : mutunList.length})
+                      </span>
                     </button>
-                  ))}
-                </div>
+                    {MUTUN_CATEGORIES.filter((cat) =>
+                      activeLibraryCat === 'mutun'
+                        ? cat.id !== 'books' && cat.id !== 'tafasir'
+                        : true
+                    ).map((cat) => (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        onClick={() => setSelectedMutunCat(cat.id)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer inline-flex items-center gap-1.5 ${
+                          selectedMutunCat === cat.id
+                            ? 'bg-[#0E5C3E] text-[#E6C25A] border-[#0E5C3E]'
+                            : 'bg-[#FFFFFF] text-[#4B5650] border-[#C5CEBF] hover:bg-[#EAF0E7]'
+                        }`}
+                      >
+                        {getMutunSubCategoryIcon(cat.id, 'w-3.5 h-3.5 shrink-0')}
+                        <span>{lang === 'ar' ? cat.labelAr : cat.labelEn}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-xs font-bold text-[#4B5650]">
+                    {getMainCategoryIcon(activeLibraryCat, 'w-4 h-4 text-[#96701E]')}
+                    <span>
+                      {getLibraryMainCategoryLabel(activeLibraryCat, lang)} ({filteredMutun.length})
+                    </span>
+                  </div>
+                )}
 
                 {!confirmRestoreDefaults ? (
                   <button
@@ -1026,7 +1275,7 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
                 ) : (
                   <div className="inline-flex items-center gap-1.5 bg-[#F7F1DF] border border-[#96701E]/40 px-2.5 py-1 rounded-xl text-[11px]">
                     <span className="font-bold text-[#0E5C3E]">
-                      {lang === 'ar' ? 'استعادة المتون الأساسية؟' : 'Restore built-in?'}
+                      {lang === 'ar' ? 'استعادة المحتوى الأساسي؟' : 'Restore built-in?'}
                     </span>
                     <button
                       type="button"
@@ -1046,28 +1295,50 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
                 )}
               </div>
 
-              {/* Mutun & External Books Cards */}
+              {/* Library Shelf Cards */}
               {filteredMutun.length === 0 ? (
                 <div className="rounded-2xl bg-[#FFFFFF] border border-[#C5CEBF] p-8 text-center space-y-3">
                   <p className="text-xs sm:text-sm text-[#6A766E]">
-                    {lang === 'ar'
+                    {activeLibraryCat === 'tafasir'
+                      ? lang === 'ar'
+                        ? 'لا توجد تفاسير مطابقة حالياً.'
+                        : 'No matching tafasir found.'
+                      : activeLibraryCat === 'books'
+                      ? lang === 'ar'
+                        ? 'لا توجد كتب مطابقة حالياً.'
+                        : 'No matching books found.'
+                      : lang === 'ar'
                       ? 'لا توجد متون أو كتب مطابقة حالياً.'
-                      : 'No matching texts or books found.'}
+                      : 'No matching items found.'}
                   </p>
                   <div className="flex flex-wrap items-center justify-center gap-2">
                     <button
                       type="button"
-                      onClick={() => openCreateModal('matn')}
-                      className="mustard-gradient-btn px-4 py-2 rounded-xl text-xs font-bold text-[#FFFFFF] cursor-pointer"
+                      onClick={() =>
+                        openCreateModal(
+                          activeLibraryCat === 'tafasir'
+                            ? 'tafsir'
+                            : activeLibraryCat === 'books'
+                            ? 'book'
+                            : 'matn'
+                        )
+                      }
+                      className="mustard-gradient-btn px-4 py-2 rounded-xl text-xs font-bold text-[#FFFFFF] cursor-pointer inline-flex items-center gap-1.5"
                     >
-                      {lang === 'ar' ? 'إضافة متن جديد' : 'Add Text'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openCreateModal('book')}
-                      className="px-4 py-2 rounded-xl bg-[#0E6340] text-xs font-bold text-[#FFFFFF] cursor-pointer"
-                    >
-                      {lang === 'ar' ? 'إضافة كتاب برابط' : 'Add Book Link'}
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>
+                        {activeLibraryCat === 'tafasir'
+                          ? lang === 'ar'
+                            ? 'إضافة تفسير جديد'
+                            : 'Add Tafsir'
+                          : activeLibraryCat === 'books'
+                          ? lang === 'ar'
+                            ? 'إضافة كتاب جديد'
+                            : 'Add Book'
+                          : lang === 'ar'
+                          ? 'إضافة متن جديد'
+                          : 'Add Matn'}
+                      </span>
                     </button>
                   </div>
                 </div>
@@ -1077,6 +1348,9 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
                     const isDone = !!completedMutunIds[matn.id];
                     const totalLines = matn.chapters.reduce((acc, ch) => acc + ch.items.length, 0);
                     const isConfirmingDel = confirmDeleteMatnId === matn.id;
+                    const itemGroup = resolveMatnLibraryGroup(matn);
+                    const groupLabel = getLibraryMainCategoryLabel(itemGroup, lang);
+                    const subCatLabel = getMutunCategoryLabel(matn.category, lang);
 
                     return (
                       <div
@@ -1090,15 +1364,37 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
                       >
                         <div className="space-y-2.5">
                           <div className="flex items-start justify-between gap-2">
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-lg bg-[#F5ECD4] text-[#8A6518] border border-[#DEC994]">
-                                {getMutunCategoryLabel(matn.category, lang)}
+                            <div className="flex items-center gap-2 text-xs text-[#4B5650] flex-wrap">
+                              <span
+                                className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                                  itemGroup === 'books'
+                                    ? 'bg-[#FBF5E6] text-[#96701E] border border-[#DEC994]'
+                                    : itemGroup === 'tafasir'
+                                    ? 'bg-[#F7EFE2] text-[#7C4D12] border border-[#DFC7A2]'
+                                    : 'bg-[#EAF0E7] text-[#0E5C3E] border border-[#C5CEBF]'
+                                }`}
+                                title={groupLabel}
+                              >
+                                {getMainCategoryIcon(itemGroup, 'w-3.5 h-3.5')}
                               </span>
+                              <span className="font-extrabold text-[#161E19]">{groupLabel}</span>
+                              {subCatLabel !== groupLabel && (
+                                <>
+                                  <span aria-hidden="true" className="text-[#8A948D]">·</span>
+                                  <span className="inline-flex items-center gap-1 font-semibold text-[#8A6518]">
+                                    {getMutunSubCategoryIcon(matn.category, 'w-3 h-3')}
+                                    <span>{subCatLabel}</span>
+                                  </span>
+                                </>
+                              )}
                               {matn.externalUrl && (
-                                <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-lg bg-[#0E5C3E] text-[#E6C25A] inline-flex items-center gap-1">
-                                  <Link2 className="w-3 h-3" />
-                                  <span>{lang === 'ar' ? 'كتاب برابط' : 'External Book'}</span>
-                                </span>
+                                <>
+                                  <span aria-hidden="true" className="text-[#8A948D]">·</span>
+                                  <span className="inline-flex items-center gap-1 font-bold text-[#0E5C3E]">
+                                    <Link2 className="w-3 h-3" />
+                                    <span>{lang === 'ar' ? 'رابط مباشر' : 'External Link'}</span>
+                                  </span>
+                                </>
                               )}
                             </div>
 
@@ -1560,33 +1856,44 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
       {/* ================================================================= */}
       {/* TAB 2: ADHKAR                                                     */}
       {/* ================================================================= */}
-      {activeTab === 'adhkar' && (
+      {(activeLibraryCat === 'adhkar' || (activeLibraryCat === 'all' && !activeMatn)) && (
         <div className="space-y-4">
+          {activeLibraryCat === 'all' && (
+            <div className="flex items-center gap-2 pt-3 border-t border-[#C5CEBF]">
+              <Heart className="w-4 h-4 text-[#1D6B4A] shrink-0" />
+              <h2 className="text-sm sm:text-base font-extrabold text-[#161E19]">
+                {lang === 'ar' ? 'الأذكار والأدعية اليومية' : 'Daily Adhkar & Duas'}
+              </h2>
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-1.5">
               <button
                 type="button"
                 onClick={() => setSelectedAdhkarCat('all')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer inline-flex items-center gap-1.5 ${
                   selectedAdhkarCat === 'all'
                     ? 'bg-[#0E5C3E] text-[#E6C25A] border-[#0E5C3E]'
                     : 'bg-[#FFFFFF] text-[#4B5650] border-[#C5CEBF] hover:bg-[#EAF0E7]'
                 }`}
               >
-                {lang === 'ar' ? 'الكل' : 'All'}
+                <Heart className="w-3.5 h-3.5 shrink-0" />
+                <span>{lang === 'ar' ? 'الكل' : 'All'}</span>
               </button>
               {ADHKAR_CATEGORIES.map((cat) => (
                 <button
                   key={cat.id}
                   type="button"
                   onClick={() => setSelectedAdhkarCat(cat.id)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer inline-flex items-center gap-1.5 ${
                     selectedAdhkarCat === cat.id
                       ? 'bg-[#0E5C3E] text-[#E6C25A] border-[#0E5C3E]'
                       : 'bg-[#FFFFFF] text-[#4B5650] border-[#C5CEBF] hover:bg-[#EAF0E7]'
                   }`}
                 >
-                  {lang === 'ar' ? cat.labelAr : cat.labelEn}
+                  {getAdhkarCategoryIcon(cat.id, 'w-3.5 h-3.5 shrink-0')}
+                  <span>{lang === 'ar' ? cat.labelAr : cat.labelEn}</span>
                 </button>
               ))}
             </div>
@@ -1633,10 +1940,14 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex flex-wrap items-center gap-2">
                         <span
-                          className={`text-xs font-bold px-2.5 py-0.5 rounded-lg border ${surfaceStyles.badgeBg}`}
+                          className={`w-7 h-7 rounded-lg border flex items-center justify-center shrink-0 ${surfaceStyles.badgeBg}`}
                         >
+                          {getAdhkarCategoryIcon(dhikr.category, 'w-3.5 h-3.5')}
+                        </span>
+                        <span className={`text-xs font-bold ${surfaceStyles.accentText}`}>
                           {getAdhkarCategoryLabel(dhikr.category, lang)}
                         </span>
+                        <span aria-hidden="true" className={surfaceStyles.textMuted}>·</span>
                         <h3 className={`text-sm sm:text-base font-extrabold ${surfaceStyles.textPrimary}`}>
                           {lang === 'ar' ? dhikr.titleAr : dhikr.titleEn}
                         </h3>
@@ -1753,11 +2064,11 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
                 <h2 className="text-base font-bold font-display-islamic">
                   {editingMatnId
                     ? lang === 'ar'
-                      ? 'تعديل المتن أو الكتاب'
-                      : 'Edit Text or Book'
+                      ? 'تعديل عنصر المكتبة'
+                      : 'Edit Library Item'
                     : lang === 'ar'
-                    ? 'إضافة متن أو كتاب عبر رابط أو ذكر'
-                    : 'Add Matn, External Book, or Dhikr'}
+                    ? 'إضافة إلى المكتبة (كتاب · متن · أذكار · تفسير)'
+                    : 'Add to Library (Book · Matn · Dhikr · Tafsir)'}
                 </h2>
               </div>
               <button
@@ -1773,42 +2084,63 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
               onSubmit={handleSaveCustomOrEditedItem}
               className="p-4 overflow-y-auto space-y-3.5 text-xs sm:text-sm"
             >
-              {/* Type Selector (hidden for Dhikr when editing existing Matn/Book) */}
+              {/* 4-Way Classification Selector with Distinctive Icons */}
               <div
                 className={`grid ${
-                  editingMatnId ? 'grid-cols-2' : 'grid-cols-3'
+                  editingMatnId ? 'grid-cols-3' : 'grid-cols-2 sm:grid-cols-4'
                 } gap-1.5 p-1 rounded-xl bg-[#EAF0E7] border border-[#C5CEBF]`}
               >
-                <button
-                  type="button"
-                  onClick={() => setAddMode('matn')}
-                  className={`py-2 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
-                    addMode === 'matn' ? 'bg-[#0E5C3E] text-[#E6C25A]' : 'text-[#4B5650]'
-                  }`}
-                >
-                  {lang === 'ar' ? 'متن علمي' : 'Scientific Text'}
-                </button>
                 <button
                   type="button"
                   onClick={() => {
                     setAddMode('book');
                     if (!editingMatnId) setNewCategoryMutun('books');
                   }}
-                  className={`py-2 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
+                  className={`py-2 px-2 rounded-lg text-xs font-bold cursor-pointer transition-colors inline-flex items-center justify-center gap-1.5 ${
                     addMode === 'book' ? 'bg-[#0E5C3E] text-[#E6C25A]' : 'text-[#4B5650]'
                   }`}
                 >
-                  {lang === 'ar' ? 'كتاب برابط خارجي' : 'Book via Link'}
+                  <Library className="w-3.5 h-3.5 shrink-0" />
+                  <span>{lang === 'ar' ? 'كتاب' : 'Book'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddMode('matn');
+                    if (newCategoryMutun === 'books' || newCategoryMutun === 'tafasir') {
+                      setNewCategoryMutun('tajweed');
+                    }
+                  }}
+                  className={`py-2 px-2 rounded-lg text-xs font-bold cursor-pointer transition-colors inline-flex items-center justify-center gap-1.5 ${
+                    addMode === 'matn' ? 'bg-[#0E5C3E] text-[#E6C25A]' : 'text-[#4B5650]'
+                  }`}
+                >
+                  <ScrollText className="w-3.5 h-3.5 shrink-0" />
+                  <span>{lang === 'ar' ? 'متن علمي' : 'Matn'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddMode('tafsir');
+                    if (!editingMatnId) setNewCategoryMutun('tafasir');
+                  }}
+                  className={`py-2 px-2 rounded-lg text-xs font-bold cursor-pointer transition-colors inline-flex items-center justify-center gap-1.5 ${
+                    addMode === 'tafsir' ? 'bg-[#0E5C3E] text-[#E6C25A]' : 'text-[#4B5650]'
+                  }`}
+                >
+                  <BookOpenCheck className="w-3.5 h-3.5 shrink-0" />
+                  <span>{lang === 'ar' ? 'تفسير' : 'Tafsir'}</span>
                 </button>
                 {!editingMatnId && (
                   <button
                     type="button"
                     onClick={() => setAddMode('dhikr')}
-                    className={`py-2 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
+                    className={`py-2 px-2 rounded-lg text-xs font-bold cursor-pointer transition-colors inline-flex items-center justify-center gap-1.5 ${
                       addMode === 'dhikr' ? 'bg-[#0E5C3E] text-[#E6C25A]' : 'text-[#4B5650]'
                     }`}
                   >
-                    {lang === 'ar' ? 'ذكر / دعاء' : 'Dhikr / Dua'}
+                    <Heart className="w-3.5 h-3.5 shrink-0" />
+                    <span>{lang === 'ar' ? 'ذكر / دعاء' : 'Dhikr'}</span>
                   </button>
                 )}
               </div>
@@ -1827,6 +2159,10 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
                       ? lang === 'ar'
                         ? 'مثال: التبيان في آداب حملة القرآن'
                         : 'Book title...'
+                      : addMode === 'tafsir'
+                      ? lang === 'ar'
+                        ? 'مثال: التفسير الميسّر لسورة الكهف'
+                        : 'Tafsir title...'
                       : addMode === 'matn'
                       ? lang === 'ar'
                         ? 'مثال: تحفة الأطفال أو نونية القحطاني'
@@ -1842,7 +2178,7 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-[#0E5C3E] mb-1">
-                    {lang === 'ar' ? 'التصنيف' : 'Category'}
+                    {lang === 'ar' ? 'التصنيف الفرعي' : 'Sub-Category'}
                   </label>
                   {addMode === 'dhikr' ? (
                     <select
@@ -1901,18 +2237,17 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
                 )}
               </div>
 
-              {/* External Link Fields for Books */}
-              {addMode === 'book' && (
+              {/* External Link Fields for Books & Tafasir */}
+              {(addMode === 'book' || addMode === 'tafsir') && (
                 <div className="p-3 rounded-xl bg-[#FBF5E6] border border-[#D3BF8C] space-y-2.5">
                   <div>
                     <label className="block text-xs font-bold text-[#0E5C3E] mb-1">
                       {lang === 'ar'
-                        ? 'الرابط الخارجي للكتاب (PDF أو صفحة قراءة)'
-                        : 'External Book URL (PDF or Web Page)'}
+                        ? 'الرابط الخارجي (اختياري عند كتابة النص بالأسفل)'
+                        : 'External URL (optional if text provided below)'}
                     </label>
                     <input
                       type="url"
-                      required
                       dir="ltr"
                       value={newExternalUrl}
                       onChange={(e) => setNewExternalUrl(e.target.value)}
@@ -1965,7 +2300,7 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
                     type="text"
                     value={newDescription}
                     onChange={(e) => setNewDescription(e.target.value)}
-                    placeholder={lang === 'ar' ? 'نبذة موجزة عن الكتاب أو المتن...' : 'Short summary...'}
+                    placeholder={lang === 'ar' ? 'نبذة موجزة عن المحتوى...' : 'Short summary...'}
                     className="w-full px-3 py-2 rounded-xl bg-[#F4F5EE] border border-[#C5CEBF] text-xs text-[#161E19] focus:outline-none focus:border-[#96701E]"
                   />
                 </div>
@@ -1975,8 +2310,12 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
                 <label className="block text-xs font-bold text-[#0E5C3E] mb-1">
                   {addMode === 'book'
                     ? lang === 'ar'
-                      ? 'فوائد أو نص مقروء إضافي (اختياري)'
-                      : 'Optional Readable Notes / Excerpts'
+                      ? 'نص الكتاب أو فصوله (اختياري إذا أرفقت رابطاً)'
+                      : 'Book Text or Notes (optional if URL provided)'
+                    : addMode === 'tafsir'
+                    ? lang === 'ar'
+                      ? 'نص التفسير والفوائد (استخدم === اسم السورة/الباب === لتقسيم الأبواب)'
+                      : 'Tafsir Text (use === Section === for chapters)'
                     : addMode === 'matn'
                     ? lang === 'ar'
                       ? 'المحتوى والأبيات (استخدم === اسم الباب === لتقسيم الأبواب، و | بين شطري البيت)'
@@ -1986,7 +2325,7 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
                     : 'Dhikr Text'}
                 </label>
                 <textarea
-                  required={addMode !== 'book'}
+                  required={addMode === 'dhikr' || (addMode !== 'book' && !newExternalUrl.trim())}
                   rows={6}
                   value={newContentText}
                   onChange={(e) => setNewContentText(e.target.value)}
@@ -1995,10 +2334,14 @@ export const MutunAdhkarSection: React.FC<MutunAdhkarSectionProps> = ({ lang }) 
                       ? lang === 'ar'
                         ? '=== المقدمة ===\nالشطر الأول | الشطر الثاني'
                         : '=== Chapter ===\nFirst half | Second half'
+                      : addMode === 'tafsir'
+                      ? lang === 'ar'
+                        ? '=== تفسير الآيات ===\nتفسير الآية الأولى...'
+                        : '=== Tafsir Section ===\nExplanation...'
                       : addMode === 'book'
                       ? lang === 'ar'
-                        ? 'يمكنك إضافة ملاحظات أو فصول مقروءة تظهر تحت إطار الكتاب...'
-                        : 'Optional notes...'
+                        ? 'يمكنك كتابة فصول الكتاب هنا أو إرفاق رابط خارجي بالأعلى...'
+                        : 'Optional text or notes...'
                       : lang === 'ar'
                       ? 'اكتب نص الذكر هنا...'
                       : 'Enter dhikr text...'
