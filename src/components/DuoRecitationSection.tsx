@@ -2529,10 +2529,28 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       setPeerConnState('idle');
       if (isPermissionDeniedError(err)) {
         logDuoFirestoreError(err, OperationType.UPDATE, sessionPath);
+        let sessionAlreadyClosed = false;
+        try {
+          const latestSnap = await getDoc(doc(db, 'duoSessions', cleanId));
+          if (!latestSnap.exists()) {
+            sessionAlreadyClosed = true;
+          } else {
+            const latestStatus = (latestSnap.data() as DuoSessionDoc).status;
+            if (latestStatus !== 'ringing') {
+              sessionAlreadyClosed = true;
+            }
+          }
+        } catch {
+          // ignore
+        }
         setLobbyError(
-          isAr
-            ? 'تعذر الرد على المكالمة بسبب صلاحيات الحساب أو انتهاء الجلسة. تأكد من تفعيل البريد وحاول مجدداً.'
-            : 'Could not answer call due to account permissions or an expired session.'
+          sessionAlreadyClosed
+            ? isAr
+              ? 'انتهت المكالمة الواردة أو ألغاها المتصل.'
+              : 'Incoming call has ended or been cancelled.'
+            : isAr
+            ? 'تعذر الرد على المكالمة بسبب صلاحيات الحساب. تأكد من تفعيل البريد وحاول مجدداً.'
+            : 'Could not answer call due to account permissions. Ensure your email is verified and try again.'
         );
       } else {
         console.error('Answer incoming call error:', sessionPath, err);

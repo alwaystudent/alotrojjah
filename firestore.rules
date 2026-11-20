@@ -352,8 +352,8 @@ service cloud.firestore {
         && (
           resource == null
           || existing().hostUid == request.auth.uid
-          || existing().guestUid == request.auth.uid
           || existing().calleeUid == request.auth.uid
+          || ('guestUid' in existing() && existing().guestUid == request.auth.uid)
         );
       allow list: if isVerifiedUser()
         && resource.data.calleeUid == request.auth.uid;
@@ -404,7 +404,11 @@ service cloud.firestore {
           ||
           // Action 3: Caller, Guest, or Callee ends call with optional evaluation summary (Terminal State)
           (
-            (existing().hostUid == request.auth.uid || existing().guestUid == request.auth.uid || existing().calleeUid == request.auth.uid)
+            (
+              existing().hostUid == request.auth.uid
+              || existing().calleeUid == request.auth.uid
+              || ('guestUid' in existing() && existing().guestUid == request.auth.uid)
+            )
             && incoming().status == 'ended'
             && (!('endedByUid' in incoming()) || incoming().endedByUid == null || incoming().endedByUid == request.auth.uid)
             && incoming().diff(existing()).affectedKeys().hasOnly([
@@ -416,7 +420,10 @@ service cloud.firestore {
           (
             existing().status == 'active'
             && incoming().status == 'active'
-            && (existing().hostUid == request.auth.uid || existing().guestUid == request.auth.uid)
+            && (
+              existing().hostUid == request.auth.uid
+              || ('guestUid' in existing() && existing().guestUid == request.auth.uid)
+            )
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'activeAyah', 'reciterSide', 'mistakesCount', 'markedErrors',
               'boardHintText', 'boardHintKind', 'boardHintSenderName', 'boardHintSeq',
