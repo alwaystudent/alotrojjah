@@ -443,6 +443,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   // Auth State
   const [user, setUser] = useState<User | null>(auth.currentUser);
   const [authReady, setAuthReady] = useState<boolean>(false);
+  const [authSyncVersion, setAuthSyncVersion] = useState<number>(0);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [emailInput, setEmailInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
@@ -966,7 +967,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       window.clearInterval(intervalId);
       document.removeEventListener('visibilitychange', beat);
     };
-  }, [user]);
+  }, [user, authSyncVersion]);
 
   // Subscribe to approved friends' online presence
   useEffect(() => {
@@ -1078,7 +1079,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       unsubIncomingReq();
       unsubOutgoingReq();
     };
-  }, [user]);
+  }, [user, authSyncVersion]);
 
   const teardownWebRtcResources = () => {
     callRingtone.stop();
@@ -1359,7 +1360,9 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       await auth.currentUser.reload();
       await auth.currentUser.getIdToken(true);
       const refreshed = auth.currentUser;
-      setUser(refreshed ? ({ ...refreshed } as User) : null);
+      setUser(refreshed);
+      setAuthSyncVersion((v) => v + 1);
+      window.dispatchEvent(new Event('alutrujjah:auth-refreshed'));
       if (refreshed && refreshed.emailVerified) {
         await syncVerifiedUserProfileAndDirectory(refreshed);
         const inv = await getOrCreateMyFriendInvite(refreshed);
@@ -2041,9 +2044,64 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     };
   };
 
+  const isPermissionDeniedError = (err: unknown): boolean => {
+    if (!err) return false;
+    const code = (err as { code?: unknown }).code;
+    const msg = err instanceof Error ? err.message : String(err);
+    return (
+      code === 'permission-denied' ||
+      /missing or insufficient permissions|permission[-_]denied/i.test(msg)
+    );
+  };
+
+  const logDuoFirestoreError = (
+    err: unknown,
+    operationType: OperationType,
+    path: string
+  ) => {
+    const errInfo = {
+      error: err instanceof Error ? err.message : String(err),
+      operationType,
+      path,
+      authInfo: {
+        userId: auth.currentUser?.uid,
+        email: auth.currentUser?.email,
+        emailVerified: auth.currentUser?.emailVerified,
+        isAnonymous: auth.currentUser?.isAnonymous,
+        tenantId: auth.currentUser?.tenantId,
+      },
+    };
+    console.error('Firestore Error: ', JSON.stringify(errInfo));
+  };
+
+  const runWithVerifiedTokenRetry = async <T,>(
+    op: () => Promise<T>
+  ): Promise<T> => {
+    try {
+      return await op();
+    } catch (err) {
+      if (!isPermissionDeniedError(err) || !auth.currentUser) {
+        throw err;
+      }
+      await auth.currentUser.reload().catch(() => {});
+      await auth.currentUser.getIdToken(true).catch(() => {});
+      setUser(auth.currentUser);
+      setAuthSyncVersion((v) => v + 1);
+      window.dispatchEvent(new Event('alutrujjah:auth-refreshed'));
+      return await op();
+    }
+  };
+
   // Start Direct Encrypted Friend Audio Call ONLY (Voice rooms completely disabled)
   const startDirectFriendCall = async (targetFriend: FriendContactItem) => {
-    if (!user || !user.emailVerified) return;
+    const currentUser = auth.currentUser ?? user;
+    if (!currentUser || !currentUser.emailVerified) return;
+    if (targetFriend.friendUid === currentUser.uid) {
+      setLobbyError(
+        isAr ? 'لا يمكنك الاتصال بنفسك.' : 'You cannot call yourself.'
+      );
+      return;
+    }
     callRingtone.unlockAudio();
     teardownWebRtcResources();
     setLobbyError(null);
@@ -2055,6 +2113,9 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     const sessionPath = `duoSessions/${newSessionId}`;
 
     try {
+      // Ensure Firebase ID token carries fresh email_verified claim before signaling write
+      await currentUser.getIdToken(false).catch(() => {});
+
       const stream = await acquireMicrophoneOptional();
       const pc = setupPeerConnection(stream);
 
@@ -2077,7 +2138,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         );
       }
 
-      const hostDisplayName = getDisplayNameForUser(user);
+      const hostDisplayName = getDisplayNameForUser(currentUser);
       const currFields = buildCurriculumPayloadFields();
 
       const isMixed = hostAppRole !== guestAppRole;
@@ -2097,7 +2158,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
 
       const callPayload: Record<string, unknown> = {
         sessionId: newSessionId,
-        hostUid: user.uid,
+        hostUid: currentUser.uid,
         hostName: hostDisplayName,
         calleeUid: targetFriend.friendUid,
         callMode: 'friend_call',
@@ -2122,7 +2183,9 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         updatedAt: serverTimestamp(),
       };
 
-      await setDoc(doc(db, 'duoSessions', newSessionId), callPayload);
+      await runWithVerifiedTokenRetry(() =>
+        setDoc(doc(db, 'duoSessions', newSessionId), callPayload)
+      );
 
       iceEpochRef.current = 0;
       appliedIceOfferEpochRef.current = 0;
@@ -2243,13 +2306,35 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       setSessionId(null);
       setSessionMeta(null);
       setPeerConnState('idle');
-      setLobbyError(
-        err instanceof Error
-          ? err.message
-          : isAr
-          ? 'تعذر بدء الاتصال الصوتي المباشر.'
-          : 'Failed to start direct voice call.'
-      );
+      if (isPermissionDeniedError(err)) {
+        logDuoFirestoreError(err, OperationType.CREATE, sessionPath);
+        let friendMissing = false;
+        try {
+          const frSnap = await getDoc(
+            doc(db, 'users', currentUser.uid, 'friends', targetFriend.friendUid)
+          );
+          friendMissing = !frSnap.exists();
+        } catch {
+          // ignore
+        }
+        setLobbyError(
+          friendMissing
+            ? isAr
+              ? `لم تعد صداقة «${targetFriend.friendName}» مفعّلة في السحابة؛ أعد إضافة الصديق عبر رابط الدعوة ثم حاول مجدداً.`
+              : `"${targetFriend.friendName}" is not synced in your friends list yet. Please re-add and try again.`
+            : isAr
+            ? 'تعذر بدء المكالمة بسبب صلاحيات الحساب. تأكد من تفعيل البريد الإلكتروني ثم أعد المحاولة.'
+            : 'Call blocked by account permissions. Ensure your email is verified and try again.'
+        );
+      } else {
+        setLobbyError(
+          err instanceof Error
+            ? err.message
+            : isAr
+            ? 'تعذر بدء الاتصال الصوتي المباشر.'
+            : 'Failed to start direct voice call.'
+        );
+      }
     } finally {
       setLobbyBusy(false);
     }
@@ -2257,7 +2342,8 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
 
   // Answer Incoming Direct Friend Call
   const answerIncomingFriendCall = async (targetSessionId: string) => {
-    if (!user || !user.emailVerified) return;
+    const currentUser = auth.currentUser ?? user;
+    if (!currentUser || !currentUser.emailVerified) return;
     callRingtone.stop();
     callRingtone.unlockAudio();
 
@@ -2269,7 +2355,11 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     const sessionPath = `duoSessions/${cleanId}`;
 
     try {
-      const snap = await getDoc(doc(db, 'duoSessions', cleanId));
+      await currentUser.getIdToken(false).catch(() => {});
+
+      const snap = await runWithVerifiedTokenRetry(() =>
+        getDoc(doc(db, 'duoSessions', cleanId))
+      );
 
       if (!snap.exists()) {
         setLobbyError(
@@ -2281,7 +2371,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       }
 
       const callData = snap.data() as DuoSessionDoc;
-      if (callData.status !== 'ringing' || callData.calleeUid !== user.uid) {
+      if (callData.status !== 'ringing' || callData.calleeUid !== currentUser.uid) {
         setLobbyError(
           isAr
             ? 'هذه المكالمة غير متاحة أو تم الرد عليها مسبقاً.'
@@ -2319,16 +2409,18 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         );
       }
 
-      const guestDisplayName = getDisplayNameForUser(user);
+      const guestDisplayName = getDisplayNameForUser(currentUser);
 
-      await updateDoc(doc(db, 'duoSessions', cleanId), {
-        guestUid: user.uid,
-        guestName: guestDisplayName,
-        answerType: finalAnswer.type || 'answer',
-        answerSdp: finalAnswer.sdp,
-        status: 'active',
-        updatedAt: serverTimestamp(),
-      });
+      await runWithVerifiedTokenRetry(() =>
+        updateDoc(doc(db, 'duoSessions', cleanId), {
+          guestUid: currentUser.uid,
+          guestName: guestDisplayName,
+          answerType: finalAnswer.type || 'answer',
+          answerSdp: finalAnswer.sdp,
+          status: 'active',
+          updatedAt: serverTimestamp(),
+        })
+      );
 
       dismissBackgroundCallNotification(cleanId);
       iceEpochRef.current = typeof callData.iceEpoch === 'number' ? callData.iceEpoch : 0;
@@ -2338,7 +2430,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       setSessionId(cleanId);
       setSessionMeta({
         ...callData,
-        guestUid: user.uid,
+        guestUid: currentUser.uid,
         guestName: guestDisplayName,
         status: 'active',
       });
@@ -2435,14 +2527,23 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       setSessionId(null);
       setSessionMeta(null);
       setPeerConnState('idle');
-      console.error('Answer incoming call error:', sessionPath, err);
-      setLobbyError(
-        err instanceof Error
-          ? err.message
-          : isAr
-          ? 'تعذر الرد على المكالمة وبدء الجلسة. حاول مرة أخرى.'
-          : 'Failed to answer call and start session. Please try again.'
-      );
+      if (isPermissionDeniedError(err)) {
+        logDuoFirestoreError(err, OperationType.UPDATE, sessionPath);
+        setLobbyError(
+          isAr
+            ? 'تعذر الرد على المكالمة بسبب صلاحيات الحساب أو انتهاء الجلسة. تأكد من تفعيل البريد وحاول مجدداً.'
+            : 'Could not answer call due to account permissions or an expired session.'
+        );
+      } else {
+        console.error('Answer incoming call error:', sessionPath, err);
+        setLobbyError(
+          err instanceof Error
+            ? err.message
+            : isAr
+            ? 'تعذر الرد على المكالمة وبدء الجلسة. حاول مرة أخرى.'
+            : 'Failed to answer call and start session. Please try again.'
+        );
+      }
     } finally {
       setLobbyBusy(false);
     }
@@ -2454,9 +2555,10 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       handledAutoCallRef.current = null;
       return;
     }
+    const activeUser = auth.currentUser ?? user;
     if (
-      user &&
-      user.emailVerified &&
+      activeUser &&
+      activeUser.emailVerified &&
       handledAutoCallRef.current !== pendingAcceptCallId
     ) {
       handledAutoCallRef.current = pendingAcceptCallId;
@@ -2464,7 +2566,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         onClearPendingCall?.();
       });
     }
-  }, [pendingAcceptCallId, user]);
+  }, [pendingAcceptCallId, user, authSyncVersion]);
 
   // Compute accuracy percentage based on errors vs verse words in current curriculum
   const totalWordsInVerses = useMemo(() => {

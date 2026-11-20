@@ -349,9 +349,9 @@ service cloud.firestore {
     match /duoSessions/{sessionId} {
       allow get: if isVerifiedUser()
         && isValidId(sessionId)
-        && resource != null
         && (
-          existing().hostUid == request.auth.uid
+          resource == null
+          || existing().hostUid == request.auth.uid
           || existing().guestUid == request.auth.uid
           || existing().calleeUid == request.auth.uid
         );

@@ -268,6 +268,7 @@ export default function App() {
   const pendingAcceptCallId = callState.pendingAcceptCallId;
 
   const [authUser, setAuthUser] = useState<User | null>(auth.currentUser);
+  const [authRefreshTick, setAuthRefreshTick] = useState<number>(0);
   const lastRingingCallIdRef = useRef<string | null>(null);
   const dismissedCallIdsRef = useRef<Set<string>>(
     new Set(pendingAcceptCallId ? [pendingAcceptCallId] : [])
@@ -531,6 +532,7 @@ export default function App() {
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, async (nextUser) => {
       setAuthUser(nextUser);
+      setAuthRefreshTick((n) => n + 1);
       if (nextUser && nextUser.emailVerified) {
         try {
           await syncVerifiedUserProfileAndDirectory(nextUser);
@@ -539,7 +541,25 @@ export default function App() {
         }
       }
     });
-    return () => unsubAuth();
+
+    const handleAuthRefreshed = async () => {
+      const current = auth.currentUser;
+      setAuthUser(current);
+      setAuthRefreshTick((n) => n + 1);
+      if (current && current.emailVerified) {
+        try {
+          await syncVerifiedUserProfileAndDirectory(current);
+        } catch (err) {
+          console.warn('Directory sync deferred:', err);
+        }
+      }
+    };
+
+    window.addEventListener('alutrujjah:auth-refreshed', handleAuthRefreshed);
+    return () => {
+      unsubAuth();
+      window.removeEventListener('alutrujjah:auth-refreshed', handleAuthRefreshed);
+    };
   }, []);
 
   // Global listener for incoming pending friend requests & reliable one-time accepted outgoing sync
@@ -674,7 +694,7 @@ export default function App() {
       unsubIncomingReqs();
       unsubOutgoingReqs();
     };
-  }, [authUser]);
+  }, [authUser, authRefreshTick]);
 
   // Automatically resolve shared invite link when signed in & verified -> show instant alert modal
   useEffect(() => {
@@ -953,7 +973,7 @@ export default function App() {
     return () => {
       unsubCalls();
     };
-  }, [authUser, lang, setIncomingCall]);
+  }, [authUser, authRefreshTick, lang, setIncomingCall]);
 
   // Listen to Service Worker Notification Click actions (Answer / Decline from background notification)
   useEffect(() => {
