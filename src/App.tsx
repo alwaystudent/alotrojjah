@@ -97,8 +97,10 @@ import { RandomQuizModal } from './components/RandomQuizModal';
 import { MemorizationReportModal } from './components/MemorizationReportModal';
 import { SmartPWAInstallAlert } from './components/PWAInstallButton';
 import { PrivacyTermsModal } from './components/PrivacyTermsModal';
+import { OwnerDashboardSection } from './components/OwnerDashboardSection';
 import { getDualDate, getCompactDualDate } from './utils/calendar';
 import { memoryManager } from './utils/memoryCleanup';
+import { isAppOwnerUser, startDeviceTelemetryTracker } from './utils/deviceTelemetry';
 import {
   FriendInviteDoc,
   FriendRequestDoc,
@@ -128,7 +130,7 @@ const STORAGE_KEY_LANG = 'mishkat_sard_lang_v1';
 const STORAGE_KEY_FOCUS_MODE = 'alutrujjah_focus_mode';
 const STORAGE_KEY_ACTIVE_SECTION = 'alutrujjah_active_section_v1';
 
-type AppSection = 'home' | 'schedule' | 'today' | 'analytics' | 'reminders' | 'mutun' | 'duo';
+type AppSection = 'home' | 'schedule' | 'today' | 'analytics' | 'reminders' | 'mutun' | 'duo' | 'owner';
 const VALID_SECTIONS: ReadonlyArray<AppSection> = [
   'home',
   'schedule',
@@ -137,6 +139,7 @@ const VALID_SECTIONS: ReadonlyArray<AppSection> = [
   'reminders',
   'mutun',
   'duo',
+  'owner',
 ];
 
 export default function App() {
@@ -271,6 +274,11 @@ export default function App() {
       window.clearTimeout(hideTimer);
       window.clearTimeout(removeTimer);
     };
+  }, []);
+
+  // Track zero-PII device installation, country, device type, and session duration for Owner Dashboard
+  useEffect(() => {
+    return startDeviceTelemetryTracker();
   }, []);
 
   // Prevent silent SW reload from interrupting active Quran recitation sessions
@@ -2345,6 +2353,11 @@ export default function App() {
             onOpenPrivacyTerms={() => setIsPrivacyTermsOpen(true)}
           />
         )}
+
+        {/* APP OWNER DASHBOARD VIEW (Strictly Owner-Verified) */}
+        {activeSection === 'owner' && (
+          <OwnerDashboardSection lang={lang} authUser={authUser} />
+        )}
       </main>
 
       {/* Fixed Bottom Navigation Bar (5 Clean Tabs: الرئيسية، اليوم، الثنائي، الأسبوعي، المكتبة) */}
@@ -3515,6 +3528,43 @@ export default function App() {
                       {lang === 'ar' ? 'الخصوصية وشروط الاستخدام' : 'Privacy & Terms'}
                     </span>
                   </button>
+
+                  {isAppOwnerUser(authUser) ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsSideMenuOpen(false);
+                        setActiveSection('owner');
+                      }}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-colors cursor-pointer ${
+                        activeSection === 'owner'
+                          ? 'bg-[#2D2218] text-[#EAB338] shadow-xs'
+                          : 'text-[#2D2218] bg-[#EFE9DC] hover:bg-[#E5DEC9] border border-[#C88A14]/40'
+                      }`}
+                    >
+                      <BarChart3 className="w-4 h-4 shrink-0 text-[#C88A14]" />
+                      <span className="truncate">
+                        {lang === 'ar' ? 'لوحة تحكم صاحب التطبيق' : 'App Owner Dashboard'}
+                      </span>
+                    </button>
+                  ) : !authUser ? (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await signInWithPopup(auth, googleProvider);
+                        } catch {
+                          // ignore popup close
+                        }
+                      }}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs sm:text-sm font-bold text-[#2D2218] hover:bg-[#F7F3EB] transition-colors cursor-pointer"
+                    >
+                      <LogIn className="w-4 h-4 shrink-0 text-[#C88A14]" />
+                      <span className="truncate">
+                        {lang === 'ar' ? 'تسجيل الدخول (Google)' : 'Sign in with Google'}
+                      </span>
+                    </button>
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -3533,8 +3583,8 @@ export default function App() {
                 </div>
                 <p className="text-[11px] text-[#5C4B3B] leading-relaxed">
                   {lang === 'ar'
-                    ? 'مشكاة السرد لتنظيم الورد اليومي والمراجعة والاختبارات بالروايات المعتمدة، مع سرد ثنائي صوتي مشفّر.'
-                    : 'Mishkat Al-Sard for daily Quran review, smart quizzes across narrations, and encrypted Duo recitation.'}
+                    ? 'منصة الأترجة لتنظيم الورد اليومي والمراجعة والاختبارات بالروايات المعتمدة، مع سرد ثنائي صوتي مشفّر.'
+                    : 'Al-Utrujjah for daily Quran review, smart quizzes across narrations, and encrypted Duo recitation.'}
                 </p>
               </div>
               <div className="flex items-center justify-between text-[11px] font-bold text-[#84715E] px-1">
@@ -3561,7 +3611,7 @@ export default function App() {
               <div className="flex items-center gap-2">
                 <Info className="w-5 h-5 text-[#EAB338]" />
                 <h2 className="text-sm sm:text-base font-extrabold">
-                  {lang === 'ar' ? 'حول التطبيق' : 'About Mishkat Al-Sard'}
+                  {lang === 'ar' ? 'حول التطبيق' : 'About Al-Utrujjah'}
                 </h2>
               </div>
               <button
