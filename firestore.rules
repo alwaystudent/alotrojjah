@@ -157,10 +157,15 @@ service cloud.firestore {
         && data.ayahFrom >= 1
         && data.ayahFrom <= 286
         && data.ayahTo is number
-        && data.ayahTo >= data.ayahFrom
+        && data.ayahTo >= 1
         && data.ayahTo <= 286
+        && (
+          (('surahEnd' in data) && data.surahEnd > data.surahNumber)
+          || (('curriculumMode' in data) && data.curriculumMode == 'page')
+          || data.ayahTo >= data.ayahFrom
+        )
         && (!('pageFrom' in data) || (data.pageFrom is number && data.pageFrom >= 1 && data.pageFrom <= 604))
-        && (!('pageTo' in data) || (data.pageTo is number && data.pageTo >= 1 && data.pageTo <= 604))
+        && (!('pageTo' in data) || (data.pageTo is number && data.pageTo >= 1 && data.pageTo <= 604 && (!('pageFrom' in data) || data.pageTo >= data.pageFrom)))
         && data.offerType is string
         && data.offerType.size() >= 1
         && data.offerType.size() <= 20
@@ -172,6 +177,21 @@ service cloud.firestore {
         && data.status in ['ringing', 'active', 'declined', 'ended']
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
+    }
+
+    function isValidIceCandidate(data) {
+      return data.keys().hasAll(['candidateId', 'sessionId', 'senderUid', 'recipientUid', 'candidate', 'createdAt'])
+        && data.keys().hasOnly(['candidateId', 'sessionId', 'senderUid', 'recipientUid', 'candidate', 'sdpMid', 'sdpMLineIndex', 'createdAt'])
+        && isValidId(data.candidateId)
+        && isValidId(data.sessionId)
+        && isValidId(data.senderUid)
+        && isValidId(data.recipientUid)
+        && data.candidate is string
+        && data.candidate.size() >= 1
+        && data.candidate.size() <= 2048
+        && (!('sdpMid' in data) || data.sdpMid == null || (data.sdpMid is string && data.sdpMid.size() <= 64))
+        && (!('sdpMLineIndex' in data) || data.sdpMLineIndex == null || (data.sdpMLineIndex is number && data.sdpMLineIndex >= 0 && data.sdpMLineIndex <= 20))
+        && data.createdAt is timestamp;
     }
 
     function hasAcceptedFriendship(uidA, uidB) {
@@ -289,7 +309,7 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && (
-          // Action 1: Recipient explicitly accepts or declines pending request (can also update syncedBySender)
+          // Action 1: Recipient explicitly accepts or declines pending request
           (
             existing().status == 'pending'
             && existing().toUid == request.auth.uid
@@ -343,11 +363,11 @@ service cloud.firestore {
         && resource != null
         && (
           existing().hostUid == request.auth.uid
-          || existing().guestUid == request.auth.uid
+          || ('guestUid' in existing() && existing().guestUid == request.auth.uid)
           || existing().calleeUid == request.auth.uid
         );
       allow list: if isVerifiedUser()
-        && resource.data.calleeUid == request.auth.uid;
+        && (resource.data.calleeUid == request.auth.uid || resource.data.hostUid == request.auth.uid);
 
       allow create: if isVerifiedUser()
         && isValidId(sessionId)
@@ -395,7 +415,11 @@ service cloud.firestore {
           ||
           // Action 3: Caller, Guest, or Callee ends call with optional evaluation summary (Terminal State)
           (
-            (existing().hostUid == request.auth.uid || existing().guestUid == request.auth.uid || existing().calleeUid == request.auth.uid)
+            (
+              existing().hostUid == request.auth.uid
+              || ('guestUid' in existing() && existing().guestUid == request.auth.uid)
+              || existing().calleeUid == request.auth.uid
+            )
             && incoming().status == 'ended'
             && (!('endedByUid' in incoming()) || incoming().endedByUid == null || incoming().endedByUid == request.auth.uid)
             && incoming().diff(existing()).affectedKeys().hasOnly([
@@ -407,7 +431,10 @@ service cloud.firestore {
           (
             existing().status == 'active'
             && incoming().status == 'active'
-            && (existing().hostUid == request.auth.uid || existing().guestUid == request.auth.uid)
+            && (
+              existing().hostUid == request.auth.uid
+              || ('guestUid' in existing() && existing().guestUid == request.auth.uid)
+            )
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'activeAyah', 'reciterSide', 'mistakesCount', 'markedErrors',
               'hideVersesForReciter', 'hideVersesForListener',
@@ -420,6 +447,42 @@ service cloud.firestore {
       allow delete: if isVerifiedUser()
         && isValidId(sessionId)
         && existing().hostUid == request.auth.uid;
+
+      // 7. Trickle WebRTC ICE Candidates Subcollection (Master-Gated by Parent DuoSession)
+      match /candidates/{candidateId} {
+        allow get: if isVerifiedUser()
+          && isValidId(sessionId)
+          && isValidId(candidateId)
+          && (existing().senderUid == request.auth.uid || existing().recipientUid == request.auth.uid);
+        allow list: if isVerifiedUser()
+          && (resource.data.recipientUid == request.auth.uid || resource.data.senderUid == request.auth.uid);
+        allow create: if isVerifiedUser()
+          && isValidId(sessionId)
+          && isValidId(candidateId)
+          && isValidIceCandidate(incoming())
+          && incoming().candidateId == candidateId
+          && incoming().sessionId == sessionId
+          && incoming().senderUid == request.auth.uid
+          && incoming().recipientUid != request.auth.uid
+          && incoming().createdAt == request.time
+          && exists(/databases/$(database)/documents/duoSessions/$(sessionId))
+          && get(/databases/$(database)/documents/duoSessions/$(sessionId)).data.status in ['ringing', 'active']
+          && (
+            get(/databases/$(database)/documents/duoSessions/$(sessionId)).data.hostUid == request.auth.uid
+            || get(/databases/$(database)/documents/duoSessions/$(sessionId)).data.calleeUid == request.auth.uid
+            || ('guestUid' in get(/databases/$(database)/documents/duoSessions/$(sessionId)).data
+                && get(/databases/$(database)/documents/duoSessions/$(sessionId)).data.guestUid == request.auth.uid)
+          )
+          && (
+            incoming().recipientUid == get(/databases/$(database)/documents/duoSessions/$(sessionId)).data.hostUid
+            || incoming().recipientUid == get(/databases/$(database)/documents/duoSessions/$(sessionId)).data.calleeUid
+          );
+        allow update: if false;
+        allow delete: if isVerifiedUser()
+          && isValidId(sessionId)
+          && isValidId(candidateId)
+          && (existing().senderUid == request.auth.uid || existing().recipientUid == request.auth.uid);
+      }
     }
   }
 }

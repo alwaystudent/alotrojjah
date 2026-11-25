@@ -76,8 +76,29 @@ if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
   });
 }
 
-createRoot(document.getElementById('root')!).render(
-  <ErrorBoundary>
-    <App />
-  </ErrorBoundary>
-);
+const hideSplashNow = () => {
+  const win = window as unknown as { __hideAppSplash?: () => void };
+  if (typeof win.__hideAppSplash === 'function') {
+    win.__hideAppSplash();
+  } else {
+    const splash = document.getElementById('app-splash');
+    if (splash) {
+      splash.classList.add('splash-hidden');
+      window.setTimeout(() => splash.remove(), 420);
+    }
+  }
+};
+
+try {
+  createRoot(document.getElementById('root')!).render(
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
+  );
+  requestAnimationFrame(() => {
+    requestAnimationFrame(hideSplashNow);
+  });
+} catch (err) {
+  console.error('Root render error:', err);
+  hideSplashNow();
+}

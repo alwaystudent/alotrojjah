@@ -1,120 +1,141 @@
-/**
- * Synthesized Web Audio Ringtone & Service Worker Persistent Call Notification Helper
- * Requires zero external MP3 dependencies and cleanly releases AudioContext resources.
- */
+import { memoryManager } from './memoryCleanup';
+
+type RingtoneMode = 'incoming' | 'outgoing';
 
 class CallRingtoneManager {
   private audioCtx: AudioContext | null = null;
-  private intervalId: number | null = null;
-  private isPlaying = false;
+  private unregisterCtx: (() => void) | null = null;
+  private loopTimer: number | null = null;
+  private activeMode: RingtoneMode | null = null;
+  private activeNodes: AudioNode[] = [];
+
+  private ensureContext(): AudioContext | null {
+    if (typeof window === 'undefined') return null;
+    const AudioCtxCtor =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtxCtor) return null;
+
+    if (!this.audioCtx || this.audioCtx.state === 'closed') {
+      this.audioCtx = new AudioCtxCtor();
+      if (this.unregisterCtx) this.unregisterCtx();
+      this.unregisterCtx = memoryManager.registerAudioContext(this.audioCtx);
+    }
+
+    if (this.audioCtx.state === 'suspended') {
+      this.audioCtx.resume().catch(() => {});
+    }
+    return this.audioCtx;
+  }
 
   public unlockAudio(): void {
     try {
-      const AudioCtx =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      if (!this.audioCtx || this.audioCtx.state === 'closed') {
-        this.audioCtx = new AudioCtx();
-      }
-      if (this.audioCtx.state === 'suspended') {
-        this.audioCtx.resume().catch(() => {});
-      }
-    } catch {
-      // Ignore if AudioContext blocked prior to gesture
-    }
-  }
-
-  private playToneBurst(mode: 'incoming' | 'outgoing') {
-    try {
-      const AudioCtx =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      if (!this.audioCtx || this.audioCtx.state === 'closed') {
-        this.audioCtx = new AudioCtx();
-      }
-      const ctx = this.audioCtx;
+      const ctx = this.ensureContext();
+      if (!ctx) return;
       if (ctx.state === 'suspended') {
         ctx.resume().catch(() => {});
       }
-
-      const now = ctx.currentTime;
-      const notes =
-        mode === 'incoming'
-          ? [
-              { freq: 659.25, start: 0, dur: 0.22 },
-              { freq: 783.99, start: 0.2, dur: 0.22 },
-              { freq: 987.77, start: 0.4, dur: 0.35 },
-              { freq: 783.99, start: 0.85, dur: 0.2 },
-              { freq: 987.77, start: 1.05, dur: 0.4 },
-            ]
-          : [
-              { freq: 440, start: 0, dur: 0.45 },
-              { freq: 523.25, start: 0.05, dur: 0.45 },
-            ];
-
-      notes.forEach((n) => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = mode === 'incoming' ? 'triangle' : 'sine';
-        osc.frequency.setValueAtTime(n.freq, now + n.start);
-        gain.gain.setValueAtTime(0.001, now + n.start);
-        gain.gain.exponentialRampToValueAtTime(
-          mode === 'incoming' ? 0.18 : 0.08,
-          now + n.start + 0.04
-        );
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + n.start + n.dur);
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start(now + n.start);
-        osc.stop(now + n.start + n.dur + 0.05);
-      });
-
-      if (mode === 'incoming' && typeof navigator !== 'undefined' && navigator.vibrate) {
-        try {
-          navigator.vibrate([260, 120, 260]);
-        } catch {
-          // ignore
-        }
-      }
+      // Silent 1-sample buffer unlock for iOS/Safari/Chrome autoplay policies
+      const buffer = ctx.createBuffer(1, 1, 22050);
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(ctx.destination);
+      source.start(0);
     } catch {
-      // Audio playback blocked by autoplay until interaction
+      // Ignore audio unlock errors when blocked
     }
   }
 
-  public start(mode: 'incoming' | 'outgoing' = 'incoming'): void {
+  private playTone(freq: number, startOffsetSec: number, durationSec: number, peakGain: number) {
+    const ctx = this.ensureContext();
+    if (!ctx || ctx.state === 'closed') return;
+    try {
+      const now = ctx.currentTime + startOffsetSec;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, now);
+
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(peakGain, now + 0.025);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + durationSec);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + durationSec + 0.02);
+
+      this.activeNodes.push(osc, gain);
+      osc.onended = () => {
+        try {
+          osc.disconnect();
+          gain.disconnect();
+        } catch {
+          // ignore
+        }
+      };
+    } catch {
+      // ignore
+    }
+  }
+
+  private triggerPattern(mode: RingtoneMode) {
+    if (mode === 'incoming') {
+      // Pleasant warm chime arpeggio (D5 -> F#5 -> A5) repeated gently
+      this.playTone(587.33, 0.0, 0.22, 0.12);
+      this.playTone(739.99, 0.16, 0.22, 0.12);
+      this.playTone(880.0, 0.32, 0.34, 0.14);
+      this.playTone(587.33, 0.82, 0.2, 0.09);
+      this.playTone(880.0, 0.98, 0.32, 0.11);
+    } else {
+      // Soft outgoing ringback tone
+      this.playTone(440.0, 0.0, 0.42, 0.05);
+      this.playTone(480.0, 0.0, 0.42, 0.04);
+    }
+  }
+
+  public start(mode: RingtoneMode): void {
+    if (this.activeMode === mode && this.loopTimer !== null) return;
     this.stop();
-    this.isPlaying = true;
-    this.playToneBurst(mode);
-    const intervalMs = mode === 'incoming' ? 2100 : 2800;
-    this.intervalId = window.setInterval(() => {
-      if (!this.isPlaying) return;
-      this.playToneBurst(mode);
+    this.activeMode = mode;
+    this.triggerPattern(mode);
+    const intervalMs = mode === 'incoming' ? 2300 : 2800;
+    this.loopTimer = window.setInterval(() => {
+      if (this.activeMode === mode) {
+        this.triggerPattern(mode);
+      }
     }, intervalMs);
   }
 
   public stop(): void {
-    this.isPlaying = false;
-    if (this.intervalId !== null) {
-      clearInterval(this.intervalId);
-      this.intervalId = null;
+    this.activeMode = null;
+    if (this.loopTimer !== null) {
+      window.clearInterval(this.loopTimer);
+      this.loopTimer = null;
     }
-    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+    this.activeNodes.forEach((node) => {
       try {
-        navigator.vibrate(0);
+        if ('stop' in node && typeof (node as OscillatorNode).stop === 'function') {
+          (node as OscillatorNode).stop();
+        }
+        node.disconnect();
       } catch {
         // ignore
       }
-    }
+    });
+    this.activeNodes = [];
   }
 }
 
 export const callRingtone = new CallRingtoneManager();
 
+let fallbackNotificationRef: Notification | null = null;
+
 export async function dispatchBackgroundCallNotification(params: {
   sessionId: string;
   callerName: string;
-  surahLabel: string;
-  ayahRange: string;
+  surahLabel?: string;
+  ayahRange?: string;
   lang: 'ar' | 'en';
 }): Promise<void> {
   if (typeof window === 'undefined' || !('Notification' in window)) return;
@@ -123,8 +144,9 @@ export async function dispatchBackgroundCallNotification(params: {
   try {
     if ('serviceWorker' in navigator) {
       const reg = await navigator.serviceWorker.getRegistration();
-      if (reg && reg.active) {
-        reg.active.postMessage({
+      const targetSw = reg?.active || navigator.serviceWorker.controller;
+      if (targetSw) {
+        targetSw.postMessage({
           type: 'SHOW_CALL_NOTIFICATION',
           ...params,
         });
@@ -132,44 +154,50 @@ export async function dispatchBackgroundCallNotification(params: {
       }
     }
   } catch {
-    // Fallback below
+    // Fallback to direct Notification API below
   }
 
   try {
-    const isAr = params.lang !== 'en';
-    new Notification(
-      isAr
-        ? `مكالمة سرد ثنائي واردة من ${params.callerName}`
-        : `Incoming Duo Sard Call from ${params.callerName}`,
-      {
-        body: `${params.surahLabel} (${params.ayahRange})`,
-        icon: '/pwa-192x192.png',
-        tag: `alutrujjah-call-${params.sessionId}`,
-        requireInteraction: true,
-        silent: false,
-      }
-    );
+    if (fallbackNotificationRef) {
+      fallbackNotificationRef.close();
+      fallbackNotificationRef = null;
+    }
+    const title =
+      params.lang === 'ar'
+        ? `مكالمة سرد ثنائي من ${params.callerName}`
+        : `Incoming Duo Call from ${params.callerName}`;
+    const body = [params.surahLabel, params.ayahRange].filter(Boolean).join(' · ');
+    fallbackNotificationRef = new Notification(title, {
+      body: body || (params.lang === 'ar' ? 'اضغط للرد على المكالمة' : 'Tap to answer call'),
+      tag: `duo-call-${params.sessionId}`,
+      requireInteraction: true,
+    });
   } catch {
-    // Ignore restricted Notification inside iframe
+    // Ignore unsupported Notification options on mobile browsers
   }
 }
 
-export async function dismissBackgroundCallNotification(sessionId: string): Promise<void> {
+export async function dismissBackgroundCallNotification(sessionId?: string): Promise<void> {
+  if (fallbackNotificationRef) {
+    try {
+      fallbackNotificationRef.close();
+    } catch {
+      // ignore
+    }
+    fallbackNotificationRef = null;
+  }
+
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
   try {
-    if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
-      const reg = await navigator.serviceWorker.getRegistration();
-      if (reg && reg.active) {
-        reg.active.postMessage({
-          type: 'CLOSE_CALL_NOTIFICATION',
-          sessionId,
-        });
-      }
-      if (reg && reg.getNotifications) {
-        const notifs = await reg.getNotifications({ tag: `alutrujjah-call-${sessionId}` });
-        notifs.forEach((n) => n.close());
-      }
+    const reg = await navigator.serviceWorker.getRegistration();
+    const targetSw = reg?.active || navigator.serviceWorker.controller;
+    if (targetSw) {
+      targetSw.postMessage({
+        type: 'CLOSE_CALL_NOTIFICATION',
+        sessionId: sessionId || null,
+      });
     }
   } catch {
-    // Ignore
+    // ignore
   }
 }

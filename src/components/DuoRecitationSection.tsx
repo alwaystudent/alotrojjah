@@ -1,68 +1,60 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  AlertCircle,
+  ArrowLeftRight,
+  BookOpen,
+  Check,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
+  Eye,
+  EyeOff,
+  Link2,
+  LogIn,
+  LogOut,
+  Mail,
+  Mic,
+  MicOff,
+  PhoneCall,
+  PhoneOff,
+  RefreshCw,
+  RotateCcw,
+  Share2,
+  Shield,
+  ShieldCheck,
+  Sparkles,
+  Trash2,
+  UserCheck,
+  UserPlus,
+  UserX,
+  Users,
+  Volume2,
+  VolumeX,
+  X,
+} from 'lucide-react';
 import {
   User,
-  onAuthStateChanged,
-  signInWithPopup,
-  signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  onAuthStateChanged,
   sendEmailVerification,
-  updateProfile,
+  signInWithEmailAndPassword,
+  signInWithPopup,
   signOut,
+  updateProfile,
 } from 'firebase/auth';
 import {
   collection,
   doc,
   getDoc,
-  setDoc,
-  updateDoc,
-  deleteDoc,
+  getDocs,
   onSnapshot,
   query,
-  where,
   serverTimestamp,
+  setDoc,
+  updateDoc,
+  where,
 } from 'firebase/firestore';
-import {
-  Users,
-  Mail,
-  Lock,
-  LogIn,
-  LogOut,
-  ShieldCheck,
-  Mic,
-  MicOff,
-  PhoneOff,
-  PhoneCall,
-  UserPlus,
-  Trash2,
-  Copy,
-  Check,
-  ArrowLeftRight,
-  AlertCircle,
-  BookOpen,
-  RefreshCw,
-  Link2,
-  UserCheck,
-  Sparkles,
-  Eye,
-  EyeOff,
-  BellRing,
-  SlidersHorizontal,
-  ChevronLeft,
-  ChevronRight,
-  ExternalLink,
-  Share2,
-  Search,
-  FileText,
-  Hash,
-  Touchpad,
-  ListFilter,
-  UserX,
-  Award,
-  Radio,
-  Volume2,
-  Volume1,
-  X,
-} from 'lucide-react';
 import { auth, db, googleProvider, OperationType, handleFirestoreError } from '../firebase';
 import {
   Language,
@@ -71,58 +63,37 @@ import {
   SURAH_LIST,
   getRiwayahLabel,
 } from '../data/quranData';
+import { TrustedVerseItem, fetchTrustedCurriculumVerses } from '../utils/trustedQuranApi';
 import { memoryManager } from '../utils/memoryCleanup';
+import { callRingtone, dismissBackgroundCallNotification } from '../utils/ringtone';
 import {
-  FriendContactItem,
+  FriendContactDoc,
   FriendInviteDoc,
   FriendRequestDoc,
-  syncVerifiedUserProfileAndDirectory,
-  updateUserPresenceHeartbeat,
-  subscribeFriendPresence,
-  formatFriendShortCode,
-  getOrCreateMyFriendInvite,
-  regenerateMyFriendInvite,
-  fetchFriendInviteDetails,
-  sendConsentFriendRequest,
+  IceCandidateDoc,
+  IncomingDuoCall,
   approveIncomingFriendRequest,
   declineIncomingFriendRequest,
+  extractInviteTokenFromInput,
+  fetchFriendInviteDetails,
+  formatFriendShortCode,
   getDisplayNameForUser,
+  getOrCreateMyFriendInvite,
+  regenerateMyFriendInvite,
+  removeFriendWithCleanup,
+  sendConsentFriendRequest,
+  subscribeFriendPresence,
+  syncAcceptedOutgoingRequest,
+  syncVerifiedUserProfileAndDirectory,
+  updateUserPresenceHeartbeat,
 } from '../utils/friendsDirectory';
-import {
-  callRingtone,
-  dismissBackgroundCallNotification,
-} from '../utils/ringtone';
-import {
-  TrustedQuranSourceId,
-  TrustedVerseItem,
-  TRUSTED_QURAN_SOURCES,
-  fetchTrustedCurriculumVerses,
-} from '../utils/trustedQuranApi';
 
-// ============================================================================
-// إعدادات خادم TURN لوضع الخصوصية العالية وإخفاء عنوان الـ IP الحقيقي (IP Masking)
-// ضع بيانات خادم TURN المجاني الخاص بك هنا لاحقاً بسهولة:
-// ============================================================================
-export const TURN_SERVER_URL = '';
-export const TURN_USERNAME = '';
-export const TURN_CREDENTIAL = '';
-
-export type SessionEvaluationRating =
-  | 'excellent'
-  | 'very_good'
-  | 'good_practice'
-  | 'needs_review';
-
-const EVALUATION_CHOICES: {
-  id: SessionEvaluationRating;
-  labelAr: string;
-  labelEn: string;
-}[] = [
-  { id: 'excellent', labelAr: 'ممتاز — متقن', labelEn: 'Excellent — Mastered' },
-  { id: 'very_good', labelAr: 'جيد جداً', labelEn: 'Very Good' },
-  { id: 'good_practice', labelAr: 'جيد — يحتاج تثبيتاً', labelEn: 'Good — Needs Reinforcement' },
-  { id: 'needs_review', labelAr: 'يحتاج مراجعة مركزة', labelEn: 'Needs Focused Review' },
-];
+export interface DuoActiveCallSummary {
+  isInCall: boolean;
+  status: 'ringing' | 'active' | null;
+  peerName: string;
+  surahLabel: string;
+}
 
 interface DuoRecitationSectionProps {
   lang: Language;
@@ -132,243 +103,126 @@ interface DuoRecitationSectionProps {
   pendingAcceptCallId?: string | null;
   onClearPendingCall?: () => void;
   onOpenPrivacyTerms?: () => void;
+  onActiveCallStateChange?: (summary: DuoActiveCallSummary) => void;
 }
 
-interface DuoSessionDoc {
-  sessionId: string;
-  hostUid: string;
-  hostName: string;
-  guestUid?: string | null;
-  guestName?: string | null;
-  calleeUid: string;
-  callMode: 'friend_call';
-  riwayah?: QuranRiwayah;
-  curriculumMode?: 'surah' | 'ayah' | 'page';
-  surahNumber: number;
-  surahEnd?: number;
-  ayahFrom: number;
-  ayahTo: number;
-  pageFrom?: number;
-  pageTo?: number;
-  hideVersesForReciter?: boolean;
-  hideVersesForListener?: boolean;
-  activeAyah?: number;
-  reciterSide?: 'host' | 'guest';
-  mistakesCount?: number;
-  markedErrors?: string[];
-  endedByUid?: string | null;
-  sessionEvaluation?: SessionEvaluationRating | null;
-  callDurationSeconds?: number | null;
-  accuracyPct?: number | null;
-  offerType: string;
-  offerSdp: string;
-  answerType?: string | null;
-  answerSdp?: string | null;
-  status: 'ringing' | 'active' | 'declined' | 'ended';
-}
+type SessionEvalKey = 'excellent' | 'very_good' | 'good_practice' | 'needs_review';
 
-interface CallSummaryBanner {
-  partnerName: string;
-  evaluation: SessionEvaluationRating;
+interface PostCallSummary {
+  peerName: string;
+  surahLabel: string;
   durationSeconds: number;
   mistakesCount: number;
   accuracyPct: number;
+  evaluation: SessionEvalKey | null;
 }
 
-function toArabicDigits(value: string | number): string {
-  const map = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
-  return String(value).replace(/\d/g, (d) => map[Number(d)] ?? d);
-}
+const DEFAULT_STUN_SERVERS: RTCIceServer[] = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:stun3.l.google.com:19302' },
+];
 
-function formatCallDuration(totalSeconds: number, isAr: boolean): string {
-  const safe = Math.max(0, Math.floor(totalSeconds));
-  const mins = String(Math.floor(safe / 60)).padStart(2, '0');
-  const secs = String(safe % 60).padStart(2, '0');
-  const formatted = `${mins}:${secs}`;
-  return isAr ? toArabicDigits(formatted) : formatted;
-}
+const EVALUATION_CHOICES: {
+  id: SessionEvalKey;
+  labelAr: string;
+  labelEn: string;
+  colorClass: string;
+}[] = [
+  {
+    id: 'excellent',
+    labelAr: 'إتقان ممتاز',
+    labelEn: 'Excellent Mastery',
+    colorClass: 'bg-[#ECFDF3] border-[#15803D] text-[#14532D]',
+  },
+  {
+    id: 'very_good',
+    labelAr: 'جيد جداً',
+    labelEn: 'Very Good',
+    colorClass: 'bg-[#F0F9FF] border-[#0369A1] text-[#0C4A6E]',
+  },
+  {
+    id: 'good_practice',
+    labelAr: 'تدريب جيد',
+    labelEn: 'Good Practice',
+    colorClass: 'bg-[#FEFCE8] border-[#CA8A04] text-[#713F12]',
+  },
+  {
+    id: 'needs_review',
+    labelAr: 'يحتاج مراجعة',
+    labelEn: 'Needs Review',
+    colorClass: 'bg-[#FEF2F2] border-[#DC2626] text-[#7F1D1D]',
+  },
+];
 
-function parseMarkedErrorToken(token: string): {
-  verseKey: string;
-  word: string;
-  wordIndex: number;
-} {
-  const parts = token.split('|');
-  const verseKey = parts[0] || '';
-  const word = parts[1] || token;
-  const wordIndex = Number(parts[2] ?? -1);
-  return { verseKey, word, wordIndex };
-}
-
-function buildRtcConfiguration(highPrivacyRelay: boolean): RTCConfiguration {
-  const iceServers: RTCIceServer[] = [];
-  const turnUrl = TURN_SERVER_URL.trim();
-
-  if (turnUrl) {
-    iceServers.push({
-      urls: turnUrl,
-      ...(TURN_USERNAME.trim() ? { username: TURN_USERNAME.trim() } : {}),
-      ...(TURN_CREDENTIAL.trim() ? { credential: TURN_CREDENTIAL.trim() } : {}),
-    });
+function generateId(prefix: string): string {
+  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  const bytes = new Uint8Array(16);
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
   }
+  let out = '';
+  for (let i = 0; i < bytes.length; i++) out += chars[bytes[i] % chars.length];
+  return `${prefix}_${out}`;
+}
 
-  // Enforce strict TURN relay IP masking only when a TURN server is configured;
-  // otherwise use encrypted DTLS-SRTP STUN routing so live voice connects immediately.
-  const effectiveRelayOnly = highPrivacyRelay && Boolean(turnUrl);
+function formatDuration(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  const mins = Math.floor(s / 60);
+  const secs = s % 60;
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
 
-  if (!effectiveRelayOnly) {
-    iceServers.push(
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun2.l.google.com:19302' }
-    );
+function buildIceConfiguration(highPrivacy: boolean): RTCConfiguration {
+  const turnUrl = import.meta.env.VITE_TURN_SERVER_URL as string | undefined;
+  const turnUser = import.meta.env.VITE_TURN_USERNAME as string | undefined;
+  const turnCred = import.meta.env.VITE_TURN_CREDENTIAL as string | undefined;
+
+  const iceServers: RTCIceServer[] = [...DEFAULT_STUN_SERVERS];
+  const hasTurn = Boolean(turnUrl && turnUrl.trim().length > 0);
+  if (hasTurn && turnUrl) {
+    iceServers.push({
+      urls: turnUrl.split(',').map((u) => u.trim()).filter(Boolean),
+      username: turnUser || undefined,
+      credential: turnCred || undefined,
+    });
   }
 
   return {
     iceServers,
-    iceTransportPolicy: effectiveRelayOnly ? 'relay' : 'all',
-    iceCandidatePoolSize: 2,
+    iceTransportPolicy: highPrivacy && hasTurn ? 'relay' : 'all',
+    iceCandidatePoolSize: 4,
   };
 }
 
-// Cryptographically random non-sequential 8-character ephemeral session ID
-function generateEphemeralSessionId(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  const randomBytes = new Uint8Array(8);
-  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
-    crypto.getRandomValues(randomBytes);
-  } else {
-    for (let i = 0; i < randomBytes.length; i++) {
-      randomBytes[i] = Math.floor(Math.random() * 256);
+function buildCurriculumSummary(meta: IncomingDuoCall | null, lang: Language): string {
+  if (!meta) return '';
+  const rw = getRiwayahLabel(meta.riwayah || 'hafs', lang);
+  if (meta.curriculumMode === 'page') {
+    const p1 = meta.pageFrom || 1;
+    const p2 = meta.pageTo || p1;
+    return lang === 'ar'
+      ? `${p1 === p2 ? `صفحة ${p1}` : `الصفحات ${p1} - ${p2}`} · ${rw}`
+      : `${p1 === p2 ? `Page ${p1}` : `Pages ${p1}-${p2}`} · ${rw}`;
+  }
+  const sStart = SURAH_LIST.find((s) => s.number === meta.surahNumber);
+  const sEnd = meta.surahEnd ? SURAH_LIST.find((s) => s.number === meta.surahEnd) : null;
+  if (meta.curriculumMode === 'surah' && sStart) {
+    if (sEnd && sEnd.number !== sStart.number) {
+      return lang === 'ar'
+        ? `من ${sStart.nameAr} إلى ${sEnd.nameAr} · ${rw}`
+        : `${sStart.nameEn} to ${sEnd.nameEn} · ${rw}`;
     }
+    return lang === 'ar' ? `سورة ${sStart.nameAr} · ${rw}` : `Surah ${sStart.nameEn} · ${rw}`;
   }
-  let suffix = '';
-  for (let i = 0; i < 8; i++) {
-    suffix += chars.charAt(randomBytes[i] % chars.length);
-  }
-  return `SARD-${suffix}`;
-}
-
-function waitForIceComplete(pc: RTCPeerConnection, timeoutMs = 3500): Promise<void> {
-  if (pc.iceGatheringState === 'complete') {
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => {
-    let settled = false;
-    let candidateSettleTimer: ReturnType<typeof setTimeout> | null = null;
-    const done = () => {
-      if (settled) return;
-      settled = true;
-      pc.removeEventListener('icegatheringstatechange', onStateChange);
-      pc.removeEventListener('icecandidate', onCandidate);
-      clearTimeout(timer);
-      if (candidateSettleTimer !== null) {
-        clearTimeout(candidateSettleTimer);
-      }
-      resolve();
-    };
-    const onStateChange = () => {
-      if (pc.iceGatheringState === 'complete') {
-        done();
-      }
-    };
-    const onCandidate = (event: RTCPeerConnectionIceEvent) => {
-      if (!event.candidate) {
-        done();
-        return;
-      }
-      const cand = event.candidate.candidate || '';
-      if (
-        (cand.includes('typ srflx') || cand.includes('typ relay')) &&
-        candidateSettleTimer === null
-      ) {
-        candidateSettleTimer = setTimeout(done, 600);
-      }
-    };
-    pc.addEventListener('icegatheringstatechange', onStateChange);
-    pc.addEventListener('icecandidate', onCandidate);
-    const timer = setTimeout(done, timeoutMs);
-  });
-}
-
-function mapFirebaseAuthError(
-  err: unknown,
-  lang: Language
-): { message: string; isProviderDisabled?: boolean } {
-  const code = (err as { code?: string })?.code || '';
-  if (code === 'auth/operation-not-allowed') {
-    return {
-      isProviderDisabled: true,
-      message:
-        lang === 'ar'
-          ? 'الدخول بالبريد غير مفعّل بعد في Firebase. استخدم «الدخول السريع عبر Google».'
-          : 'Email/Password sign-in is disabled. Use Google Sign-In.',
-    };
-  }
-  if (
-    code === 'auth/invalid-credential' ||
-    code === 'auth/wrong-password' ||
-    code === 'auth/user-not-found'
-  ) {
-    return {
-      message:
-        lang === 'ar'
-          ? 'البريد أو كلمة المرور غير صحيحة.'
-          : 'Invalid email or password.',
-    };
-  }
-  if (code === 'auth/email-already-in-use') {
-    return {
-      message:
-        lang === 'ar'
-          ? 'هذا البريد مسجل مسبقاً. اختر «تسجيل الدخول».'
-          : 'Email already registered. Switch to Sign In.',
-    };
-  }
-  if (code === 'auth/weak-password') {
-    return {
-      message:
-        lang === 'ar'
-          ? 'كلمة المرور ضعيفة؛ يُرجى إدخال 6 أحرف على الأقل.'
-          : 'Password is too weak (minimum 6 characters).',
-    };
-  }
-  if (code === 'auth/invalid-email') {
-    return {
-      message:
-        lang === 'ar' ? 'صيغة البريد الإلكتروني غير صحيحة.' : 'Invalid email address format.',
-    };
-  }
-  if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
-    return {
-      message:
-        lang === 'ar'
-          ? 'تم إغلاق نافذة تسجيل الدخول قبل إتمام العملية.'
-          : 'Sign-in popup was closed before completing.',
-    };
-  }
-  if (code === 'auth/unauthorized-domain') {
-    return {
-      message:
-        lang === 'ar'
-          ? 'هذا النطاق غير مصرح به في Firebase Auth.'
-          : 'This domain is not authorized in Firebase Authentication.',
-    };
-  }
-  return {
-    message:
-      err instanceof Error
-        ? err.message
-        : lang === 'ar'
-        ? 'تعذر إتمام تسجيل الدخول. يُرجى المحاولة مجدداً.'
-        : 'Sign-in failed. Please try again.',
-  };
-}
-
-function extractFirstWordMask(text: string): string {
-  const words = text.trim().split(/\s+/);
-  if (words.length <= 1) return words[0] || '';
-  return `${words[0]} · · · · ·`;
+  return sStart
+    ? lang === 'ar'
+      ? `سورة ${sStart.nameAr} (${meta.ayahFrom}-${meta.ayahTo}) · ${rw}`
+      : `Surah ${sStart.nameEn} (${meta.ayahFrom}-${meta.ayahTo}) · ${rw}`
+    : rw;
 }
 
 export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
@@ -379,321 +233,356 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   pendingAcceptCallId = null,
   onClearPendingCall,
   onOpenPrivacyTerms,
+  onActiveCallStateChange,
 }) => {
   const isAr = lang === 'ar';
 
-  // Auth State
+  // Auth & Profile State (never spread Firebase User!)
   const [user, setUser] = useState<User | null>(auth.currentUser);
-  const [authReady, setAuthReady] = useState<boolean>(false);
+  const [authLoading, setAuthLoading] = useState<boolean>(true);
+  const [profileVersion, setProfileVersion] = useState<number>(0);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
-  const [emailInput, setEmailInput] = useState('');
-  const [passwordInput, setPasswordInput] = useState('');
-  const [nameInput, setNameInput] = useState('');
-  const [authLoading, setAuthLoading] = useState(false);
+  const [emailInput, setEmailInput] = useState<string>('');
+  const [passwordInput, setPasswordInput] = useState<string>('');
+  const [nameInput, setNameInput] = useState<string>('');
+  const [authBusy, setAuthBusy] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string | null>(null);
-  const [providerHelpOpen, setProviderHelpOpen] = useState(false);
-  const [verificationMsg, setVerificationMsg] = useState<string | null>(null);
+  const [authSuccessMsg, setAuthSuccessMsg] = useState<string | null>(null);
+  const [editingDisplayName, setEditingDisplayName] = useState<boolean>(false);
+  const [displayNameDraft, setDisplayNameDraft] = useState<string>('');
 
-  // Notification permission for background call ringing
-  const [notifPerm, setNotifPerm] = useState<NotificationPermission | 'unsupported'>(() =>
-    typeof window !== 'undefined' && 'Notification' in window
-      ? Notification.permission
-      : 'unsupported'
-  );
-
-  // Consent-Based Link-Only Friends, Live Presence & Invites State
-  const [friends, setFriends] = useState<FriendContactItem[]>([]);
-  const [friendPresenceMap, setFriendPresenceMap] = useState<
-    Record<string, { online: boolean; lastSeen?: number }>
-  >({});
+  // Friends, Invite & Presence State
   const [myInvite, setMyInvite] = useState<FriendInviteDoc | null>(null);
-  const [inviteBusy, setInviteBusy] = useState(false);
+  const [inviteCopied, setInviteCopied] = useState<boolean>(false);
+  const [inviteBusy, setInviteBusy] = useState<boolean>(false);
+  const [pasteInviteInput, setPasteInviteInput] = useState<string>('');
+  const [lookupInviteResult, setLookupInviteResult] = useState<FriendInviteDoc | null>(null);
+  const [lookupBusy, setLookupBusy] = useState<boolean>(false);
+  const [friends, setFriends] = useState<FriendContactDoc[]>([]);
   const [incomingRequests, setIncomingRequests] = useState<FriendRequestDoc[]>([]);
-  const [outgoingPendingRequests, setOutgoingPendingRequests] = useState<FriendRequestDoc[]>([]);
-  const [pasteInviteInput, setPasteInviteInput] = useState(initialFriendInviteToken);
-  const [previewedInvite, setPreviewedInvite] = useState<FriendInviteDoc | null>(null);
-  const [inviteLookupBusy, setInviteLookupBusy] = useState(false);
-  const [friendFeedback, setFriendFeedback] = useState<{
-    type: 'ok' | 'err';
-    msg: string;
-  } | null>(null);
+  const [outgoingRequests, setOutgoingRequests] = useState<FriendRequestDoc[]>([]);
+  const [presenceMap, setPresenceMap] = useState<Record<string, number>>({});
   const [confirmRemoveFriendUid, setConfirmRemoveFriendUid] = useState<string | null>(null);
+  const [lobbyNotice, setLobbyNotice] = useState<{ type: 'info' | 'error' | 'success'; text: string } | null>(null);
 
-  // Curriculum & Riwayah Setup State (Editable in Lobby Modal AND Live Inside Call)
-  const [selectedRiwayah, setSelectedRiwayah] = useState<QuranRiwayah>(defaultRiwayah);
+  // Curriculum & Call Options
+  const [riwayah, setRiwayah] = useState<QuranRiwayah>(defaultRiwayah);
   const [curriculumMode, setCurriculumMode] = useState<'surah' | 'ayah' | 'page'>('ayah');
-  const [surahPickStyle, setSurahPickStyle] = useState<'touch' | 'dropdown'>('touch');
-  const [surahSearchQuery, setSurahSearchQuery] = useState<string>('');
-  const [selectedSurah, setSelectedSurah] = useState<number>(78);
-  const [selectedSurahEnd, setSelectedSurahEnd] = useState<number>(78);
-  const [multiSurahRange, setMultiSurahRange] = useState<boolean>(false);
+  const [surahNumber, setSurahNumber] = useState<number>(1);
+  const [surahEnd, setSurahEnd] = useState<number>(1);
   const [ayahFrom, setAyahFrom] = useState<number>(1);
-  const [ayahTo, setAyahTo] = useState<number>(10);
+  const [ayahTo, setAyahTo] = useState<number>(7);
   const [pageFrom, setPageFrom] = useState<number>(1);
-  const [pageTo, setPageTo] = useState<number>(2);
-  const [showCurriculumModal, setShowCurriculumModal] = useState<boolean>(false);
-  const [lobbyBusy, setLobbyBusy] = useState<boolean>(false);
-  const [lobbyError, setLobbyError] = useState<string | null>(null);
+  const [pageTo, setPageTo] = useState<number>(1);
+  const [highPrivacyMasking, setHighPrivacyMasking] = useState<boolean>(false);
 
-  // Recitation & Privacy Options
-  const [hideVersesForReciter, setHideVersesForReciter] = useState<boolean>(true);
-  const [hideVersesForListener, setHideVersesForListener] = useState<boolean>(false);
-  const [localHideVerses, setLocalHideVerses] = useState<boolean>(false);
-  const [fadeFirstWordOnly, setFadeFirstWordOnly] = useState<boolean>(false);
-  const [peekVerseKey, setPeekVerseKey] = useState<string | null>(null);
-  const [textScale, setTextScale] = useState<'normal' | 'large' | 'xlarge'>('large');
-  const [trustedSourceId] = useState<TrustedQuranSourceId>('kfgqpc_hafs');
-  const [activeUsedSource, setActiveUsedSource] = useState<TrustedQuranSourceId>('kfgqpc_hafs');
-
-  // Privacy & Encryption Settings (Default ON for High Privacy IP Masking via TURN relay, persisted locally)
-  const [highPrivacyIpMask, setHighPrivacyIpMask] = useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem('alutrujjah_high_privacy_ip');
-      return saved === null ? true : saved === 'true';
-    } catch {
-      return true;
-    }
-  });
-  const highPrivacyRef = useRef<boolean>(highPrivacyIpMask);
-
-  useEffect(() => {
-    highPrivacyRef.current = highPrivacyIpMask;
-    try {
-      localStorage.setItem('alutrujjah_high_privacy_ip', String(highPrivacyIpMask));
-    } catch {
-      // ignore
-    }
-  }, [highPrivacyIpMask]);
-
-  // Keep Riwayah synced when changed from Settings while not inside an active call
-  useEffect(() => {
-    if (!sessionIdRef.current) {
-      setSelectedRiwayah(defaultRiwayah);
-    }
-  }, [defaultRiwayah]);
-
-  // Active Direct Voice Call Session State
+  // Active Session & WebRTC State
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [myRoleInCall, setMyRoleInCall] = useState<'host' | 'guest'>('host');
-  const [sessionMeta, setSessionMeta] = useState<DuoSessionDoc | null>(null);
-  const [outgoingCallTargetName, setOutgoingCallTargetName] = useState<string | null>(null);
+  const [sessionMeta, setSessionMeta] = useState<IncomingDuoCall | null>(null);
   const [peerConnState, setPeerConnState] = useState<
-    'idle' | 'ringing' | 'connecting' | 'connected' | 'declined' | 'disconnected' | 'ended'
+    'idle' | 'ringing' | 'connecting' | 'connected' | 'reconnecting' | 'failed'
   >('idle');
   const [isMicMuted, setIsMicMuted] = useState<boolean>(false);
-  const [speakerMode, setSpeakerMode] = useState<'speaker' | 'earpiece'>('speaker');
-  const [needsAudioUnlock, setNeedsAudioUnlock] = useState<boolean>(false);
   const [micLevel, setMicLevel] = useState<number>(0);
-  const [copiedInvite, setCopiedInvite] = useState<boolean>(false);
-  const [callElapsedSeconds, setCallElapsedSeconds] = useState<number>(0);
+  const [audioUnlockNeeded, setAudioUnlockNeeded] = useState<boolean>(false);
+  const [speakerOutputMode, setSpeakerOutputMode] = useState<'speaker' | 'earpiece'>('speaker');
+  const [callSeconds, setCallSeconds] = useState<number>(0);
+  const [postCallSummary, setPostCallSummary] = useState<PostCallSummary | null>(null);
 
-  // End-Call Evaluation Modal State
-  const [showEvalModal, setShowEvalModal] = useState<boolean>(false);
-  const [selectedEvaluation, setSelectedEvaluation] =
-    useState<SessionEvaluationRating>('excellent');
-  const [lastCallSummary, setLastCallSummary] = useState<CallSummaryBanner | null>(null);
-
-  // Synchronized Quran Reading & Marked Errors State
+  // Verses & Interactive Recitation Workspace State
   const [verses, setVerses] = useState<TrustedVerseItem[]>([]);
   const [versesLoading, setVersesLoading] = useState<boolean>(false);
-  const [activeAyah, setActiveAyah] = useState<number>(1);
-  const [reciterSide, setReciterSide] = useState<'host' | 'guest'>('host');
-  const [mistakesCount, setMistakesCount] = useState<number>(0);
-  const [markedErrors, setMarkedErrors] = useState<string[]>([]);
+  const [versesError, setVersesError] = useState<string | null>(null);
+  const [localRevealCurrentAyah, setLocalRevealCurrentAyah] = useState<boolean>(false);
+  const [localFadeFirstWordOnly, setLocalFadeFirstWordOnly] = useState<boolean>(false);
+  const [verseTextScale, setVerseTextScale] = useState<number>(1);
+  const [showEndEvalModal, setShowEndEvalModal] = useState<boolean>(false);
+  const [endingBusy, setEndingBusy] = useState<boolean>(false);
 
-  // Refs for WebRTC / Streams / Listeners (Strict Audio-Only — zero RTCDataChannel)
+  // WebRTC & Resource Refs
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const unregisterStreamRef = useRef<(() => void) | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
-  const speakerModeRef = useRef<'speaker' | 'earpiece'>('speaker');
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const meterRafRef = useRef<number | null>(null);
-  const unsubSessionRef = useRef<(() => void) | null>(null);
-  const remoteAnswerAppliedRef = useRef<boolean>(false);
+  const micAnalyserCtxRef = useRef<AudioContext | null>(null);
+  const unregisterAnalyserCtxRef = useRef<(() => void) | null>(null);
+  const micMeterRafRef = useRef<number | null>(null);
   const sessionIdRef = useRef<string | null>(null);
-  const myRoleRef = useRef<'host' | 'guest'>('host');
-  const handledAutoCallRef = useRef<string | null>(null);
-  const sessionStatusRef = useRef<DuoSessionDoc['status'] | undefined>(undefined);
+  const sessionMetaRef = useRef<IncomingDuoCall | null>(null);
+  const sessionCreatedRef = useRef<boolean>(false);
+  const remoteDescSetRef = useRef<boolean>(false);
+  const pendingLocalCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
+  const pendingRemoteCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
+  const processedCandidateIdsRef = useRef<Set<string>>(new Set());
+  const ringingTimeoutRef = useRef<number | null>(null);
+  const iceRestartAttemptedRef = useRef<boolean>(false);
+  const answeringCallIdRef = useRef<string | null>(null);
+  const callStartTimestampRef = useRef<number | null>(null);
+  const ayahRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   useEffect(() => {
     sessionIdRef.current = sessionId;
-    if (typeof window !== 'undefined') {
-      const win = window as unknown as { __alutrujjahActiveVoiceCall?: boolean };
-      win.__alutrujjahActiveVoiceCall = Boolean(sessionId);
-      if (!sessionId) {
-        window.dispatchEvent(new Event('alutrujjah:call-ended'));
-      }
-    }
   }, [sessionId]);
 
   useEffect(() => {
-    myRoleRef.current = myRoleInCall;
-  }, [myRoleInCall]);
+    sessionMetaRef.current = sessionMeta;
+  }, [sessionMeta]);
 
   useEffect(() => {
-    sessionStatusRef.current = sessionMeta?.status;
-  }, [sessionMeta?.status]);
+    setRiwayah(defaultRiwayah);
+  }, [defaultRiwayah]);
 
-  // Call duration timer while session is open
-  useEffect(() => {
-    if (!sessionId) {
-      setCallElapsedSeconds(0);
-      return;
-    }
-    const timer = window.setInterval(() => {
-      setCallElapsedSeconds((prev) => prev + 1);
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [sessionId]);
-
-  const currentSurahInfo = useMemo(
-    () => SURAH_LIST.find((s) => s.number === selectedSurah) || SURAH_LIST[0],
-    [selectedSurah]
+  // Adjust ayah bounds when surah changes
+  const selectedSurahInfo = useMemo(
+    () => SURAH_LIST.find((s) => s.number === surahNumber) || SURAH_LIST[0],
+    [surahNumber]
   );
 
-  const filteredSurahs = useMemo(() => {
-    const q = surahSearchQuery.trim().toLowerCase();
-    if (!q) return SURAH_LIST;
-    return SURAH_LIST.filter(
-      (s) =>
-        s.nameAr.includes(q) ||
-        s.nameEn.toLowerCase().includes(q) ||
-        String(s.number) === q
-    );
-  }, [surahSearchQuery]);
-
-  // Adjust ayah bounds if selectedSurah changes (keep 1..10 default on Surah 78)
-  const prevSurahRef = useRef<number>(selectedSurah);
   useEffect(() => {
-    if (prevSurahRef.current !== selectedSurah) {
-      prevSurahRef.current = selectedSurah;
+    if (ayahFrom > selectedSurahInfo.ayahCount) {
       setAyahFrom(1);
-      setAyahTo(Math.min(currentSurahInfo.ayahCount, 10));
-      if (!multiSurahRange || selectedSurahEnd < selectedSurah) {
-        setSelectedSurahEnd(selectedSurah);
+      setAyahTo(selectedSurahInfo.ayahCount);
+    } else if (ayahTo > selectedSurahInfo.ayahCount) {
+      setAyahTo(selectedSurahInfo.ayahCount);
+    }
+    if (surahEnd < surahNumber) {
+      setSurahEnd(surahNumber);
+    }
+  }, [surahNumber, surahEnd, ayahFrom, ayahTo, selectedSurahInfo.ayahCount]);
+
+  // Notify parent & window of active call status
+  useEffect(() => {
+    const win = window as unknown as { __alutrujjahActiveVoiceCall?: boolean };
+    const isInCall = Boolean(sessionId);
+    win.__alutrujjahActiveVoiceCall = isInCall;
+    if (!isInCall) {
+      window.dispatchEvent(new Event('alutrujjah:call-ended'));
+    }
+
+    if (onActiveCallStateChange) {
+      const peerName = sessionMeta
+        ? sessionMeta.hostUid === user?.uid
+          ? friends.find((f) => f.friendUid === sessionMeta.calleeUid)?.friendName ||
+            sessionMeta.guestName ||
+            (isAr ? 'صديق' : 'Friend')
+          : sessionMeta.hostName
+        : '';
+      onActiveCallStateChange({
+        isInCall,
+        status:
+          sessionMeta?.status === 'ringing' || sessionMeta?.status === 'active'
+            ? sessionMeta.status
+            : isInCall
+            ? 'ringing'
+            : null,
+        peerName,
+        surahLabel: buildCurriculumSummary(sessionMeta, lang),
+      });
+    }
+  }, [sessionId, sessionMeta, user?.uid, friends, lang, isAr, onActiveCallStateChange]);
+
+  // Clean WebRTC & Media Teardown
+  const teardownWebRtcResources = useCallback(() => {
+    callRingtone.stop();
+    if (ringingTimeoutRef.current !== null) {
+      window.clearTimeout(ringingTimeoutRef.current);
+      ringingTimeoutRef.current = null;
+    }
+
+    if (micMeterRafRef.current !== null) {
+      window.cancelAnimationFrame(micMeterRafRef.current);
+      micMeterRafRef.current = null;
+    }
+    setMicLevel(0);
+
+    if (micAnalyserCtxRef.current) {
+      try {
+        if (micAnalyserCtxRef.current.state !== 'closed') {
+          void micAnalyserCtxRef.current.close();
+        }
+      } catch {
+        // ignore
+      }
+      micAnalyserCtxRef.current = null;
+    }
+    if (unregisterAnalyserCtxRef.current) {
+      unregisterAnalyserCtxRef.current();
+      unregisterAnalyserCtxRef.current = null;
+    }
+
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => {
+        try {
+          track.stop();
+          track.enabled = false;
+        } catch {
+          // ignore
+        }
+      });
+      localStreamRef.current = null;
+    }
+    if (unregisterStreamRef.current) {
+      unregisterStreamRef.current();
+      unregisterStreamRef.current = null;
+    }
+
+    if (remoteStreamRef.current) {
+      remoteStreamRef.current.getTracks().forEach((t) => {
+        try {
+          t.stop();
+        } catch {
+          // ignore
+        }
+      });
+      remoteStreamRef.current = null;
+    }
+
+    if (remoteAudioRef.current) {
+      try {
+        remoteAudioRef.current.pause();
+        remoteAudioRef.current.srcObject = null;
+      } catch {
+        // ignore
       }
     }
-  }, [currentSurahInfo, multiSurahRange, selectedSurah, selectedSurahEnd]);
 
-  // Listen to Firebase Auth State + Sync Profile & Personal Invite Token
+    if (pcRef.current) {
+      try {
+        pcRef.current.onicecandidate = null;
+        pcRef.current.ontrack = null;
+        pcRef.current.oniceconnectionstatechange = null;
+        pcRef.current.onconnectionstatechange = null;
+        pcRef.current.ondatachannel = null;
+        pcRef.current.close();
+      } catch {
+        // ignore
+      }
+      pcRef.current = null;
+    }
+
+    sessionCreatedRef.current = false;
+    remoteDescSetRef.current = false;
+    pendingLocalCandidatesRef.current = [];
+    pendingRemoteCandidatesRef.current = [];
+    processedCandidateIdsRef.current.clear();
+    iceRestartAttemptedRef.current = false;
+    callStartTimestampRef.current = null;
+    setIsMicMuted(false);
+    setAudioUnlockNeeded(false);
+    setCallSeconds(0);
+    setPeerConnState('idle');
+    setShowEndEvalModal(false);
+    setLocalRevealCurrentAyah(false);
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      teardownWebRtcResources();
+    };
+  }, [teardownWebRtcResources]);
+
+  // Auth listener
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (nextUser) => {
       setUser(nextUser);
-      setAuthReady(true);
+      setAuthLoading(false);
       if (nextUser && nextUser.emailVerified) {
         try {
           await syncVerifiedUserProfileAndDirectory(nextUser);
-          const inv = await getOrCreateMyFriendInvite(nextUser);
-          setMyInvite(inv);
-        } catch (err) {
-          console.warn('Duo auth profile sync notice:', err);
+        } catch {
+          // Non-fatal
         }
-      } else {
+      } else if (!nextUser) {
+        teardownWebRtcResources();
+        setSessionId(null);
+        setSessionMeta(null);
+        setFriends([]);
         setMyInvite(null);
       }
     });
     return () => unsub();
-  }, []);
+  }, [teardownWebRtcResources]);
 
-  // Live online presence heartbeat (every 45s while tab visible)
+  // Clean up any orphaned ringing sessions hosted by current user on login
   useEffect(() => {
     if (!user || !user.emailVerified) return;
-    const beat = () => {
-      if (document.visibilityState === 'visible') {
-        updateUserPresenceHeartbeat(user).catch(() => {});
+    let cancelled = false;
+    const cleanupStaleHostCalls = async () => {
+      try {
+        const staleQ = query(
+          collection(db, 'duoSessions'),
+          where('hostUid', '==', user.uid),
+          where('status', '==', 'ringing')
+        );
+        const snap = await getDocs(staleQ);
+        if (cancelled) return;
+        const now = Date.now();
+        for (const d of snap.docs) {
+          if (d.id === sessionIdRef.current) continue;
+          const data = d.data() as IncomingDuoCall & { createdAt?: { toMillis?: () => number } };
+          const createdMs =
+            data.createdAt && typeof data.createdAt === 'object' && typeof data.createdAt.toMillis === 'function'
+              ? data.createdAt.toMillis()
+              : 0;
+          if (!createdMs || now - createdMs > 90_000) {
+            await updateDoc(d.ref, {
+              status: 'ended',
+              endedByUid: user.uid,
+              updatedAt: serverTimestamp(),
+            }).catch(() => {});
+          }
+        }
+      } catch {
+        // Ignore non-critical startup cleanup failure
       }
     };
-    const intervalId = window.setInterval(beat, 45_000);
-    document.addEventListener('visibilitychange', beat);
+    void cleanupStaleHostCalls();
     return () => {
-      window.clearInterval(intervalId);
-      document.removeEventListener('visibilitychange', beat);
+      cancelled = true;
     };
   }, [user]);
 
-  // Subscribe to approved friends' online presence
-  useEffect(() => {
-    if (!user || !user.emailVerified || friends.length === 0) {
-      setFriendPresenceMap({});
-      return;
-    }
-
-    const unsubs = friends.map((fr) =>
-      subscribeFriendPresence(fr.friendUid, (uid, online, lastSeen) => {
-        setFriendPresenceMap((prev) => ({
-          ...prev,
-          [uid]: { online, lastSeen },
-        }));
-      })
-    );
-
-    // Re-evaluate staleness every 30s locally without extra Firestore reads
-    const staleTicker = window.setInterval(() => {
-      setFriendPresenceMap((prev) => {
-        const next: Record<string, { online: boolean; lastSeen?: number }> = {};
-        let changed = false;
-        const now = Date.now();
-        for (const [uid, info] of Object.entries(prev) as [
-          string,
-          { online: boolean; lastSeen?: number },
-        ][]) {
-          const stillOnline = Boolean(info.lastSeen && now - info.lastSeen < 120_000);
-          if (stillOnline !== info.online) changed = true;
-          next[uid] = { ...info, online: stillOnline };
-        }
-        return changed ? next : prev;
-      });
-    }, 30_000);
-
-    return () => {
-      unsubs.forEach((u) => u());
-      window.clearInterval(staleTicker);
-    };
-  }, [user, friends]);
-
-  // Sync invite input if parent passes a token while already mounted in Duo
-  useEffect(() => {
-    if (initialFriendInviteToken) {
-      setPasteInviteInput(initialFriendInviteToken);
-    }
-  }, [initialFriendInviteToken]);
-
-  // Real-time Approved Friends List + Consent-Gated Friend Requests Listeners
+  // Load personal invite link + heartbeat presence + friends + friendRequests listeners
   useEffect(() => {
     if (!user || !user.emailVerified) {
       setFriends([]);
       setIncomingRequests([]);
-      setOutgoingPendingRequests([]);
+      setOutgoingRequests([]);
+      setMyInvite(null);
       return;
     }
 
-    const friendsPath = `users/${user.uid}/friends`;
+    let cancelled = false;
+    getOrCreateMyFriendInvite(user)
+      .then((inv) => {
+        if (!cancelled) setMyInvite(inv);
+      })
+      .catch(() => {});
+
+    const heartbeatId = window.setInterval(() => {
+      void updateUserPresenceHeartbeat(user);
+    }, 25_000);
+
     const unsubFriends = onSnapshot(
       collection(db, 'users', user.uid, 'friends'),
       (snap) => {
-        const list: FriendContactItem[] = snap.docs.map((d) => {
-          const data = d.data() as FriendContactItem;
-          return {
-            friendUid: data.friendUid || d.id,
-            friendName: data.friendName || d.id,
-            note: data.note,
-          };
-        });
+        const list = snap.docs.map((d) => d.data() as FriendContactDoc);
+        list.sort((a, b) => (a.friendName || '').localeCompare(b.friendName || ''));
         setFriends(list);
       },
       (err) => {
-        handleFirestoreError(err, OperationType.LIST, friendsPath);
+        handleFirestoreError(err, OperationType.LIST, `users/${user.uid}/friends`);
       }
     );
 
-    const incomingReqQ = query(
-      collection(db, 'friendRequests'),
-      where('toUid', '==', user.uid),
-      where('status', '==', 'pending')
-    );
-    const unsubIncomingReq = onSnapshot(
-      incomingReqQ,
+    const unsubInReqs = onSnapshot(
+      query(
+        collection(db, 'friendRequests'),
+        where('toUid', '==', user.uid),
+        where('status', '==', 'pending')
+      ),
       (snap) => {
         setIncomingRequests(snap.docs.map((d) => d.data() as FriendRequestDoc));
       },
@@ -702,15 +591,17 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       }
     );
 
-    const outgoingReqQ = query(
-      collection(db, 'friendRequests'),
-      where('fromUid', '==', user.uid)
-    );
-    const unsubOutgoingReq = onSnapshot(
-      outgoingReqQ,
+    const unsubOutReqs = onSnapshot(
+      query(collection(db, 'friendRequests'), where('fromUid', '==', user.uid)),
       (snap) => {
-        const allOut = snap.docs.map((d) => d.data() as FriendRequestDoc);
-        setOutgoingPendingRequests(allOut.filter((r) => r.status === 'pending'));
+        const list = snap.docs.map((d) => d.data() as FriendRequestDoc);
+        setOutgoingRequests(list.filter((r) => r.status === 'pending'));
+        // Auto-sync any accepted outgoing request
+        list
+          .filter((r) => r.status === 'accepted' && !r.syncedBySender)
+          .forEach((r) => {
+            void syncAcceptedOutgoingRequest(user, r);
+          });
       },
       (err) => {
         handleFirestoreError(err, OperationType.LIST, 'friendRequests');
@@ -718,152 +609,725 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     );
 
     return () => {
+      cancelled = true;
+      window.clearInterval(heartbeatId);
       unsubFriends();
-      unsubIncomingReq();
-      unsubOutgoingReq();
+      unsubInReqs();
+      unsubOutReqs();
     };
-  }, [user]);
+  }, [user, profileVersion]);
 
-  const teardownWebRtcResources = () => {
-    callRingtone.stop();
-    if (unsubSessionRef.current) {
-      try {
-        unsubSessionRef.current();
-      } catch {
-        // ignore
+  // Subscribe to friend live presence
+  useEffect(() => {
+    if (!user || !user.emailVerified || friends.length === 0) {
+      setPresenceMap({});
+      return;
+    }
+    return subscribeFriendPresence(
+      friends.map((f) => f.friendUid),
+      setPresenceMap
+    );
+  }, [user, friends]);
+
+  // Handle initialFriendInviteToken passed into Duo section
+  useEffect(() => {
+    if (!user || !user.emailVerified || !initialFriendInviteToken) return;
+    let cancelled = false;
+    fetchFriendInviteDetails(initialFriendInviteToken)
+      .then((found) => {
+        if (cancelled) return;
+        if (found && found.ownerUid !== user.uid) {
+          setLookupInviteResult(found);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [user, initialFriendInviteToken]);
+
+  // Play remote stream helper (with gesture-unlock fallback)
+  const playRemoteStreamSafely = useCallback(async (stream: MediaStream) => {
+    remoteStreamRef.current = stream;
+    const el = remoteAudioRef.current;
+    if (!el) return;
+    el.srcObject = stream;
+    el.volume = 1;
+    try {
+      await el.play();
+      setAudioUnlockNeeded(false);
+    } catch {
+      setAudioUnlockNeeded(true);
+    }
+  }, []);
+
+  // Acquire microphone + set up visual mic level meter
+  const acquireMicrophone = useCallback(async (): Promise<MediaStream> => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error(isAr ? 'المتصفح لا يدعم الوصول للميكروفون.' : 'Microphone API not supported.');
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+      video: false,
+    });
+
+    localStreamRef.current = stream;
+    if (unregisterStreamRef.current) unregisterStreamRef.current();
+    unregisterStreamRef.current = memoryManager.registerStream(stream);
+
+    // Lightweight AudioContext analyser for visual voice indicator
+    try {
+      const AudioCtxCtor =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (AudioCtxCtor) {
+        const ctx = new AudioCtxCtor();
+        micAnalyserCtxRef.current = ctx;
+        if (unregisterAnalyserCtxRef.current) unregisterAnalyserCtxRef.current();
+        unregisterAnalyserCtxRef.current = memoryManager.registerAudioContext(ctx);
+        const src = ctx.createMediaStreamSource(stream);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 128;
+        src.connect(analyser);
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+        const tickMeter = () => {
+          if (!localStreamRef.current || !micAnalyserCtxRef.current) return;
+          analyser.getByteFrequencyData(dataArray);
+          let sum = 0;
+          for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+          const avg = sum / dataArray.length;
+          setMicLevel(Math.min(100, Math.round((avg / 90) * 100)));
+          micMeterRafRef.current = window.requestAnimationFrame(tickMeter);
+        };
+        micMeterRafRef.current = window.requestAnimationFrame(tickMeter);
       }
-      unsubSessionRef.current = null;
+    } catch {
+      // Visual meter is non-critical
     }
-    if (meterRafRef.current !== null) {
-      cancelAnimationFrame(meterRafRef.current);
-      meterRafRef.current = null;
-    }
-    if (audioCtxRef.current) {
+
+    return stream;
+  }, [isAr]);
+
+  // Write Trickle ICE candidate to Firestore subcollection
+  const publishLocalIceCandidate = useCallback(
+    async (targetSessionId: string, senderUid: string, recipientUid: string, cand: RTCIceCandidateInit) => {
+      if (!cand.candidate || cand.candidate.trim().length === 0) return;
+      const candidateId = generateId('ice');
       try {
-        audioCtxRef.current.close();
-      } catch {
-        // ignore
-      }
-      audioCtxRef.current = null;
-    }
-    if (pcRef.current) {
-      const pc = pcRef.current;
-      pc.ontrack = null;
-      pc.ondatachannel = null;
-      pc.onconnectionstatechange = null;
-      try {
-        pc.getSenders().forEach((sender) => {
-          if (sender.track) {
-            sender.track.enabled = false;
-            sender.track.stop();
-          }
+        await setDoc(doc(db, 'duoSessions', targetSessionId, 'candidates', candidateId), {
+          candidateId,
+          sessionId: targetSessionId,
+          senderUid,
+          recipientUid,
+          candidate: cand.candidate.slice(0, 2048),
+          sdpMid: cand.sdpMid ? String(cand.sdpMid).slice(0, 64) : null,
+          sdpMLineIndex:
+            typeof cand.sdpMLineIndex === 'number' && cand.sdpMLineIndex >= 0 && cand.sdpMLineIndex <= 20
+              ? cand.sdpMLineIndex
+              : null,
+          createdAt: serverTimestamp(),
         });
-        pc.getReceivers().forEach((receiver) => {
-          if (receiver.track) {
-            receiver.track.enabled = false;
-            receiver.track.stop();
-          }
-        });
-        pc.close();
-      } catch {
-        // ignore
+      } catch (err) {
+        // Non-fatal if session just ended
+        console.warn('Trickle ICE publish notice:', err);
       }
-      pcRef.current = null;
-    }
-    if (localStreamRef.current) {
-      const stream = localStreamRef.current;
-      stream.getTracks().forEach((track) => {
+    },
+    []
+  );
+
+  // Create RTCPeerConnection with strict audio-only enforcement & Trickle ICE
+  const createAudioPeerConnection = useCallback(
+    (targetSessionId: string, localUid: string, remoteUid: string): RTCPeerConnection => {
+      const pc = new RTCPeerConnection(buildIceConfiguration(highPrivacyMasking));
+      pcRef.current = pc;
+
+      // Strict Audio-Only Enforcement: immediately close any unexpected DataChannel
+      pc.ondatachannel = (event) => {
         try {
-          track.enabled = false;
-          track.stop();
-          stream.removeTrack(track);
+          event.channel.close();
         } catch {
           // ignore
         }
-      });
-      localStreamRef.current = null;
-    }
-    if (remoteStreamRef.current) {
-      remoteStreamRef.current.getTracks().forEach((track) => {
-        try {
-          track.enabled = false;
-          track.stop();
-        } catch {
-          // ignore
+      };
+
+      pc.ontrack = (event) => {
+        const stream = event.streams?.[0] || new MediaStream([event.track]);
+        void playRemoteStreamSafely(stream);
+      };
+
+      pc.onicecandidate = (event) => {
+        if (!event.candidate || !event.candidate.candidate) return;
+        const candInit: RTCIceCandidateInit = {
+          candidate: event.candidate.candidate,
+          sdpMid: event.candidate.sdpMid,
+          sdpMLineIndex: event.candidate.sdpMLineIndex,
+        };
+        if (sessionCreatedRef.current) {
+          void publishLocalIceCandidate(targetSessionId, localUid, remoteUid, candInit);
+        } else {
+          pendingLocalCandidatesRef.current.push(candInit);
         }
-      });
-      remoteStreamRef.current = null;
+      };
+
+      const updateConnectionStatus = () => {
+        const iceState = pc.iceConnectionState;
+        const connState = pc.connectionState;
+        if (connState === 'connected' || iceState === 'connected' || iceState === 'completed') {
+          setPeerConnState('connected');
+          iceRestartAttemptedRef.current = false;
+        } else if (iceState === 'disconnected') {
+          setPeerConnState('reconnecting');
+        } else if (connState === 'failed' || iceState === 'failed') {
+          if (!iceRestartAttemptedRef.current && typeof pc.restartIce === 'function') {
+            iceRestartAttemptedRef.current = true;
+            setPeerConnState('reconnecting');
+            try {
+              pc.restartIce();
+            } catch {
+              setPeerConnState('failed');
+            }
+          } else {
+            setPeerConnState('failed');
+          }
+        }
+      };
+
+      pc.oniceconnectionstatechange = updateConnectionStatus;
+      pc.onconnectionstatechange = updateConnectionStatus;
+      return pc;
+    },
+    [highPrivacyMasking, playRemoteStreamSafely, publishLocalIceCandidate]
+  );
+
+  // Flush queued remote ICE candidates once remoteDescription is set
+  const flushPendingRemoteCandidates = useCallback(async (pc: RTCPeerConnection) => {
+    if (!pc.remoteDescription) return;
+    const queue = [...pendingRemoteCandidatesRef.current];
+    pendingRemoteCandidatesRef.current = [];
+    for (const cand of queue) {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(cand));
+      } catch {
+        // Ignore stale candidate
+      }
     }
-    if (remoteAudioRef.current) {
-      const remoteObj = remoteAudioRef.current.srcObject as MediaStream | null;
-      if (remoteObj && typeof remoteObj.getTracks === 'function') {
-        remoteObj.getTracks().forEach((track) => {
+  }, []);
+
+  // Gather brief initial ICE candidates (max 1.2s) while Trickle ICE sends all remaining ones
+  const gatherInitialOfferSdp = async (pc: RTCPeerConnection): Promise<RTCSessionDescriptionInit> => {
+    const offer = await pc.createOffer({
+      offerToReceiveAudio: true,
+      offerToReceiveVideo: false,
+    });
+    await pc.setLocalDescription(offer);
+
+    await new Promise<void>((resolve) => {
+      if (pc.iceGatheringState === 'complete') {
+        resolve();
+        return;
+      }
+      const timer = window.setTimeout(() => {
+        pc.removeEventListener('icegatheringstatechange', onState);
+        resolve();
+      }, 1200);
+      const onState = () => {
+        if (pc.iceGatheringState === 'complete') {
+          window.clearTimeout(timer);
+          pc.removeEventListener('icegatheringstatechange', onState);
+          resolve();
+        }
+      };
+      pc.addEventListener('icegatheringstatechange', onState);
+    });
+
+    return pc.localDescription || offer;
+  };
+
+  // Start Outgoing Call to Approved Friend
+  const startFriendAudioCall = async (friend: FriendContactDoc) => {
+    if (!user || !user.emailVerified) return;
+    if (sessionId) return;
+
+    setLobbyNotice(null);
+    setPostCallSummary(null);
+    callRingtone.unlockAudio();
+
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      setLobbyNotice({
+        type: 'error',
+        text: isAr ? 'لا يوجد اتصال بالإنترنت حالياً.' : 'You appear to be offline.',
+      });
+      return;
+    }
+
+    const newSessionId = generateId('call');
+    setSessionId(newSessionId);
+    setPeerConnState('ringing');
+
+    try {
+      const micStream = await acquireMicrophone();
+      const pc = createAudioPeerConnection(newSessionId, user.uid, friend.friendUid);
+      micStream.getTracks().forEach((track) => pc.addTrack(track, micStream));
+
+      const localOffer = await gatherInitialOfferSdp(pc);
+      if (!localOffer.sdp) {
+        throw new Error('Failed to create SDP offer');
+      }
+
+      // Build valid curriculum payload matching firestore.rules
+      let finalSurahEnd = surahNumber;
+      let finalAyahFrom = ayahFrom;
+      let finalAyahTo = ayahTo;
+      if (curriculumMode === 'surah') {
+        finalSurahEnd = Math.max(surahNumber, Math.min(114, surahEnd));
+        const endInfo = SURAH_LIST.find((s) => s.number === finalSurahEnd) || selectedSurahInfo;
+        finalAyahFrom = 1;
+        finalAyahTo = endInfo.ayahCount;
+      } else if (curriculumMode === 'page') {
+        finalAyahFrom = 1;
+        finalAyahTo = 7;
+      } else {
+        finalAyahFrom = Math.max(1, Math.min(ayahFrom, selectedSurahInfo.ayahCount));
+        finalAyahTo = Math.max(finalAyahFrom, Math.min(ayahTo, selectedSurahInfo.ayahCount));
+      }
+
+      const safePageFrom = Math.max(1, Math.min(604, pageFrom));
+      const safePageTo = Math.max(safePageFrom, Math.min(604, pageTo));
+
+      const initialDoc: IncomingDuoCall = {
+        sessionId: newSessionId,
+        hostUid: user.uid,
+        hostName: getDisplayNameForUser(user),
+        calleeUid: friend.friendUid,
+        callMode: 'friend_call',
+        riwayah,
+        curriculumMode,
+        hideVersesForReciter: false,
+        hideVersesForListener: false,
+        activeAyah: finalAyahFrom,
+        reciterSide: 'host',
+        mistakesCount: 0,
+        markedErrors: [],
+        surahNumber,
+        surahEnd: finalSurahEnd,
+        ayahFrom: finalAyahFrom,
+        ayahTo: finalAyahTo,
+        pageFrom: safePageFrom,
+        pageTo: safePageTo,
+        offerType: localOffer.type || 'offer',
+        offerSdp: localOffer.sdp.slice(0, 65536),
+        status: 'ringing',
+      };
+
+      await setDoc(doc(db, 'duoSessions', newSessionId), {
+        ...initialDoc,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      sessionCreatedRef.current = true;
+      setSessionMeta(initialDoc);
+
+      // Flush any ICE candidates collected during offer creation
+      const queuedLocals = [...pendingLocalCandidatesRef.current];
+      pendingLocalCandidatesRef.current = [];
+      queuedLocals.forEach((cand) => {
+        void publishLocalIceCandidate(newSessionId, user.uid, friend.friendUid, cand);
+      });
+
+      callRingtone.start('outgoing');
+
+      // Auto-timeout ringing call after 55 seconds if unanswered
+      ringingTimeoutRef.current = window.setTimeout(async () => {
+        const currentMeta = sessionMetaRef.current;
+        if (sessionIdRef.current === newSessionId && currentMeta?.status === 'ringing') {
           try {
-            track.enabled = false;
-            track.stop();
+            await updateDoc(doc(db, 'duoSessions', newSessionId), {
+              status: 'ended',
+              endedByUid: user.uid,
+              updatedAt: serverTimestamp(),
+            });
           } catch {
             // ignore
           }
+          teardownWebRtcResources();
+          setSessionId(null);
+          setSessionMeta(null);
+          setLobbyNotice({
+            type: 'info',
+            text: isAr
+              ? `لم يتم الرد من «${friend.friendName}» خلال المهلة.`
+              : `No answer from "${friend.friendName}".`,
+          });
+        }
+      }, 55_000);
+    } catch (err) {
+      teardownWebRtcResources();
+      setSessionId(null);
+      setSessionMeta(null);
+      const msg = err instanceof Error ? err.message : '';
+      if (msg.toLowerCase().includes('permission') || msg.toLowerCase().includes('notallowed')) {
+        setLobbyNotice({
+          type: 'error',
+          text: isAr
+            ? 'يرجى السماح بصلاحية الميكروفون من إعدادات المتصفح لبدء المكالمة.'
+            : 'Please allow microphone access in your browser settings.',
+        });
+      } else {
+        setLobbyNotice({
+          type: 'error',
+          text: isAr ? 'تعذر بدء المكالمة الصوتية، حاول مجدداً.' : 'Could not start audio call.',
         });
       }
-      remoteAudioRef.current.srcObject = null;
     }
-    remoteAnswerAppliedRef.current = false;
-    speakerModeRef.current = 'speaker';
-    setSpeakerMode('speaker');
-    setNeedsAudioUnlock(false);
-    setMicLevel(0);
-    setIsMicMuted(false);
-    setOutgoingCallTargetName(null);
   };
 
-  useEffect(() => {
-    const unregister = memoryManager.register(() => {
-      teardownWebRtcResources();
-    });
-    return () => {
-      unregister();
-      teardownWebRtcResources();
-    };
-  }, []);
+  // Answer Incoming Friend Call (triggered from App.tsx Answer button or notification)
+  const answerIncomingFriendCall = useCallback(
+    async (targetSessionId: string) => {
+      if (!user || !user.emailVerified) return;
+      if (answeringCallIdRef.current === targetSessionId || sessionIdRef.current === targetSessionId) return;
+      answeringCallIdRef.current = targetSessionId;
 
-  // Fetch Trusted Verses according to curriculum mode (surah / ayah / page) & Riwayah (hafs / qalun / warsh)
+      callRingtone.stop();
+      callRingtone.unlockAudio();
+      void dismissBackgroundCallNotification(targetSessionId);
+      setLobbyNotice(null);
+      setPostCallSummary(null);
+
+      try {
+        const sessionRef = doc(db, 'duoSessions', targetSessionId);
+        const snap = await getDoc(sessionRef);
+        if (!snap.exists()) {
+          setLobbyNotice({
+            type: 'info',
+            text: isAr ? 'انتهت المكالمة قبل الرد.' : 'Call ended before answering.',
+          });
+          return;
+        }
+        const initialData = snap.data() as IncomingDuoCall;
+        if (initialData.status !== 'ringing') {
+          setLobbyNotice({
+            type: 'info',
+            text: isAr ? 'ألغى المتصل المكالمة أو انتهت.' : 'Caller cancelled or call ended.',
+          });
+          return;
+        }
+
+        setSessionId(targetSessionId);
+        setSessionMeta(initialData);
+        setPeerConnState('connecting');
+
+        const micStream = await acquireMicrophone();
+
+        // Re-check status after mic prompt in case caller hung up while callee clicked Allow
+        const freshSnap = await getDoc(sessionRef);
+        const freshData = freshSnap.exists() ? (freshSnap.data() as IncomingDuoCall) : null;
+        if (!freshData || freshData.status !== 'ringing') {
+          teardownWebRtcResources();
+          setSessionId(null);
+          setSessionMeta(null);
+          setLobbyNotice({
+            type: 'info',
+            text: isAr ? 'انتهت المكالمة قبل إتمام الرد.' : 'Call ended before connecting.',
+          });
+          return;
+        }
+
+        const pc = createAudioPeerConnection(targetSessionId, user.uid, freshData.hostUid);
+        sessionCreatedRef.current = true;
+        micStream.getTracks().forEach((track) => pc.addTrack(track, micStream));
+
+        await pc.setRemoteDescription(
+          new RTCSessionDescription({
+            type: (freshData.offerType as RTCSdpType) || 'offer',
+            sdp: freshData.offerSdp,
+          })
+        );
+        remoteDescSetRef.current = true;
+        await flushPendingRemoteCandidates(pc);
+
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+
+        // Brief wait (max 800ms) for initial local candidate
+        await new Promise<void>((resolve) => {
+          if (pc.iceGatheringState === 'complete') {
+            resolve();
+            return;
+          }
+          const tmr = window.setTimeout(resolve, 800);
+          pc.addEventListener(
+            'icegatheringstatechange',
+            () => {
+              if (pc.iceGatheringState === 'complete') {
+                window.clearTimeout(tmr);
+                resolve();
+              }
+            },
+            { once: true }
+          );
+        });
+
+        const finalAnswer = pc.localDescription || answer;
+        await updateDoc(sessionRef, {
+          guestUid: user.uid,
+          guestName: getDisplayNameForUser(user),
+          answerType: finalAnswer.type || 'answer',
+          answerSdp: (finalAnswer.sdp || '').slice(0, 65536),
+          status: 'active',
+          updatedAt: serverTimestamp(),
+        });
+
+        callStartTimestampRef.current = Date.now();
+      } catch (err) {
+        teardownWebRtcResources();
+        setSessionId(null);
+        setSessionMeta(null);
+        const msg = err instanceof Error ? err.message : '';
+        if (msg.toLowerCase().includes('permission') || msg.toLowerCase().includes('notallowed')) {
+          setLobbyNotice({
+            type: 'error',
+            text: isAr
+              ? 'يرجى السماح بالميكروفون للرد على المكالمة.'
+              : 'Microphone permission is required to answer the call.',
+          });
+        } else {
+          setLobbyNotice({
+            type: 'info',
+            text: isAr ? 'تعذر الرد — ربما أغلق المتصل المكالمة.' : 'Could not answer call.',
+          });
+        }
+      } finally {
+        answeringCallIdRef.current = null;
+        if (onClearPendingCall) onClearPendingCall();
+      }
+    },
+    [
+      user,
+      isAr,
+      acquireMicrophone,
+      createAudioPeerConnection,
+      flushPendingRemoteCandidates,
+      teardownWebRtcResources,
+      onClearPendingCall,
+    ]
+  );
+
+  // Trigger answer when App passes pendingAcceptCallId
+  useEffect(() => {
+    if (!pendingAcceptCallId || !user || !user.emailVerified) return;
+    void answerIncomingFriendCall(pendingAcceptCallId);
+  }, [pendingAcceptCallId, user, answerIncomingFriendCall]);
+
+  // Listen to Active Session Document & Trickle ICE Subcollection
+  useEffect(() => {
+    if (!sessionId || !user || !user.emailVerified) return;
+
+    const sessionRef = doc(db, 'duoSessions', sessionId);
+    const unsubSession = onSnapshot(
+      sessionRef,
+      async (snap) => {
+        if (!snap.exists()) {
+          teardownWebRtcResources();
+          setSessionId(null);
+          setSessionMeta(null);
+          return;
+        }
+
+        const data = snap.data() as IncomingDuoCall;
+        setSessionMeta(data);
+
+        if (data.status === 'active') {
+          callRingtone.stop();
+          if (ringingTimeoutRef.current !== null) {
+            window.clearTimeout(ringingTimeoutRef.current);
+            ringingTimeoutRef.current = null;
+          }
+          if (!callStartTimestampRef.current) {
+            callStartTimestampRef.current = Date.now();
+          }
+
+          // Caller sets remote answer SDP once
+          const pc = pcRef.current;
+          if (
+            pc &&
+            data.hostUid === user.uid &&
+            data.answerSdp &&
+            !remoteDescSetRef.current
+          ) {
+            remoteDescSetRef.current = true;
+            setPeerConnState('connecting');
+            try {
+              await pc.setRemoteDescription(
+                new RTCSessionDescription({
+                  type: (data.answerType as RTCSdpType) || 'answer',
+                  sdp: data.answerSdp,
+                })
+              );
+              await flushPendingRemoteCandidates(pc);
+            } catch (err) {
+              console.warn('Error applying answer SDP:', err);
+            }
+          }
+        } else if (data.status === 'declined') {
+          teardownWebRtcResources();
+          setSessionId(null);
+          setSessionMeta(null);
+          const peerName =
+            data.hostUid === user.uid
+              ? friends.find((f) => f.friendUid === data.calleeUid)?.friendName || (isAr ? 'الصديق' : 'Friend')
+              : data.hostName;
+          setLobbyNotice({
+            type: 'info',
+            text: isAr ? `رفض «${peerName}» المكالمة.` : `"${peerName}" declined the call.`,
+          });
+        } else if (data.status === 'ended') {
+          const duration =
+            typeof data.callDurationSeconds === 'number'
+              ? data.callDurationSeconds
+              : callStartTimestampRef.current
+              ? Math.round((Date.now() - callStartTimestampRef.current) / 1000)
+              : 0;
+          const mistakes = data.mistakesCount || 0;
+          const accuracy =
+            typeof data.accuracyPct === 'number'
+              ? data.accuracyPct
+              : Math.max(0, Math.min(100, 100 - mistakes * 2));
+          const peerName =
+            data.hostUid === user.uid
+              ? friends.find((f) => f.friendUid === data.calleeUid)?.friendName ||
+                data.guestName ||
+                (isAr ? 'صديق' : 'Friend')
+              : data.hostName;
+          const summaryLabel = buildCurriculumSummary(data, lang);
+
+          teardownWebRtcResources();
+          setSessionId(null);
+          setSessionMeta(null);
+
+          if (data.sessionEvaluation || duration > 0) {
+            setPostCallSummary({
+              peerName,
+              surahLabel: summaryLabel,
+              durationSeconds: duration,
+              mistakesCount: mistakes,
+              accuracyPct: accuracy,
+              evaluation: data.sessionEvaluation || null,
+            });
+          } else {
+            setLobbyNotice({
+              type: 'info',
+              text: isAr ? 'تم إنهاء المكالمة.' : 'Call ended.',
+            });
+          }
+        }
+      },
+      (err) => {
+        handleFirestoreError(err, OperationType.GET, `duoSessions/${sessionId}`);
+      }
+    );
+
+    // Subscribe to incoming Trickle ICE candidates targeted to current user
+    const candQuery = query(
+      collection(db, 'duoSessions', sessionId, 'candidates'),
+      where('recipientUid', '==', user.uid)
+    );
+    const unsubCandidates = onSnapshot(
+      candQuery,
+      async (snap) => {
+        const pc = pcRef.current;
+        for (const change of snap.docChanges()) {
+          if (change.type !== 'added') continue;
+          if (processedCandidateIdsRef.current.has(change.doc.id)) continue;
+          processedCandidateIdsRef.current.add(change.doc.id);
+
+          const c = change.doc.data() as IceCandidateDoc;
+          const candInit: RTCIceCandidateInit = {
+            candidate: c.candidate,
+            sdpMid: c.sdpMid ?? undefined,
+            sdpMLineIndex: typeof c.sdpMLineIndex === 'number' ? c.sdpMLineIndex : undefined,
+          };
+
+          if (pc && pc.remoteDescription && remoteDescSetRef.current) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(candInit));
+            } catch {
+              // ignore stale candidate
+            }
+          } else {
+            pendingRemoteCandidatesRef.current.push(candInit);
+          }
+        }
+      },
+      (err) => {
+        handleFirestoreError(err, OperationType.LIST, `duoSessions/${sessionId}/candidates`);
+      }
+    );
+
+    return () => {
+      unsubSession();
+      unsubCandidates();
+    };
+  }, [sessionId, user, isAr, lang, friends, flushPendingRemoteCandidates, teardownWebRtcResources]);
+
+  // Call Duration Ticker
+  useEffect(() => {
+    if (!sessionMeta || sessionMeta.status !== 'active') return;
+    if (!callStartTimestampRef.current) {
+      callStartTimestampRef.current = Date.now();
+    }
+    const timer = window.setInterval(() => {
+      if (callStartTimestampRef.current) {
+        setCallSeconds(Math.floor((Date.now() - callStartTimestampRef.current) / 1000));
+      }
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [sessionMeta?.status]);
+
+  // Load Quran Verses for active session curriculum
   useEffect(() => {
     if (!sessionMeta) {
       setVerses([]);
       return;
     }
     let cancelled = false;
-    const loadVerses = async () => {
-      setVersesLoading(true);
-      try {
-        const result = await fetchTrustedCurriculumVerses({
-          curriculumMode: sessionMeta.curriculumMode || 'ayah',
-          surahNumber: sessionMeta.surahNumber,
-          surahEnd: sessionMeta.surahEnd,
-          ayahFrom: sessionMeta.ayahFrom,
-          ayahTo: sessionMeta.ayahTo,
-          pageFrom: sessionMeta.pageFrom,
-          pageTo: sessionMeta.pageTo,
-          riwayah: sessionMeta.riwayah || selectedRiwayah,
-          preferredSource: trustedSourceId,
-        });
+    setVersesLoading(true);
+    setVersesError(null);
+
+    fetchTrustedCurriculumVerses({
+      curriculumMode: sessionMeta.curriculumMode || 'ayah',
+      surahNumber: sessionMeta.surahNumber,
+      surahEnd: sessionMeta.surahEnd,
+      ayahFrom: sessionMeta.ayahFrom,
+      ayahTo: sessionMeta.ayahTo,
+      pageFrom: sessionMeta.pageFrom,
+      pageTo: sessionMeta.pageTo,
+      riwayah: sessionMeta.riwayah || 'hafs',
+    })
+      .then((res) => {
         if (!cancelled) {
-          setVerses(result.verses);
-          setActiveUsedSource(result.usedSource);
-          setActiveAyah(result.verses[0]?.ayahNumber || sessionMeta.ayahFrom || 1);
+          setVerses(res.verses);
         }
-      } catch {
+      })
+      .catch(() => {
         if (!cancelled) {
-          setVerses([]);
+          setVersesError(
+            isAr
+              ? 'تعذر تحميل الآيات، تحقق من اتصال الإنترنت.'
+              : 'Could not load verses. Check internet connection.'
+          );
         }
-      } finally {
-        if (!cancelled) {
-          setVersesLoading(false);
-        }
-      }
-    };
-    loadVerses();
+      })
+      .finally(() => {
+        if (!cancelled) setVersesLoading(false);
+      });
+
     return () => {
       cancelled = true;
     };
@@ -877,1950 +1341,1471 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     sessionMeta?.pageFrom,
     sessionMeta?.pageTo,
     sessionMeta?.riwayah,
-    trustedSourceId,
-    selectedRiwayah,
+    isAr,
   ]);
 
+  // Auto-scroll active ayah into view
+  useEffect(() => {
+    if (!sessionMeta?.activeAyah) return;
+    const match = verses.find((v) => v.ayahNumber === sessionMeta.activeAyah);
+    const key = match ? match.verseKey : null;
+    if (key && ayahRowRefs.current[key]) {
+      ayahRowRefs.current[key]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [sessionMeta?.activeAyah, verses]);
+
+  // Sync active session metadata helper (Action 4 in firestore.rules)
+  const updateActiveSessionFields = async (patch: Partial<IncomingDuoCall>) => {
+    if (!sessionId || !sessionMeta || sessionMeta.status !== 'active') return;
+    try {
+      await updateDoc(doc(db, 'duoSessions', sessionId), {
+        ...patch,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `duoSessions/${sessionId}`);
+    }
+  };
+
+  // End or Cancel Call
+  const finalizeEndCall = async (evaluation: SessionEvalKey | null) => {
+    if (!sessionId || !user) return;
+    const targetId = sessionId;
+    const currentMeta = sessionMeta;
+    setEndingBusy(true);
+
+    const duration = callStartTimestampRef.current
+      ? Math.max(0, Math.round((Date.now() - callStartTimestampRef.current) / 1000))
+      : callSeconds;
+    const mistakes = currentMeta?.mistakesCount || 0;
+    const totalWords = Math.max(
+      1,
+      verses.reduce((acc, v) => acc + v.text.split(/\s+/).filter(Boolean).length, 0)
+    );
+    const accuracyPct =
+      currentMeta?.status === 'active'
+        ? Math.max(0, Math.min(100, Math.round(((totalWords - mistakes) / totalWords) * 100)))
+        : null;
+
+    try {
+      await updateDoc(doc(db, 'duoSessions', targetId), {
+        status: 'ended',
+        endedByUid: user.uid,
+        sessionEvaluation: evaluation,
+        callDurationSeconds: currentMeta?.status === 'active' ? duration : 0,
+        accuracyPct,
+        updatedAt: serverTimestamp(),
+      });
+    } catch {
+      // If peer already ended call, proceed smoothly to teardown
+    } finally {
+      setEndingBusy(false);
+      teardownWebRtcResources();
+      setSessionId(null);
+      setSessionMeta(null);
+    }
+  };
+
+  // Toggle Mic Mute
+  const handleToggleMute = () => {
+    const stream = localStreamRef.current;
+    if (!stream) return;
+    const nextMuted = !isMicMuted;
+    stream.getAudioTracks().forEach((track) => {
+      track.enabled = !nextMuted;
+    });
+    setIsMicMuted(nextMuted);
+  };
+
+  // Toggle Speaker / Earpiece Audio Output
+  const handleToggleAudioOutput = async () => {
+    const el = remoteAudioRef.current as (HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }) | null;
+    const nextMode = speakerOutputMode === 'speaker' ? 'earpiece' : 'speaker';
+    setSpeakerOutputMode(nextMode);
+    if (!el || typeof el.setSinkId !== 'function') return;
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const outputs = devices.filter((d) => d.kind === 'audiooutput');
+      const target =
+        nextMode === 'speaker'
+          ? outputs.find((d) => /speaker|مكبر/i.test(d.label)) || outputs[0]
+          : outputs.find((d) => /earpiece|headphone|bluetooth|سماعة/i.test(d.label)) || outputs[0];
+      if (target) {
+        await el.setSinkId(target.deviceId);
+      }
+    } catch {
+      // Ignore unsupported sink routing
+    }
+  };
+
   // Auth Actions
-  const handleGoogleSignIn = async () => {
-    callRingtone.unlockAudio();
+  const handleGoogleLogin = async () => {
+    setAuthBusy(true);
     setAuthError(null);
-    setProviderHelpOpen(false);
-    setAuthLoading(true);
+    setAuthSuccessMsg(null);
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (err) {
-      const mapped = mapFirebaseAuthError(err, lang);
-      setAuthError(mapped.message);
-      if (mapped.isProviderDisabled) setProviderHelpOpen(true);
+      const msg = err instanceof Error ? err.message : '';
+      if (!msg.includes('popup-closed-by-user')) {
+        setAuthError(isAr ? 'تعذر تسجيل الدخول عبر Google.' : 'Google sign-in failed.');
+      }
     } finally {
-      setAuthLoading(false);
+      setAuthBusy(false);
     }
   };
 
   const handleEmailAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    callRingtone.unlockAudio();
+    setAuthBusy(true);
     setAuthError(null);
-    setProviderHelpOpen(false);
-    setVerificationMsg(null);
-    const trimmedEmail = emailInput.trim();
-    if (!trimmedEmail || !passwordInput) {
-      setAuthError(
-        isAr
-          ? 'يُرجى إدخال البريد الإلكتروني وكلمة المرور.'
-          : 'Please enter email and password.'
-      );
-      return;
-    }
-    setAuthLoading(true);
+    setAuthSuccessMsg(null);
     try {
       if (authMode === 'register') {
-        const cred = await createUserWithEmailAndPassword(auth, trimmedEmail, passwordInput);
-        if (nameInput.trim()) {
-          await updateProfile(cred.user, { displayName: nameInput.trim().slice(0, 80) });
+        if (!nameInput.trim()) {
+          setAuthError(isAr ? 'أدخل الاسم الظاهر أولاً.' : 'Please enter your display name.');
+          setAuthBusy(false);
+          return;
         }
+        const cred = await createUserWithEmailAndPassword(auth, emailInput.trim(), passwordInput);
+        await updateProfile(cred.user, { displayName: nameInput.trim().slice(0, 80) });
         await sendEmailVerification(cred.user);
-        setVerificationMsg(
+        setProfileVersion((v) => v + 1);
+        setAuthSuccessMsg(
           isAr
-            ? 'تم إنشاء الحساب وإرسال رابط التفعيل إلى بريدك الإلكتروني.'
-            : 'Account created and verification email sent.'
+            ? 'تم إنشاء الحساب وإرسال رابط التفعيل لبريدك الإلكتروني.'
+            : 'Account created! Verification email sent.'
         );
       } else {
-        await signInWithEmailAndPassword(auth, trimmedEmail, passwordInput);
+        await signInWithEmailAndPassword(auth, emailInput.trim(), passwordInput);
       }
     } catch (err) {
-      const mapped = mapFirebaseAuthError(err, lang);
-      setAuthError(mapped.message);
-      if (mapped.isProviderDisabled) setProviderHelpOpen(true);
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  const handleResendVerification = async () => {
-    if (!auth.currentUser) return;
-    setAuthLoading(true);
-    setVerificationMsg(null);
-    try {
-      await sendEmailVerification(auth.currentUser);
-      setVerificationMsg(
-        isAr
-          ? 'تم إعادة إرسال رابط التفعيل إلى بريدك الإلكتروني بنجاح.'
-          : 'Verification link resent to your email.'
-      );
-    } catch (err) {
-      const mapped = mapFirebaseAuthError(err, lang);
-      setVerificationMsg(mapped.message);
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  const handleRefreshVerificationStatus = async () => {
-    if (!auth.currentUser) return;
-    setAuthLoading(true);
-    try {
-      await auth.currentUser.reload();
-      await auth.currentUser.getIdToken(true);
-      const refreshed = auth.currentUser;
-      setUser(refreshed ? ({ ...refreshed } as User) : null);
-      if (refreshed && refreshed.emailVerified) {
-        await syncVerifiedUserProfileAndDirectory(refreshed);
-        const inv = await getOrCreateMyFriendInvite(refreshed);
-        setMyInvite(inv);
+      const msg = err instanceof Error ? err.message : '';
+      if (msg.includes('email-already-in-use')) {
+        setAuthError(isAr ? 'هذا البريد مسجل بالفعل، جرّب تسجيل الدخول.' : 'Email already registered.');
+      } else if (msg.includes('weak-password')) {
+        setAuthError(isAr ? 'كلمة المرور ضعيفة (6 أحرف على الأقل).' : 'Password should be at least 6 characters.');
+      } else if (msg.includes('invalid-credential') || msg.includes('wrong-password')) {
+        setAuthError(isAr ? 'البريد أو كلمة المرور غير صحيحة.' : 'Invalid email or password.');
       } else {
-        setVerificationMsg(
-          isAr
-            ? 'لم يتم تأكيد البريد الإلكتروني بعد. افتح رسالة التفعيل في بريدك ثم أعد الضغط هنا.'
-            : 'Email is not verified yet. Please click the verification link in your inbox.'
-        );
+        setAuthError(isAr ? 'تعذر إتمام العملية، تحقق من البيانات.' : 'Authentication failed.');
       }
-    } catch (err) {
-      const mapped = mapFirebaseAuthError(err, lang);
-      setVerificationMsg(mapped.message);
     } finally {
-      setAuthLoading(false);
+      setAuthBusy(false);
     }
   };
 
-  const handleSignOut = async () => {
-    await handleEndCall(false);
-    await signOut(auth);
-  };
-
-  const handleEnableBackgroundCallAlerts = async () => {
-    callRingtone.unlockAudio();
-    if (typeof window === 'undefined' || !('Notification' in window)) return;
+  const handleSaveDisplayName = async () => {
+    if (!user || !displayNameDraft.trim()) return;
     try {
-      const perm = await Notification.requestPermission();
-      setNotifPerm(perm);
+      await updateProfile(user, { displayName: displayNameDraft.trim().slice(0, 80) });
+      await syncVerifiedUserProfileAndDirectory(user);
+      setProfileVersion((v) => v + 1);
+      setEditingDisplayName(false);
+      setLobbyNotice({
+        type: 'success',
+        text: isAr ? 'تم تحديث الاسم الظاهر.' : 'Display name updated.',
+      });
     } catch {
-      // ignore
+      setLobbyNotice({
+        type: 'error',
+        text: isAr ? 'تعذر تحديث الاسم.' : 'Could not update display name.',
+      });
     }
   };
 
-  // Invite Link Builders & Sharing (Clean ?invite=... format + accepts both ?invite= & ?friendInvite=)
-  const personalInviteUrl = useMemo(() => {
-    if (!myInvite?.inviteToken || typeof window === 'undefined') return '';
-    return `${window.location.origin}${window.location.pathname}?invite=${encodeURIComponent(
-      myInvite.inviteToken
-    )}`;
-  }, [myInvite?.inviteToken]);
-
-  const handleSharePersonalInvite = async () => {
-    if (!personalInviteUrl) return;
-    const shareTitle = isAr ? 'دعوة صداقة للسرد الثنائي — منصة السرد' : 'Duo Sard Friend Invite';
-    const shareText = isAr
-      ? 'اضغط على رابط الصداقة لإرسال طلب إضافة في منصة السرد (تتم الإضافة بعد الموافقة):'
-      : 'Open this invite link to send a friend request in Assard (requires approval):';
-
-    if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
-      try {
-        await navigator.share({ title: shareTitle, text: shareText, url: personalInviteUrl });
-        return;
-      } catch {
-        // Fallback to copy
-      }
-    }
-    try {
-      await navigator.clipboard.writeText(personalInviteUrl);
-      setCopiedInvite(true);
-      setTimeout(() => setCopiedInvite(false), 2200);
-    } catch {
-      // ignore
-    }
-  };
+  // Invite Link Actions
+  const myInviteUrl = useMemo(() => {
+    if (!myInvite || typeof window === 'undefined') return '';
+    return `${window.location.origin}/?friendInvite=${encodeURIComponent(myInvite.inviteToken)}`;
+  }, [myInvite]);
 
   const handleCopyInviteLink = async () => {
-    if (!personalInviteUrl) return;
+    if (!myInviteUrl) return;
     try {
-      await navigator.clipboard.writeText(personalInviteUrl);
-      setCopiedInvite(true);
-      setTimeout(() => setCopiedInvite(false), 2200);
+      await navigator.clipboard.writeText(myInviteUrl);
+      setInviteCopied(true);
+      window.setTimeout(() => setInviteCopied(false), 2200);
     } catch {
       // ignore
     }
+  };
+
+  const handleShareInviteLink = async () => {
+    if (!myInviteUrl) return;
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: isAr ? 'دعوة السرد الثنائي — الأترجة' : 'Al-Utrujjah Duo Sard Invite',
+          text: isAr
+            ? 'أضفني في السرد الثنائي لتسميع القرآن الكريم بصوت مباشر مشفّر:'
+            : 'Add me on Al-Utrujjah for live encrypted Duo Quran recitation:',
+          url: myInviteUrl,
+        });
+        return;
+      } catch {
+        // fallback to copy
+      }
+    }
+    await handleCopyInviteLink();
   };
 
   const handleRegenerateInvite = async () => {
-    if (!user || !user.emailVerified) return;
+    if (!user) return;
     setInviteBusy(true);
     try {
-      const fresh = await regenerateMyFriendInvite(user);
-      if (fresh) {
-        setMyInvite(fresh);
-        setFriendFeedback({
-          type: 'ok',
-          msg: isAr
-            ? 'تم إصدار رابط جديد وإلغاء السابق.'
-            : 'New invite link generated; previous revoked.',
-        });
-      }
+      const next = await regenerateMyFriendInvite(user);
+      setMyInvite(next);
+      setLobbyNotice({
+        type: 'success',
+        text: isAr ? 'تم إنشاء رابط دعوة جديد وإلغاء الرابط السابق.' : 'New invite link generated.',
+      });
+    } catch {
+      setLobbyNotice({
+        type: 'error',
+        text: isAr ? 'تعذر تجديد الرابط.' : 'Could not regenerate link.',
+      });
     } finally {
       setInviteBusy(false);
     }
   };
 
-  const handleLookupPastedInvite = async (e: React.FormEvent) => {
+  const handleLookupFriendInvite = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !user.emailVerified || !pasteInviteInput.trim()) return;
-    setInviteLookupBusy(true);
-    setFriendFeedback(null);
-    setPreviewedInvite(null);
+    if (!user || !pasteInviteInput.trim()) return;
+    setLookupBusy(true);
+    setLobbyNotice(null);
+    setLookupInviteResult(null);
     try {
-      const found = await fetchFriendInviteDetails(pasteInviteInput);
+      const token = extractInviteTokenFromInput(pasteInviteInput);
+      const found = await fetchFriendInviteDetails(token);
       if (!found) {
-        setFriendFeedback({
-          type: 'err',
-          msg: isAr
-            ? 'رابط الدعوة غير صالح أو مُلغى.'
-            : 'Invite link invalid or revoked.',
+        setLobbyNotice({
+          type: 'error',
+          text: isAr ? 'رابط أو رمز الدعوة غير صالح أو ملغى.' : 'Invite link or code is invalid or revoked.',
         });
-        return;
-      }
-      if (found.ownerUid === user.uid) {
-        setFriendFeedback({
-          type: 'err',
-          msg: isAr ? 'لا يمكنك إضافة نفسك.' : 'Cannot invite yourself.',
+      } else if (found.ownerUid === user.uid) {
+        setLobbyNotice({
+          type: 'info',
+          text: isAr ? 'هذا رابط دعوتك الشخصي، شاركه مع صديقك.' : 'This is your own invite link.',
         });
-        return;
+      } else {
+        setLookupInviteResult(found);
       }
-      if (friends.some((f) => f.friendUid === found.ownerUid)) {
-        setFriendFeedback({
-          type: 'ok',
-          msg: isAr
-            ? `«${found.ownerName}» مضاف مسبقاً في أصدقائك.`
-            : `"${found.ownerName}" is already a friend.`,
-        });
-        return;
-      }
-      setPreviewedInvite(found);
     } catch {
-      setFriendFeedback({
-        type: 'err',
-        msg: isAr
-          ? 'تعذر التحقق من الرابط، حاول مجدداً.'
-          : 'Could not verify invite link. Please try again.',
+      setLobbyNotice({
+        type: 'error',
+        text: isAr ? 'تعذر البحث عن الدعوة.' : 'Could not look up invite.',
       });
     } finally {
-      setInviteLookupBusy(false);
+      setLookupBusy(false);
     }
   };
 
-  const handleConfirmSendFriendRequest = async () => {
-    if (!user || !user.emailVerified || !previewedInvite) return;
-    setInviteBusy(true);
-    setFriendFeedback(null);
+  const handleSendLookupRequest = async () => {
+    if (!user || !lookupInviteResult) return;
+    setLookupBusy(true);
     try {
-      const result = await sendConsentFriendRequest(user, previewedInvite);
-      if (result === 'sent') {
-        setFriendFeedback({
-          type: 'ok',
-          msg: isAr
-            ? `أُرسل طلب الصداقة إلى «${previewedInvite.ownerName}»؛ سيُضاف عند موافقته.`
-            : `Friend request sent to "${previewedInvite.ownerName}". Added upon approval.`,
-        });
-      } else if (result === 'already_pending') {
-        setFriendFeedback({
-          type: 'ok',
-          msg: isAr
-            ? `طلبك إلى «${previewedInvite.ownerName}» بانتظار الموافقة.`
-            : `Request to "${previewedInvite.ownerName}" is pending approval.`,
-        });
-      } else {
-        setFriendFeedback({
-          type: 'ok',
-          msg: isAr
-            ? `تمت إضافة «${previewedInvite.ownerName}» في قائمة أصدقائك.`
-            : `"${previewedInvite.ownerName}" is added to your friends list.`,
-        });
-      }
-      setPreviewedInvite(null);
+      const outcome = await sendConsentFriendRequest(user, lookupInviteResult);
+      const targetName = lookupInviteResult.ownerName;
+      setLookupInviteResult(null);
       setPasteInviteInput('');
-      onClearFriendInvite?.();
-    } catch {
-      setFriendFeedback({
-        type: 'err',
-        msg: isAr
-          ? 'تعذر إرسال طلب الصداقة. تحقق من الاتصال وحاول مجدداً.'
-          : 'Could not send friend request. Please try again.',
-      });
-    } finally {
-      setInviteBusy(false);
-    }
-  };
+      if (onClearFriendInvite) onClearFriendInvite();
 
-  const handleApproveRequest = async (req: FriendRequestDoc) => {
-    if (!user || !user.emailVerified) return;
-    setInviteBusy(true);
-    try {
-      await approveIncomingFriendRequest(user, req);
-      setFriendFeedback({
-        type: 'ok',
-        msg: isAr
-          ? `تمت الموافقة وإضافة «${req.fromName}» إلى قائمة أصدقائك بنجاح.`
-          : `Approved and added "${req.fromName}" to your friends list.`,
-      });
-    } catch {
-      setFriendFeedback({
-        type: 'err',
-        msg: isAr ? 'تعذر إتمام الإضافة، حاول مجدداً.' : 'Could not add friend. Try again.',
-      });
-    } finally {
-      setInviteBusy(false);
-    }
-  };
-
-  const handleDeclineRequest = async (req: FriendRequestDoc) => {
-    setInviteBusy(true);
-    try {
-      await declineIncomingFriendRequest(req);
-    } catch {
-      setFriendFeedback({
-        type: 'err',
-        msg: isAr ? 'تعذر رفض الطلب، حاول مجدداً.' : 'Could not decline request.',
-      });
-    } finally {
-      setInviteBusy(false);
-    }
-  };
-
-  const handleRemoveFriend = async (friendUid: string) => {
-    if (!user || !user.emailVerified) return;
-    const friendPath = `users/${user.uid}/friends/${friendUid}`;
-    try {
-      await deleteDoc(doc(db, 'users', user.uid, 'friends', friendUid));
-      setConfirmRemoveFriendUid(null);
-    } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, friendPath);
-    }
-  };
-
-  // Setup Strict Audio-Only Mic + Audio Level Meter
-  const acquireMicrophone = async (): Promise<MediaStream> => {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-      video: false,
-    });
-    localStreamRef.current = stream;
-    memoryManager.registerStream(stream);
-
-    try {
-      const AudioCtx =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      const ctx = new AudioCtx();
-      audioCtxRef.current = ctx;
-      memoryManager.registerAudioContext(ctx);
-      const source = ctx.createMediaStreamSource(stream);
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 256;
-      source.connect(analyser);
-      const data = new Uint8Array(analyser.frequencyBinCount);
-
-      const tick = () => {
-        if (!localStreamRef.current) return;
-        analyser.getByteFrequencyData(data);
-        let sum = 0;
-        for (let i = 0; i < data.length; i++) sum += data[i];
-        const avg = Math.min(100, Math.round((sum / data.length) * 1.4));
-        setMicLevel(avg);
-        meterRafRef.current = requestAnimationFrame(tick);
-      };
-      meterRafRef.current = requestAnimationFrame(tick);
-    } catch {
-      // Audio meter optional
-    }
-
-    return stream;
-  };
-
-  // Sync bounded recitation metadata & live curriculum via Firestore signaling (strictly NO RTCDataChannel)
-  const syncCallControlState = async (
-    patch: Partial<{
-      activeAyah: number;
-      reciterSide: 'host' | 'guest';
-      mistakesCount: number;
-      markedErrors: string[];
-      hideVersesForReciter: boolean;
-      hideVersesForListener: boolean;
-      riwayah: QuranRiwayah;
-      curriculumMode: 'surah' | 'ayah' | 'page';
-      surahNumber: number;
-      surahEnd: number;
-      ayahFrom: number;
-      ayahTo: number;
-      pageFrom: number;
-      pageTo: number;
-    }>
-  ) => {
-    const activeCallId = sessionIdRef.current;
-    if (!activeCallId || !auth.currentUser?.emailVerified) return;
-    if (sessionStatusRef.current !== 'active') return;
-    const sessionPath = `duoSessions/${activeCallId}`;
-    try {
-      await updateDoc(doc(db, 'duoSessions', activeCallId), {
-        ...patch,
-        updatedAt: serverTimestamp(),
-      });
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, sessionPath);
-    }
-  };
-
-  const applySyncedSessionSnapshot = (data: DuoSessionDoc) => {
-    if (typeof data.activeAyah === 'number') setActiveAyah(data.activeAyah);
-    if (data.reciterSide === 'host' || data.reciterSide === 'guest') {
-      setReciterSide(data.reciterSide);
-    }
-    if (typeof data.mistakesCount === 'number') setMistakesCount(data.mistakesCount);
-    if (Array.isArray(data.markedErrors)) {
-      setMarkedErrors(data.markedErrors.slice(0, 80));
-    }
-    if (typeof data.hideVersesForReciter === 'boolean') {
-      setHideVersesForReciter(data.hideVersesForReciter);
-    }
-    if (typeof data.hideVersesForListener === 'boolean') {
-      setHideVersesForListener(data.hideVersesForListener);
-    }
-    if (data.riwayah === 'hafs' || data.riwayah === 'qalun' || data.riwayah === 'warsh') {
-      setSelectedRiwayah(data.riwayah);
-    }
-    if (
-      data.curriculumMode === 'surah' ||
-      data.curriculumMode === 'ayah' ||
-      data.curriculumMode === 'page'
-    ) {
-      setCurriculumMode(data.curriculumMode);
-    }
-    if (typeof data.surahNumber === 'number') setSelectedSurah(data.surahNumber);
-    if (typeof data.surahEnd === 'number') setSelectedSurahEnd(data.surahEnd);
-    if (typeof data.ayahFrom === 'number') setAyahFrom(data.ayahFrom);
-    if (typeof data.ayahTo === 'number') setAyahTo(data.ayahTo);
-    if (typeof data.pageFrom === 'number') setPageFrom(data.pageFrom);
-    if (typeof data.pageTo === 'number') setPageTo(data.pageTo);
-  };
-
-  const applyAudioOutputMode = async (
-    mode: 'speaker' | 'earpiece',
-    targetEl?: HTMLAudioElement | null
-  ) => {
-    const audioEl = targetEl ?? remoteAudioRef.current;
-    if (!audioEl) return;
-
-    audioEl.muted = false;
-    audioEl.volume = mode === 'earpiece' ? 0.42 : 1.0;
-
-    const sinkCapableEl = audioEl as HTMLAudioElement & {
-      setSinkId?: (sinkId: string) => Promise<void>;
-    };
-    if (
-      typeof sinkCapableEl.setSinkId === 'function' &&
-      typeof navigator !== 'undefined' &&
-      navigator.mediaDevices?.enumerateDevices
-    ) {
-      try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const outputs = devices.filter((d) => d.kind === 'audiooutput');
-        if (outputs.length > 0) {
-          const preferred =
-            mode === 'speaker'
-              ? outputs.find((d) =>
-                  /speaker|external|default|مكبر/i.test(d.label || d.deviceId)
-                ) || outputs.find((d) => d.deviceId === 'default')
-              : outputs.find((d) =>
-                  /earpiece|handset|receiver|communications|سماعة/i.test(d.label || d.deviceId)
-                );
-          if (preferred?.deviceId) {
-            await sinkCapableEl.setSinkId(preferred.deviceId);
-          }
-        }
-      } catch {
-        // Browsers without setSinkId permission fall back to volume scaling cleanly
-      }
-    }
-
-    if (audioEl.srcObject) {
-      audioEl
-        .play()
-        .then(() => {
-          setNeedsAudioUnlock(false);
-        })
-        .catch(() => {
-          setNeedsAudioUnlock(true);
+      if (outcome === 'already_accepted') {
+        setLobbyNotice({
+          type: 'success',
+          text: isAr
+            ? `«${targetName}» مضاف في قائمة أصدقائك؛ يمكنك الاتصال به الآن.`
+            : `"${targetName}" is in your friends list and ready to call.`,
         });
-    }
-  };
-
-  const syncRemoteAudioTracksToMediaElement = (
-    event?: RTCTrackEvent,
-    pcInstance?: RTCPeerConnection | null
-  ) => {
-    const activePc = pcInstance ?? pcRef.current;
-    const stream = remoteStreamRef.current || new MediaStream();
-    const collectedAudioTracks: MediaStreamTrack[] = [];
-
-    if (event?.streams?.[0]) {
-      collectedAudioTracks.push(...event.streams[0].getAudioTracks());
-    }
-    if (event?.track && event.track.kind === 'audio') {
-      collectedAudioTracks.push(event.track);
-    }
-    if (activePc) {
-      activePc.getReceivers().forEach((receiver) => {
-        if (receiver.track && receiver.track.kind === 'audio') {
-          collectedAudioTracks.push(receiver.track);
-        }
-      });
-    }
-
-    let trackAdded = false;
-    collectedAudioTracks.forEach((audioTrack) => {
-      if (audioTrack.readyState === 'ended') return;
-      audioTrack.enabled = true;
-      const alreadyAttached = stream
-        .getAudioTracks()
-        .some((existing) => existing.id === audioTrack.id);
-      if (!alreadyAttached) {
-        stream.addTrack(audioTrack);
-        trackAdded = true;
-      }
-    });
-
-    if (stream.getAudioTracks().length === 0) return;
-
-    remoteStreamRef.current = stream;
-    const audioEl = remoteAudioRef.current;
-    if (audioEl) {
-      if (audioEl.srcObject !== stream || trackAdded) {
-        audioEl.srcObject = stream;
-      }
-      audioEl.muted = false;
-      applyAudioOutputMode(speakerModeRef.current, audioEl);
-    }
-  };
-
-  useEffect(() => {
-    if (!sessionId || !remoteAudioRef.current || !remoteStreamRef.current) return;
-    const el = remoteAudioRef.current;
-    if (el.srcObject !== remoteStreamRef.current) {
-      el.srcObject = remoteStreamRef.current;
-    }
-    applyAudioOutputMode(speakerModeRef.current, el);
-  }, [sessionId, peerConnState]);
-
-  const setupPeerConnection = (stream: MediaStream): RTCPeerConnection => {
-    const pc = new RTCPeerConnection(buildRtcConfiguration(highPrivacyRef.current));
-    pcRef.current = pc;
-
-    stream.getAudioTracks().forEach((track) => {
-      track.enabled = true;
-      pc.addTrack(track, stream);
-    });
-
-    pc.ontrack = (event) => {
-      syncRemoteAudioTracksToMediaElement(event, pc);
-      if (event.track && event.track.kind === 'audio') {
-        event.track.onunmute = () => {
-          syncRemoteAudioTracksToMediaElement(event, pc);
-        };
-      }
-    };
-
-    // Strict Audio-Only: block creating or receiving any RTCDataChannel (no file/data exchange)
-    pc.ondatachannel = (event) => {
-      try {
-        event.channel.close();
-      } catch {
-        // ignore
-      }
-    };
-
-    pc.oniceconnectionstatechange = () => {
-      const iceState = pc.iceConnectionState;
-      if (iceState === 'connected' || iceState === 'completed') {
-        syncRemoteAudioTracksToMediaElement(undefined, pc);
-      }
-    };
-
-    pc.onconnectionstatechange = () => {
-      const state = pc.connectionState;
-      if (state === 'connected') {
-        callRingtone.stop();
-        setOutgoingCallTargetName(null);
-        setPeerConnState('connected');
-        syncRemoteAudioTracksToMediaElement(undefined, pc);
-      } else if (state === 'connecting' || state === 'new') {
-        setPeerConnState((prev) => (prev === 'ringing' ? prev : 'connecting'));
-      } else if (state === 'disconnected') {
-        // Transient network hiccup — allow ICE to recover without tearing down immediately
-        setPeerConnState((prev) =>
-          prev === 'ended' || prev === 'declined' ? prev : 'connecting'
-        );
-      } else if (state === 'failed' || state === 'closed') {
-        callRingtone.stop();
-        setPeerConnState((prev) =>
-          prev === 'ended' || prev === 'declined' ? prev : 'disconnected'
-        );
-        teardownWebRtcResources();
-      }
-    };
-
-    return pc;
-  };
-
-  // Helper to get current curriculum bounds
-  const buildCurriculumPayloadFields = () => {
-    const surahInfo = SURAH_LIST.find((s) => s.number === selectedSurah) || SURAH_LIST[0];
-    const boundedFrom =
-      curriculumMode === 'surah'
-        ? 1
-        : Math.max(1, Math.min(ayahFrom, surahInfo.ayahCount));
-    const boundedTo =
-      curriculumMode === 'surah'
-        ? surahInfo.ayahCount
-        : Math.max(boundedFrom, Math.min(ayahTo, surahInfo.ayahCount));
-    const sEnd =
-      curriculumMode === 'surah' && multiSurahRange
-        ? Math.max(selectedSurah, Math.min(114, selectedSurahEnd, selectedSurah + 4))
-        : selectedSurah;
-    const p1 = Math.max(1, Math.min(604, pageFrom));
-    const p2 = Math.max(p1, Math.min(604, pageTo, p1 + 9));
-    return {
-      riwayah: selectedRiwayah,
-      curriculumMode,
-      surahNumber: selectedSurah,
-      surahEnd: sEnd,
-      ayahFrom: boundedFrom,
-      ayahTo: boundedTo,
-      pageFrom: p1,
-      pageTo: p2,
-    };
-  };
-
-  // Start Direct Encrypted Friend Audio Call ONLY (Voice rooms completely disabled)
-  const startDirectFriendCall = async (targetFriend: FriendContactItem) => {
-    if (!user || !user.emailVerified) return;
-    callRingtone.unlockAudio();
-    setLobbyError(null);
-    setLastCallSummary(null);
-    setLobbyBusy(true);
-    remoteAnswerAppliedRef.current = false;
-
-    const newSessionId = generateEphemeralSessionId();
-    const sessionPath = `duoSessions/${newSessionId}`;
-
-    try {
-      const stream = await acquireMicrophone();
-      const pc = setupPeerConnection(stream);
-
-      const offer = await pc.createOffer({ offerToReceiveAudio: true });
-      await pc.setLocalDescription(offer);
-      await waitForIceComplete(pc, 3500);
-
-      const finalDesc = pc.localDescription;
-      if (!finalDesc || !finalDesc.sdp) {
-        throw new Error(
-          isAr ? 'تعذر تجهيز عرض الاتصال الصوتي المباشر.' : 'Failed to prepare WebRTC offer.'
-        );
-      }
-
-      const hostDisplayName = getDisplayNameForUser(user);
-      const currFields = buildCurriculumPayloadFields();
-
-      const callPayload: Record<string, unknown> = {
-        sessionId: newSessionId,
-        hostUid: user.uid,
-        hostName: hostDisplayName,
-        calleeUid: targetFriend.friendUid,
-        callMode: 'friend_call',
-        ...currFields,
-        offerType: finalDesc.type || 'offer',
-        offerSdp: finalDesc.sdp,
-        hideVersesForReciter,
-        hideVersesForListener,
-        activeAyah: currFields.ayahFrom,
-        reciterSide: 'host',
-        mistakesCount: 0,
-        markedErrors: [],
-        status: 'ringing',
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      };
-
-      await setDoc(doc(db, 'duoSessions', newSessionId), callPayload);
-
-      setMyRoleInCall('host');
-      setSessionId(newSessionId);
-      setSessionMeta(callPayload as unknown as DuoSessionDoc);
-      setReciterSide('host');
-      setMistakesCount(0);
-      setMarkedErrors([]);
-      setActiveAyah(currFields.ayahFrom);
-      setOutgoingCallTargetName(targetFriend.friendName);
-      setPeerConnState('ringing');
-      callRingtone.start('outgoing');
-
-      unsubSessionRef.current = onSnapshot(
-        doc(db, 'duoSessions', newSessionId),
-        async (snap) => {
-          if (!snap.exists()) {
-            setPeerConnState('ended');
-            teardownWebRtcResources();
-            return;
-          }
-          const data = snap.data() as DuoSessionDoc;
-          setSessionMeta(data);
-
-          if (data.status === 'declined') {
-            callRingtone.stop();
-            setOutgoingCallTargetName(null);
-            setPeerConnState('declined');
-            teardownWebRtcResources();
-            return;
-          }
-
-          if (data.status === 'ended') {
-            callRingtone.stop();
-            setOutgoingCallTargetName(null);
-            setPeerConnState('ended');
-            teardownWebRtcResources();
-            if (data.sessionEvaluation) {
-              setLastCallSummary({
-                partnerName: data.guestName || targetFriend.friendName,
-                evaluation: data.sessionEvaluation,
-                durationSeconds: data.callDurationSeconds ?? 0,
-                mistakesCount: data.mistakesCount ?? 0,
-                accuracyPct: data.accuracyPct ?? 100,
-              });
-              setShowEvalModal(false);
-              setSessionId(null);
-              setSessionMeta(null);
-              setPeerConnState('idle');
-            }
-            return;
-          }
-
-          if (data.status === 'active') {
-            applySyncedSessionSnapshot(data);
-          }
-
-          if (
-            data.status === 'active' &&
-            data.answerSdp &&
-            data.answerType &&
-            !remoteAnswerAppliedRef.current &&
-            pcRef.current
-          ) {
-            remoteAnswerAppliedRef.current = true;
-            callRingtone.stop();
-            setOutgoingCallTargetName(null);
-            setPeerConnState('connecting');
-            try {
-              await pcRef.current.setRemoteDescription(
-                new RTCSessionDescription({
-                  type: data.answerType as RTCSdpType,
-                  sdp: data.answerSdp,
-                })
-              );
-            } catch {
-              remoteAnswerAppliedRef.current = false;
-            }
-          }
-        },
-        (err) => {
-          handleFirestoreError(err, OperationType.GET, sessionPath);
-        }
-      );
-    } catch (err) {
-      teardownWebRtcResources();
-      if (err instanceof Error && err.message.startsWith('{"error":')) {
-        throw err;
-      }
-      if ((err as { name?: string })?.name === 'NotAllowedError') {
-        setLobbyError(
-          isAr
-            ? 'يرجى السماح للمتصفح بالوصول إلى الميكروفون لبدء الاتصال الصوتي المباشر.'
-            : 'Please allow microphone access to start live P2P audio.'
-        );
+      } else if (outcome === 'already_pending') {
+        setLobbyNotice({
+          type: 'info',
+          text: isAr ? `طلبك إلى «${targetName}» بانتظار الموافقة.` : `Request to "${targetName}" is still pending.`,
+        });
       } else {
-        setLobbyError(
-          err instanceof Error
-            ? err.message
-            : isAr
-            ? 'تعذر بدء الاتصال الصوتي المباشر.'
-            : 'Failed to start direct voice call.'
-        );
+        setLobbyNotice({
+          type: 'success',
+          text: isAr ? `تم إرسال طلب الصداقة إلى «${targetName}».` : `Friend request sent to "${targetName}".`,
+        });
       }
+    } catch {
+      setLobbyNotice({
+        type: 'error',
+        text: isAr ? 'تعذر إرسال طلب الصداقة.' : 'Could not send friend request.',
+      });
     } finally {
-      setLobbyBusy(false);
+      setLookupBusy(false);
     }
   };
 
-  // Answer Incoming Direct Friend Call
-  const answerIncomingFriendCall = async (targetSessionId: string) => {
-    if (!user || !user.emailVerified) return;
-    callRingtone.unlockAudio();
+  // Word-tap mistake toggling inside active call
+  const handleToggleWordError = async (wordKey: string) => {
+    if (!sessionMeta || sessionMeta.status !== 'active') return;
+    const currentErrors = Array.isArray(sessionMeta.markedErrors) ? sessionMeta.markedErrors : [];
+    const exists = currentErrors.includes(wordKey);
+    const nextErrors = exists
+      ? currentErrors.filter((k) => k !== wordKey)
+      : [...currentErrors, wordKey].slice(0, 80);
 
-    const cleanId = targetSessionId.trim().toUpperCase();
-    setLobbyError(null);
-    setLastCallSummary(null);
-    setLobbyBusy(true);
-    const sessionPath = `duoSessions/${cleanId}`;
-
-    try {
-      const snap = await getDoc(doc(db, 'duoSessions', cleanId)).catch((err) => {
-        handleFirestoreError(err, OperationType.GET, sessionPath);
-      });
-
-      if (!snap || !snap.exists()) {
-        setLobbyError(
-          isAr
-            ? 'انتهت المكالمة الواردة أو ألغاها المتصل.'
-            : 'Incoming call has ended or been cancelled.'
-        );
-        return;
-      }
-
-      const callData = snap.data() as DuoSessionDoc;
-      if (callData.status !== 'ringing' || callData.calleeUid !== user.uid) {
-        setLobbyError(
-          isAr
-            ? 'هذه المكالمة غير متاحة أو تم الرد عليها مسبقاً.'
-            : 'This call is no longer available.'
-        );
-        return;
-      }
-
-      const stream = await acquireMicrophone();
-      const pc = setupPeerConnection(stream);
-
-      await pc.setRemoteDescription(
-        new RTCSessionDescription({
-          type: callData.offerType as RTCSdpType,
-          sdp: callData.offerSdp,
-        })
-      );
-
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      await waitForIceComplete(pc, 3500);
-
-      const finalAnswer = pc.localDescription;
-      if (!finalAnswer || !finalAnswer.sdp) {
-        throw new Error(
-          isAr ? 'تعذر تجهيز رد الاتصال المباشر.' : 'Failed to create WebRTC answer.'
-        );
-      }
-
-      const guestDisplayName = getDisplayNameForUser(user);
-
-      await updateDoc(doc(db, 'duoSessions', cleanId), {
-        guestUid: user.uid,
-        guestName: guestDisplayName,
-        answerType: finalAnswer.type || 'answer',
-        answerSdp: finalAnswer.sdp,
-        status: 'active',
-        updatedAt: serverTimestamp(),
-      }).catch((err) => {
-        handleFirestoreError(err, OperationType.UPDATE, sessionPath);
-      });
-
-      dismissBackgroundCallNotification(cleanId);
-      setMyRoleInCall('guest');
-      setSessionId(cleanId);
-      setSessionMeta({
-        ...callData,
-        guestUid: user.uid,
-        guestName: guestDisplayName,
-        status: 'active',
-      });
-      applySyncedSessionSnapshot(callData);
-      setPeerConnState('connecting');
-
-      unsubSessionRef.current = onSnapshot(
-        doc(db, 'duoSessions', cleanId),
-        (nextSnap) => {
-          if (!nextSnap.exists()) {
-            setPeerConnState('ended');
-            teardownWebRtcResources();
-            return;
-          }
-          const updated = nextSnap.data() as DuoSessionDoc;
-          setSessionMeta(updated);
-          if (updated.status === 'ended' || updated.status === 'declined') {
-            setPeerConnState(updated.status);
-            teardownWebRtcResources();
-            if (updated.status === 'ended' && updated.sessionEvaluation) {
-              setLastCallSummary({
-                partnerName: updated.hostName,
-                evaluation: updated.sessionEvaluation,
-                durationSeconds: updated.callDurationSeconds ?? 0,
-                mistakesCount: updated.mistakesCount ?? 0,
-                accuracyPct: updated.accuracyPct ?? 100,
-              });
-              setShowEvalModal(false);
-              setSessionId(null);
-              setSessionMeta(null);
-              setPeerConnState('idle');
-            }
-            return;
-          }
-          if (updated.status === 'active') {
-            applySyncedSessionSnapshot(updated);
-          }
-        },
-        (err) => {
-          handleFirestoreError(err, OperationType.GET, sessionPath);
-        }
-      );
-    } catch (err) {
-      teardownWebRtcResources();
-      if (err instanceof Error && err.message.startsWith('{"error":')) {
-        throw err;
-      }
-      if ((err as { name?: string })?.name === 'NotAllowedError') {
-        setLobbyError(
-          isAr
-            ? 'يرجى السماح بالوصول إلى الميكروفون للرد على المكالمة الصوتية.'
-            : 'Please allow microphone access to answer the voice call.'
-        );
-      } else {
-        setLobbyError(
-          err instanceof Error
-            ? err.message
-            : isAr
-            ? 'تعذر الرد على المكالمة.'
-            : 'Failed to answer call.'
-        );
-      }
-    } finally {
-      setLobbyBusy(false);
-    }
-  };
-
-  // Auto-answer when user clicks Answer on the global Incoming Call Modal
-  useEffect(() => {
-    if (
-      pendingAcceptCallId &&
-      user &&
-      user.emailVerified &&
-      handledAutoCallRef.current !== pendingAcceptCallId
-    ) {
-      handledAutoCallRef.current = pendingAcceptCallId;
-      answerIncomingFriendCall(pendingAcceptCallId).finally(() => {
-        onClearPendingCall?.();
-      });
-    }
-  }, [pendingAcceptCallId, user]);
-
-  // Compute accuracy percentage based on errors vs verse words in current curriculum
-  const totalWordsInVerses = useMemo(() => {
-    if (verses.length === 0) return 50;
-    return Math.max(
-      10,
-      verses.reduce((sum, v) => sum + v.text.trim().split(/\s+/).filter(Boolean).length, 0)
-    );
-  }, [verses]);
-
-  const computedAccuracyPct = useMemo(() => {
-    if (mistakesCount <= 0) return 100;
-    return Math.max(
-      0,
-      Math.min(100, Math.round(((totalWordsInVerses - mistakesCount) / totalWordsInVerses) * 100))
-    );
-  }, [mistakesCount, totalWordsInVerses]);
-
-  const handleEndCall = async (
-    resetToLobby = true,
-    evalPayload?: {
-      evaluation: SessionEvaluationRating;
-      durationSeconds: number;
-      accuracyPct: number;
-    }
-  ) => {
-    const activeCallId = sessionIdRef.current;
-    const currentMeta = sessionMeta;
-
-    callRingtone.stop();
-    teardownWebRtcResources();
-    setShowEvalModal(false);
-    setShowCurriculumModal(false);
-
-    if (activeCallId && auth.currentUser?.emailVerified) {
-      try {
-        if (currentMeta?.status !== 'ended' && currentMeta?.status !== 'declined') {
-          const endDocPatch: Record<string, unknown> = {
-            status: 'ended',
-            updatedAt: serverTimestamp(),
-          };
-          if (evalPayload) {
-            endDocPatch.endedByUid = auth.currentUser.uid;
-            endDocPatch.sessionEvaluation = evalPayload.evaluation;
-            endDocPatch.callDurationSeconds = Math.max(0, Math.min(86400, evalPayload.durationSeconds));
-            endDocPatch.accuracyPct = Math.max(0, Math.min(100, evalPayload.accuracyPct));
-          }
-          await updateDoc(doc(db, 'duoSessions', activeCallId), endDocPatch);
-        }
-      } catch (err) {
-        if (auth.currentUser) {
-          console.warn('Call cleanup notice:', err);
-        }
-      }
-      dismissBackgroundCallNotification(activeCallId);
-    }
-
-    if (evalPayload && currentMeta) {
-      const pName =
-        myRoleRef.current === 'host'
-          ? currentMeta.guestName || outgoingCallTargetName || (isAr ? 'صديقك' : 'Partner')
-          : currentMeta.hostName;
-      setLastCallSummary({
-        partnerName: pName,
-        evaluation: evalPayload.evaluation,
-        durationSeconds: evalPayload.durationSeconds,
-        mistakesCount,
-        accuracyPct: evalPayload.accuracyPct,
-      });
-    }
-
-    if (resetToLobby) {
-      setSessionId(null);
-      setSessionMeta(null);
-      setPeerConnState('idle');
-      setVerses([]);
-      setMarkedErrors([]);
-      setMistakesCount(0);
-      handledAutoCallRef.current = null;
-    }
-  };
-
-  const handleToggleMic = () => {
-    if (!localStreamRef.current) return;
-    const nextMuted = !isMicMuted;
-    localStreamRef.current.getAudioTracks().forEach((track) => {
-      track.enabled = !nextMuted;
+    await updateActiveSessionFields({
+      markedErrors: nextErrors,
+      mistakesCount: nextErrors.length,
     });
-    setIsMicMuted(nextMuted);
-    if (remoteAudioRef.current?.srcObject) {
-      remoteAudioRef.current.play().catch(() => {});
-    }
   };
 
-  const handleToggleSpeakerMode = () => {
-    const nextMode: 'speaker' | 'earpiece' =
-      speakerMode === 'speaker' ? 'earpiece' : 'speaker';
-    speakerModeRef.current = nextMode;
-    setSpeakerMode(nextMode);
-    applyAudioOutputMode(nextMode);
-  };
-
-  const handleSelectAyahSync = (ayahNum: number) => {
-    const bounded = Math.max(1, Math.min(286, ayahNum));
-    setActiveAyah(bounded);
-    syncCallControlState({ activeAyah: bounded });
-  };
-
-  const handleSwapRoles = () => {
-    const nextSide = reciterSide === 'host' ? 'guest' : 'host';
-    setReciterSide(nextSide);
-    setPeekVerseKey(null);
-    syncCallControlState({ reciterSide: nextSide });
-  };
-
-  const handleAdjustMistakes = (delta: number) => {
-    const next = Math.max(0, Math.min(999, mistakesCount + delta));
-    setMistakesCount(next);
-    syncCallControlState({ mistakesCount: next });
-  };
-
-  // Interactive tap on individual word for Listener -> syncs highlighted error token to Reciter!
-  const handleToggleWordError = (verseKey: string, word: string, wordIdx: number) => {
-    const cleanWord = word.trim().slice(0, 28);
-    if (!cleanWord) return;
-    const token = `${verseKey}|${cleanWord}|${wordIdx}`.slice(0, 80);
-
-    let nextList: string[];
-    let nextCount: number;
-
-    if (markedErrors.includes(token)) {
-      nextList = markedErrors.filter((t) => t !== token);
-      nextCount = Math.max(0, mistakesCount - 1);
-    } else {
-      nextList = [token, ...markedErrors].slice(0, 80);
-      nextCount = Math.min(999, Math.max(mistakesCount + 1, nextList.length));
-    }
-
-    setMarkedErrors(nextList);
-    setMistakesCount(nextCount);
-    syncCallControlState({ markedErrors: nextList, mistakesCount: nextCount });
-  };
-
-  const handleToggleSyncedHideReciter = () => {
-    const next = !hideVersesForReciter;
-    setHideVersesForReciter(next);
-    setPeekVerseKey(null);
-    syncCallControlState({ hideVersesForReciter: next });
-  };
-
-  const handleToggleSyncedHideListener = () => {
-    const next = !hideVersesForListener;
-    setHideVersesForListener(next);
-    setPeekVerseKey(null);
-    syncCallControlState({ hideVersesForListener: next });
-  };
-
-  const handleApplyCurriculumSettings = () => {
-    if (sessionId && sessionStatusRef.current === 'active') {
-      const payload = buildCurriculumPayloadFields();
-      syncCallControlState({
-        ...payload,
-        hideVersesForReciter,
-        hideVersesForListener,
-      });
-    }
-    setShowCurriculumModal(false);
-  };
-
-  const handleStepVerse = (delta: number) => {
-    if (verses.length === 0) return;
-    const currIdx = verses.findIndex((v) => v.ayahNumber === activeAyah);
-    const nextIdx =
-      currIdx === -1
-        ? 0
-        : Math.max(0, Math.min(verses.length - 1, currIdx + delta));
-    handleSelectAyahSync(verses[nextIdx].ayahNumber);
-  };
-
-  // Curriculum Human Summary
-  const lobbyCurriculumSummary = useMemo(() => {
-    const rwLabel = getRiwayahLabel(selectedRiwayah, lang);
-    if (curriculumMode === 'page') {
-      const p1 = Math.min(pageFrom, pageTo);
-      const p2 = Math.max(pageFrom, pageTo);
-      return isAr
-        ? `${p1 === p2 ? `صفحة ${toArabicDigits(p1)}` : `الصفحات ${toArabicDigits(p1)} – ${toArabicDigits(p2)}`} · رواية ${rwLabel}`
-        : `${p1 === p2 ? `Page ${p1}` : `Pages ${p1}–${p2}`} · ${rwLabel}`;
-    }
-    if (curriculumMode === 'surah') {
-      const s2Obj = SURAH_LIST.find((s) => s.number === selectedSurahEnd) || currentSurahInfo;
-      if (multiSurahRange && selectedSurahEnd !== selectedSurah) {
-        return isAr
-          ? `من سورة ${currentSurahInfo.nameAr} إلى ${s2Obj.nameAr} · رواية ${rwLabel}`
-          : `Surah ${currentSurahInfo.nameEn} – ${s2Obj.nameEn} · ${rwLabel}`;
-      }
-      return isAr
-        ? `سورة ${currentSurahInfo.nameAr} كاملة · رواية ${rwLabel}`
-        : `Surah ${currentSurahInfo.nameEn} (Full) · ${rwLabel}`;
-    }
-    return isAr
-      ? `سورة ${currentSurahInfo.nameAr} (${toArabicDigits(ayahFrom)} - ${toArabicDigits(ayahTo)}) · رواية ${rwLabel}`
-      : `Surah ${currentSurahInfo.nameEn} (${ayahFrom}–${ayahTo}) · ${rwLabel}`;
-  }, [
-    curriculumMode,
-    pageFrom,
-    pageTo,
-    selectedSurah,
-    selectedSurahEnd,
-    multiSurahRange,
-    currentSurahInfo,
-    ayahFrom,
-    ayahTo,
-    selectedRiwayah,
-    isAr,
-    lang,
-  ]);
-
-  const sessionSurahInfo = useMemo(() => {
-    if (!sessionMeta) return currentSurahInfo;
-    return SURAH_LIST.find((s) => s.number === sessionMeta.surahNumber) || currentSurahInfo;
-  }, [sessionMeta, currentSurahInfo]);
-
-  const activeCurriculumTextOnly = useMemo(() => {
-    if (!sessionMeta) return '';
-    if (sessionMeta.curriculumMode === 'page') {
-      const p1 = sessionMeta.pageFrom || 1;
-      const p2 = sessionMeta.pageTo || p1;
-      return isAr
-        ? p1 === p2
-          ? `صفحة ${toArabicDigits(p1)}`
-          : `الصفحات ${toArabicDigits(p1)} - ${toArabicDigits(p2)}`
-        : p1 === p2
-        ? `Page ${p1}`
-        : `Pages ${p1}-${p2}`;
-    }
-    return isAr
-      ? `سُورَةُ ${sessionSurahInfo.nameAr} (${toArabicDigits(sessionMeta.ayahFrom)} - ${toArabicDigits(
-          sessionMeta.ayahTo
-        )})`
-      : `Surah ${sessionSurahInfo.nameEn} (${sessionMeta.ayahFrom} - ${sessionMeta.ayahTo})`;
-  }, [sessionMeta, sessionSurahInfo, isAr]);
-
-  const activeRiwayahLabel = getRiwayahLabel(sessionMeta?.riwayah || selectedRiwayah, lang);
-
-  const partnerName = useMemo(() => {
-    if (!sessionMeta) return outgoingCallTargetName || (isAr ? 'صديقك' : 'Partner');
-    if (myRoleInCall === 'host') {
-      return sessionMeta.guestName || outgoingCallTargetName || (isAr ? 'صديقك' : 'Partner');
-    }
-    return sessionMeta.hostName || (isAr ? 'صديقك' : 'Partner');
-  }, [sessionMeta, myRoleInCall, outgoingCallTargetName, isAr]);
-
-  const amICurrentReciter = myRoleInCall === reciterSide;
-  const shouldHideVersesForMe =
-    localHideVerses ||
-    (amICurrentReciter ? hideVersesForReciter : hideVersesForListener);
-
-  const activeSourceMeta =
-    TRUSTED_QURAN_SOURCES.find((s) => s.id === activeUsedSource) || TRUSTED_QURAN_SOURCES[0];
-
-  const onlineFriendsCount = useMemo(
-    () => friends.filter((f) => friendPresenceMap[f.friendUid]?.online).length,
-    [friends, friendPresenceMap]
+  // Helper: Am I the Reciter or the Listener?
+  const isHost = Boolean(user && sessionMeta && sessionMeta.hostUid === user.uid);
+  const amIReciter = Boolean(
+    sessionMeta &&
+      ((isHost && (sessionMeta.reciterSide || 'host') === 'host') ||
+        (!isHost && sessionMeta.reciterSide === 'guest'))
+  );
+  const versesHiddenForMe = Boolean(
+    sessionMeta &&
+      ((amIReciter && sessionMeta.hideVersesForReciter) ||
+        (!amIReciter && sessionMeta.hideVersesForListener))
   );
 
-  if (!authReady) {
+  // Hidden reading overlay for auth gate
+  if (authLoading) {
     return (
-      <section className="max-w-4xl mx-auto py-12 flex flex-col items-center justify-center gap-3 text-[#4B5650]">
-        <RefreshCw className="w-6 h-6 animate-spin text-[#96701E]" />
-        <p className="text-sm font-bold">
-          {isAr ? 'جاري التحقق من حالة الجلسة...' : 'Checking authentication status...'}
-        </p>
+      <div className="max-w-3xl mx-auto p-6 text-center text-sm text-[#4B5650]">
+        {isAr ? 'جاري تهيئة السرد الثنائي...' : 'Initializing Duo Recitation...'}
+      </div>
+    );
+  }
+
+  // 1. SIGN-IN GATE
+  if (!user) {
+    return (
+      <section className="max-w-xl mx-auto space-y-5">
+        <div className="rounded-[24px] bg-[#FFFFFF] border border-[#C5CEBF] p-5 sm:p-6 shadow-sm space-y-5">
+          <div className="text-center space-y-2">
+            <div className="w-12 h-12 mx-auto rounded-2xl bg-[#ECFDF3] border border-[#BBF7D0] flex items-center justify-center text-[#0E6340]">
+              <Users className="w-6 h-6" />
+            </div>
+            <h2 className="text-xl font-extrabold font-display-islamic text-[#0E5C3E]">
+              {isAr ? 'السرد الثنائي المباشر' : 'Direct Duo Recitation'}
+            </h2>
+            <p className="text-xs sm:text-sm text-[#4B5650] leading-relaxed">
+              {isAr
+                ? 'سجّل دخولك لتبادل دعوات الصداقة والتسميع الصوتي المباشر المشفّر بين المتصفحين.'
+                : 'Sign in to add friends via private invite links and start encrypted P2P Quran recitation calls.'}
+            </p>
+          </div>
+
+          {authError && (
+            <div className="p-3 rounded-xl bg-[#FEF2F2] border border-[#FECACA] text-[#991B1B] text-xs font-semibold flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{authError}</span>
+            </div>
+          )}
+          {authSuccessMsg && (
+            <div className="p-3 rounded-xl bg-[#ECFDF3] border border-[#BBF7D0] text-[#14532D] text-xs font-semibold flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              <span>{authSuccessMsg}</span>
+            </div>
+          )}
+
+          <button
+            type="button"
+            disabled={authBusy}
+            onClick={handleGoogleLogin}
+            className="w-full py-3 px-4 rounded-xl bg-[#0E6340] hover:bg-[#0A4D31] text-white text-sm font-bold flex items-center justify-center gap-2 cursor-pointer transition-colors disabled:opacity-60"
+          >
+            <LogIn className="w-4 h-4" />
+            <span>{isAr ? 'الدخول السريع بحساب Google' : 'Sign in with Google'}</span>
+          </button>
+
+          <div className="relative flex items-center py-1">
+            <div className="flex-grow border-t border-[#D3DCD1]" />
+            <span className="px-3 text-[11px] font-bold text-[#6E7A73]">
+              {isAr ? 'أو بالبريد الإلكتروني' : 'or with email'}
+            </span>
+            <div className="flex-grow border-t border-[#D3DCD1]" />
+          </div>
+
+          <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-[#F4F5EE]">
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode('login');
+                setAuthError(null);
+              }}
+              className={`py-2 rounded-lg text-xs font-bold cursor-pointer transition-all ${
+                authMode === 'login' ? 'bg-white text-[#0E5C3E] shadow-xs' : 'text-[#4B5650]'
+              }`}
+            >
+              {isAr ? 'تسجيل الدخول' : 'Sign In'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode('register');
+                setAuthError(null);
+              }}
+              className={`py-2 rounded-lg text-xs font-bold cursor-pointer transition-all ${
+                authMode === 'register' ? 'bg-white text-[#0E5C3E] shadow-xs' : 'text-[#4B5650]'
+              }`}
+            >
+              {isAr ? 'حساب جديد' : 'Create Account'}
+            </button>
+          </div>
+
+          <form onSubmit={handleEmailAuthSubmit} className="space-y-3">
+            {authMode === 'register' && (
+              <input
+                type="text"
+                value={nameInput}
+                onChange={(e) => setNameInput(e.target.value)}
+                placeholder={isAr ? 'الاسم الظاهر للأصدقاء' : 'Display name'}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-[#F4F5EE] border border-[#C5CEBF] text-sm text-[#161E19] focus:outline-none focus:border-[#0E6340]"
+              />
+            )}
+            <input
+              type="email"
+              required
+              value={emailInput}
+              onChange={(e) => setEmailInput(e.target.value)}
+              placeholder={isAr ? 'البريد الإلكتروني' : 'Email address'}
+              className="w-full px-3.5 py-2.5 rounded-xl bg-[#F4F5EE] border border-[#C5CEBF] text-sm text-[#161E19] focus:outline-none focus:border-[#0E6340]"
+            />
+            <input
+              type="password"
+              required
+              value={passwordInput}
+              onChange={(e) => setPasswordInput(e.target.value)}
+              placeholder={isAr ? 'كلمة المرور' : 'Password'}
+              className="w-full px-3.5 py-2.5 rounded-xl bg-[#F4F5EE] border border-[#C5CEBF] text-sm text-[#161E19] focus:outline-none focus:border-[#0E6340]"
+            />
+            <button
+              type="submit"
+              disabled={authBusy}
+              className="w-full py-2.5 px-4 rounded-xl bg-[#96701E] hover:bg-[#7A5A16] text-white text-sm font-bold cursor-pointer transition-colors disabled:opacity-60"
+            >
+              {authMode === 'register'
+                ? isAr
+                  ? 'إنشاء الحساب'
+                  : 'Register'
+                : isAr
+                ? 'دخول'
+                : 'Sign In'}
+            </button>
+          </form>
+
+          {onOpenPrivacyTerms && (
+            <div className="pt-2 text-center">
+              <button
+                type="button"
+                onClick={onOpenPrivacyTerms}
+                className="text-[11px] font-bold text-[#0E5C3E] underline cursor-pointer"
+              >
+                {isAr ? 'سياسة الخصوصية والأمان الصوتي (WebRTC)' : 'Audio Privacy & Security Policy'}
+              </button>
+            </div>
+          )}
+        </div>
       </section>
     );
   }
 
-  return (
-    <section className="max-w-5xl mx-auto space-y-4">
-      <audio ref={remoteAudioRef} autoPlay playsInline className="sr-only" />
-      {/* STEP 1: NOT SIGNED IN -> AUTH GATE */}
-      {!user && (
-        <div className="space-y-3">
-          <div className="gold-card-surface frame-card-gold rounded-[20px] p-3.5 sm:p-4 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-[#F5ECD4] border border-[#DEC994] flex items-center justify-center text-[#8A6518] shrink-0">
-                <PhoneCall className="w-5 h-5" />
-              </div>
-              <div>
-                <h1 className="text-base sm:text-xl font-extrabold font-display-islamic text-[#161E19]">
-                  {isAr ? 'السرد الثنائي المباشر' : 'Duo Recitation'}
-                </h1>
-                <p className="text-xs text-[#4B5650]">
-                  {isAr
-                    ? 'سجّل دخولك لمشاركة رابط الصداقة والاتصال المشفّر'
-                    : 'Sign in to share your friend link and place encrypted calls'}
-                </p>
-              </div>
-            </div>
-            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#ECFDF3] border border-[#86EFAC] text-[#15803D] text-[11px] font-bold shrink-0">
-              <Lock className="w-3 h-3" />
-              <span>E2EE</span>
-            </span>
+  // 2. EMAIL VERIFICATION GATE
+  if (!user.emailVerified) {
+    return (
+      <section className="max-w-lg mx-auto">
+        <div className="rounded-[24px] bg-[#FFFFFF] border border-[#DEC994] p-6 shadow-sm space-y-4 text-center">
+          <div className="w-12 h-12 mx-auto rounded-2xl bg-[#FEFCE8] border border-[#FDE047] flex items-center justify-center text-[#96701E]">
+            <Mail className="w-6 h-6" />
           </div>
+          <h3 className="text-lg font-extrabold font-display-islamic text-[#0E5C3E]">
+            {isAr ? 'تفعيل البريد الإلكتروني مطلوب' : 'Email Verification Required'}
+          </h3>
+          <p className="text-xs sm:text-sm text-[#4B5650] leading-relaxed">
+            {isAr
+              ? `أرسلنا رابط التفعيل إلى (${user.email}). افتح الرسالة وأكّد بريدك ثم اضغط زر التحقق أدناه.`
+              : `Please verify (${user.email}) via the link sent to your inbox, then tap Refresh below.`}
+          </p>
+          {authError && <p className="text-xs text-[#991B1B] font-semibold">{authError}</p>}
+          {authSuccessMsg && <p className="text-xs text-[#15803D] font-semibold">{authSuccessMsg}</p>}
+          <div className="flex flex-wrap items-center justify-center gap-2.5 pt-2">
+            <button
+              type="button"
+              onClick={async () => {
+                setAuthBusy(true);
+                setAuthError(null);
+                try {
+                  await user.reload();
+                  setProfileVersion((v) => v + 1);
+                  if (auth.currentUser?.emailVerified) {
+                    setUser(auth.currentUser);
+                    await syncVerifiedUserProfileAndDirectory(auth.currentUser);
+                  } else {
+                    setAuthError(isAr ? 'لم يتم التفعيل بعد، تحقق من بريدك.' : 'Not verified yet.');
+                  }
+                } catch {
+                  setAuthError(isAr ? 'تعذر التحقق الآن.' : 'Verification check failed.');
+                } finally {
+                  setAuthBusy(false);
+                }
+              }}
+              className="px-4 py-2.5 rounded-xl bg-[#0E6340] text-white text-xs font-bold cursor-pointer"
+            >
+              {isAr ? 'تم التفعيل، متابعة' : 'I Verified — Continue'}
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await sendEmailVerification(user);
+                  setAuthSuccessMsg(isAr ? 'أُعيد إرسال رابط التفعيل.' : 'Verification email resent.');
+                } catch {
+                  setAuthError(isAr ? 'انتظر قليلاً قبل إعادة الإرسال.' : 'Please wait before resending.');
+                }
+              }}
+              className="px-4 py-2.5 rounded-xl bg-[#EAF0E7] text-[#0E5C3E] text-xs font-bold cursor-pointer"
+            >
+              {isAr ? 'إعادة إرسال الرابط' : 'Resend Email'}
+            </button>
+            <button
+              type="button"
+              onClick={() => signOut(auth)}
+              className="px-3 py-2.5 rounded-xl text-[#A84A32] text-xs font-bold cursor-pointer"
+            >
+              {isAr ? 'خروج' : 'Sign Out'}
+            </button>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div className="rounded-2xl bg-[#FFFFFF] frame-card-ivory p-5 space-y-4">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-[#F5ECD4] text-[#8A6518] flex items-center justify-center">
-                  <Mail className="w-5 h-5" />
+  // Derived Display Name for verified user
+  const myDisplayName = getDisplayNameForUser(user);
+  void profileVersion; // Referenced so profile updates trigger clean re-read from User instance
+
+  const peerDisplayName = sessionMeta
+    ? sessionMeta.hostUid === user.uid
+      ? friends.find((f) => f.friendUid === sessionMeta.calleeUid)?.friendName ||
+        sessionMeta.guestName ||
+        (isAr ? 'صديق' : 'Friend')
+      : sessionMeta.hostName
+    : '';
+
+  return (
+    <section className="max-w-4xl mx-auto space-y-5">
+      {/* Persistent Remote WebRTC Audio Element */}
+      <audio ref={remoteAudioRef} autoPlay playsInline className="hidden" />
+
+      {/* 3. ACTIVE CALL OR RINGING VIEW */}
+      {sessionId && sessionMeta ? (
+        <div className="space-y-4">
+          {/* Call Status Bar */}
+          <div className="rounded-[24px] bg-[#0E5C3E] text-white border-2 border-[#E6C25A]/70 p-4 sm:p-5 shadow-lg space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-[#0E6340] border border-[#E6C25A]/60 flex items-center justify-center">
+                  <PhoneCall
+                    className={`w-5 h-5 text-[#E6C25A] ${
+                      sessionMeta.status === 'ringing' ? 'animate-bounce' : ''
+                    }`}
+                  />
                 </div>
                 <div>
-                  <h2 className="text-base font-extrabold text-[#161E19]">
-                    {isAr ? 'تسجيل الدخول' : 'Sign In'}
-                  </h2>
-                  <p className="text-xs text-[#4B5650]">
-                    {isAr
-                      ? 'اتصال مباشر محمي بين الأصدقاء'
-                      : 'Protected direct friend calling'}
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base sm:text-lg font-extrabold font-display-islamic">
+                      {peerDisplayName}
+                    </h3>
+                    <span className="px-2 py-0.5 rounded-md bg-white/15 text-[11px] font-bold">
+                      {sessionMeta.status === 'ringing'
+                        ? isAr
+                          ? 'جاري الرنين...'
+                          : 'Ringing...'
+                        : peerConnState === 'connected'
+                        ? isAr
+                          ? 'صوت مباشر مشفّر'
+                          : 'Live Encrypted'
+                        : peerConnState === 'reconnecting'
+                        ? isAr
+                          ? 'إعادة الربط...'
+                          : 'Reconnecting...'
+                        : peerConnState === 'failed'
+                        ? isAr
+                          ? 'تعذر الربط الصوتي'
+                          : 'Audio Failed'
+                        : isAr
+                        ? 'جاري الاتصال...'
+                        : 'Connecting...'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#E6D7BE] mt-0.5">
+                    {buildCurriculumSummary(sessionMeta, lang)}
                   </p>
                 </div>
               </div>
 
-              {authError && (
-                <div className="rounded-xl bg-[#F7F1DF] border border-[#96701E] p-3 text-xs text-[#161E19] flex items-start gap-2.5">
-                  <AlertCircle className="w-4 h-4 text-[#96701E] shrink-0 mt-0.5" />
-                  <div className="space-y-1 leading-relaxed">
-                    <p className="font-semibold">{authError}</p>
-                    {providerHelpOpen && (
-                      <p className="text-[11px] text-[#4B5650]">
-                        {isAr
-                          ? 'لتفعيل البريد وكلمة المرور: افتح Firebase Console ← Authentication ← Sign-in method ← Email/Password ← Enable.'
-                          : 'Enable Email/Password in Firebase Console → Authentication → Sign-in method.'}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {verificationMsg && (
-                <div className="rounded-xl bg-[#0E6340]/10 border border-[#0E6340]/30 p-3 text-xs text-[#161E19] font-semibold">
-                  {verificationMsg}
-                </div>
-              )}
-
-              <button
-                type="button"
-                disabled={authLoading}
-                onClick={handleGoogleSignIn}
-                className="w-full mustard-gradient-btn text-[#FFFFFF] py-3 px-4 rounded-xl text-sm font-bold flex items-center justify-center gap-2.5 shadow-xs cursor-pointer disabled:opacity-60"
-              >
-                <LogIn className="w-4 h-4" />
-                <span>
-                  {isAr
-                    ? 'الدخول السريع عبر بريد Google (موثّق فوراً)'
-                    : 'Sign In Instantly with Google Email'}
-                </span>
-              </button>
-
-              <div className="flex items-center gap-3 text-xs text-[#6A766E]">
-                <div className="flex-1 h-px bg-[#D3DDD0]" />
-                <span>{isAr ? 'أو بالبريد وكلمة المرور' : 'Or with Email & Password'}</span>
-                <div className="flex-1 h-px bg-[#D3DDD0]" />
-              </div>
-
-              <div className="grid grid-cols-2 gap-1 p-1 bg-[#F4F5EE] rounded-xl border border-[#C5CEBF]">
+              <div className="flex items-center gap-2">
+                {sessionMeta.status === 'active' && (
+                  <span className="px-3 py-1.5 rounded-xl bg-black/25 font-mono text-sm font-bold text-[#E6C25A]">
+                    {formatDuration(callSeconds)}
+                  </span>
+                )}
                 <button
                   type="button"
                   onClick={() => {
-                    setAuthMode('login');
-                    setAuthError(null);
+                    if (sessionMeta.status === 'active') {
+                      setShowEndEvalModal(true);
+                    } else {
+                      void finalizeEndCall(null);
+                    }
                   }}
-                  className={`py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-                    authMode === 'login'
-                      ? 'bg-[#0E5C3E] text-[#E6C25A]'
-                      : 'text-[#4B5650] hover:text-[#161E19]'
-                  }`}
+                  className="px-4 py-2 rounded-xl bg-[#A84A32] hover:bg-[#8E3B26] text-white text-xs sm:text-sm font-bold flex items-center gap-1.5 cursor-pointer shadow-xs"
                 >
-                  {isAr ? 'تسجيل الدخول' : 'Sign In'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAuthMode('register');
-                    setAuthError(null);
-                  }}
-                  className={`py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-                    authMode === 'register'
-                      ? 'bg-[#0E5C3E] text-[#E6C25A]'
-                      : 'text-[#4B5650] hover:text-[#161E19]'
-                  }`}
-                >
-                  {isAr ? 'حساب بريد جديد' : 'Create Account'}
+                  <PhoneOff className="w-4 h-4" />
+                  <span>
+                    {sessionMeta.status === 'ringing'
+                      ? isAr
+                        ? 'إلغاء'
+                        : 'Cancel'
+                      : isAr
+                      ? 'إنهاء'
+                      : 'End'}
+                  </span>
                 </button>
               </div>
+            </div>
 
-              <form onSubmit={handleEmailAuthSubmit} className="space-y-3">
-                {authMode === 'register' && (
-                  <div>
-                    <label className="block text-xs font-bold text-[#4B5650] mb-1">
-                      {isAr ? 'الاسم الظاهر للأصدقاء' : 'Display Name'}
-                    </label>
-                    <input
-                      type="text"
-                      value={nameInput}
-                      onChange={(e) => setNameInput(e.target.value)}
-                      placeholder={isAr ? 'مثال: نور' : 'e.g. Noor'}
-                      className="w-full px-3 py-2 rounded-xl bg-[#F4F5EE] border border-[#C5CEBF] text-sm text-[#161E19] focus:outline-none focus:border-[#96701E]"
+            {/* Audio Controls + Unlock Prompt */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/15">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleToggleMute}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${
+                    isMicMuted
+                      ? 'bg-[#A84A32] text-white'
+                      : 'bg-white/15 hover:bg-white/25 text-white'
+                  }`}
+                >
+                  {isMicMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                  <span>
+                    {isMicMuted ? (isAr ? 'مكتوم' : 'Muted') : isAr ? 'الميكروفون' : 'Mic On'}
+                  </span>
+                </button>
+
+                {/* Live Mic Level Bar */}
+                {!isMicMuted && (
+                  <div
+                    className="w-16 h-2 rounded-full bg-black/30 overflow-hidden"
+                    title={isAr ? 'مستوى الميكروفون' : 'Microphone level'}
+                  >
+                    <div
+                      className="h-full bg-[#E6C25A] transition-all duration-75"
+                      style={{ width: `${micLevel}%` }}
                     />
                   </div>
                 )}
 
-                <div>
-                  <label className="block text-xs font-bold text-[#4B5650] mb-1">
-                    {isAr ? 'البريد الإلكتروني' : 'Email Address'}
-                  </label>
-                  <div className="relative">
-                    <Mail className="w-4 h-4 text-[#6A766E] absolute top-1/2 -translate-y-1/2 start-3 pointer-events-none" />
-                    <input
-                      type="email"
-                      required
-                      value={emailInput}
-                      onChange={(e) => setEmailInput(e.target.value)}
-                      placeholder="name@example.com"
-                      dir="ltr"
-                      className="w-full ps-9 pe-3 py-2 rounded-xl bg-[#F4F5EE] border border-[#C5CEBF] text-sm text-[#161E19] focus:outline-none focus:border-[#96701E]"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-[#4B5650] mb-1">
-                    {isAr ? 'كلمة المرور' : 'Password'}
-                  </label>
-                  <div className="relative">
-                    <Lock className="w-4 h-4 text-[#6A766E] absolute top-1/2 -translate-y-1/2 start-3 pointer-events-none" />
-                    <input
-                      type="password"
-                      required
-                      minLength={6}
-                      value={passwordInput}
-                      onChange={(e) => setPasswordInput(e.target.value)}
-                      placeholder="••••••"
-                      dir="ltr"
-                      className="w-full ps-9 pe-3 py-2 rounded-xl bg-[#F4F5EE] border border-[#C5CEBF] text-sm text-[#161E19] focus:outline-none focus:border-[#96701E]"
-                    />
-                  </div>
-                </div>
-
                 <button
-                  type="submit"
-                  disabled={authLoading}
-                  className="w-full py-2.5 px-4 rounded-xl bg-[#0E5C3E] hover:bg-[#0A4730] text-[#E6C25A] text-sm font-bold cursor-pointer transition-colors disabled:opacity-60"
+                  type="button"
+                  onClick={handleToggleAudioOutput}
+                  className="px-3 py-2 rounded-xl bg-white/15 hover:bg-white/25 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
                 >
-                  {authLoading
-                    ? isAr
-                      ? 'جاري المعالجة...'
-                      : 'Please wait...'
-                    : authMode === 'register'
-                    ? isAr
-                      ? 'إنشاء الحساب وإرسال رابط التفعيل'
-                      : 'Create Account & Send Verification'
-                    : isAr
-                    ? 'دخول بالبريد الإلكتروني'
-                    : 'Sign In with Email'}
+                  {speakerOutputMode === 'speaker' ? (
+                    <Volume2 className="w-4 h-4" />
+                  ) : (
+                    <VolumeX className="w-4 h-4" />
+                  )}
+                  <span>
+                    {speakerOutputMode === 'speaker'
+                      ? isAr
+                        ? 'مكبر الصوت'
+                        : 'Speaker'
+                      : isAr
+                      ? 'سماعة الأذن'
+                      : 'Earpiece'}
+                  </span>
                 </button>
-              </form>
-            </div>
 
-            <div className="olive-card-surface frame-card-olive rounded-2xl p-5 flex flex-col justify-between gap-4">
-              <div className="space-y-3.5">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-9 h-9 rounded-xl bg-[#0E6340]/15 text-[#0E6340] flex items-center justify-center">
-                    <ShieldCheck className="w-5 h-5" />
-                  </div>
-                  <h3 className="text-base font-extrabold text-[#161E19]">
-                    {isAr ? 'حماية وخصوصية السرد الثنائي' : 'Protected Direct Duo Recitation'}
-                  </h3>
-                </div>
-
-                <ul className="space-y-2.5 text-xs sm:text-sm text-[#0E5C3E]">
-                  <li className="flex items-start gap-2.5">
-                    <Link2 className="w-4 h-4 text-[#0E6340] shrink-0 mt-0.5" />
-                    <span>
-                      {isAr
-                        ? 'إضافة الأصدقاء عبر رابط دعوة خاص وبموافقة الطرفين.'
-                        : 'Friend invites via personal links with mutual approval.'}
-                    </span>
-                  </li>
-                  <li className="flex items-start gap-2.5">
-                    <Lock className="w-4 h-4 text-[#15803D] shrink-0 mt-0.5" />
-                    <span>
-                      {isAr
-                        ? 'صوت مشفّر (E2EE) مع إخفاء IP ومنع تبادل الملفات.'
-                        : 'Encrypted audio (E2EE) with IP masking and no file transfer.'}
-                    </span>
-                  </li>
-                  <li className="flex items-start gap-2.5">
-                    <BookOpen className="w-4 h-4 text-[#96701E] shrink-0 mt-0.5" />
-                    <span>
-                      {isAr
-                        ? 'روايات حفص وقالون وورش مع تنبيه لحظي للأخطاء.'
-                        : 'Hafs, Qalun & Warsh narrations with live error alerts.'}
-                    </span>
-                  </li>
-                </ul>
-              </div>
-
-              <div className="space-y-2">
-                <div className="rounded-xl bg-[#FFFFFF]/85 border border-[#C5CEBF] p-3 text-xs text-[#4B5650]">
-                  {isAr
-                    ? 'الاتصال مقتصر على الأصدقاء المعتمدين فقط (دون غرف عامة).'
-                    : 'Private calling strictly between approved friends.'}
-                </div>
-                {onOpenPrivacyTerms && (
+                {audioUnlockNeeded && (
                   <button
                     type="button"
-                    onClick={onOpenPrivacyTerms}
-                    className="text-xs font-bold text-[#15803D] hover:underline flex items-center gap-1 cursor-pointer"
+                    onClick={() => {
+                      callRingtone.unlockAudio();
+                      if (remoteStreamRef.current) {
+                        void playRemoteStreamSafely(remoteStreamRef.current);
+                      }
+                    }}
+                    className="px-3 py-2 rounded-xl bg-[#E6C25A] text-[#0E5C3E] text-xs font-extrabold animate-pulse cursor-pointer"
                   >
-                    <ShieldCheck className="w-3.5 h-3.5" />
-                    <span>{isAr ? 'الخصوصية وشروط الاستخدام' : 'Privacy & Terms'}</span>
+                    {isAr ? 'اضغط لتفعيل صوت الصديق' : 'Tap to Enable Audio'}
                   </button>
                 )}
               </div>
-            </div>
-          </div>
-        </div>
-      )}
 
-      {/* STEP 2: VERIFICATION GATE */}
-      {user && !user.emailVerified && (
-        <div className="rounded-2xl bg-[#FFFFFF] border-2 border-[#96701E]/60 p-6 max-w-xl mx-auto text-center space-y-4 shadow-xs">
-          <div className="w-12 h-12 mx-auto rounded-2xl bg-[#F5ECD4] text-[#8A6518] flex items-center justify-center">
-            <Mail className="w-6 h-6" />
-          </div>
-          <h2 className="text-lg font-extrabold text-[#161E19]">
-            {isAr ? 'تأكيد البريد الإلكتروني' : 'Verify Your Email'}
-          </h2>
-          <p className="text-xs sm:text-sm text-[#4B5650] leading-relaxed">
-            {isAr
-              ? `أُرسل رابط التفعيل إلى (${user.email}). افتحه ثم اضغط «تحقق الآن».`
-              : `Verification link sent to (${user.email}). Click it, then tap "Verify Now".`}
-          </p>
-          {verificationMsg && (
-            <div className="rounded-xl bg-[#F7F1DF] border border-[#96701E] p-2.5 text-xs font-semibold text-[#161E19]">
-              {verificationMsg}
-            </div>
-          )}
-          <div className="flex flex-wrap items-center justify-center gap-2.5 pt-2">
-            <button
-              type="button"
-              disabled={authLoading}
-              onClick={handleRefreshVerificationStatus}
-              className="mustard-gradient-btn text-[#FFFFFF] px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 cursor-pointer"
-            >
-              <RefreshCw className={`w-4 h-4 ${authLoading ? 'animate-spin' : ''}`} />
-              <span>{isAr ? 'تحقق من التفعيل الآن' : 'Verify Status'}</span>
-            </button>
-            <button
-              type="button"
-              disabled={authLoading}
-              onClick={handleResendVerification}
-              className="px-4 py-2.5 rounded-xl bg-[#F4F5EE] hover:bg-[#EAF0E7] border border-[#C5CEBF] text-xs font-bold text-[#0E5C3E] cursor-pointer"
-            >
-              {isAr ? 'إعادة إرسال الرابط' : 'Resend Link'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* STEP 3: VERIFIED USER LOBBY */}
-      {user && user.emailVerified && !sessionId && (
-        <div className="space-y-4">
-          {/* Top Soft Green Guidance Banner */}
-          <div className="rounded-xl bg-[#ECFDF3] border border-[#BBF7D0] px-3.5 py-2 text-xs sm:text-sm font-bold text-[#15803D] leading-snug">
-            {isAr
-              ? 'شارك رابط دعوتك مع صديقك، وعند موافقته يمكنك بدء مكالمة السرد الثنائي.'
-              : 'Share your invite link with a friend; once approved, start your Duo voice call.'}
-          </div>
-
-          {lobbyError && (
-            <div className="rounded-xl bg-[#F7F1DF] border border-[#96701E] p-3 text-xs sm:text-sm text-[#161E19] flex items-start gap-2.5">
-              <AlertCircle className="w-4 h-4 text-[#96701E] shrink-0 mt-0.5" />
-              <p className="font-semibold">{lobbyError}</p>
-            </div>
-          )}
-
-          {/* Post-Call Evaluation Summary Toast Card */}
-          {lastCallSummary && (
-            <div className="rounded-2xl bg-[#FFFFFF] border-2 border-[#15803D]/40 p-4 shadow-xs flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-start gap-3">
-                <div className="w-10 h-10 rounded-xl bg-[#ECFDF3] text-[#15803D] flex items-center justify-center shrink-0">
-                  <Award className="w-5 h-5" />
+              {sessionMeta.status === 'active' && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="px-2.5 py-1 rounded-lg bg-[#E6C25A]/20 border border-[#E6C25A]/50 text-[#E6C25A] text-xs font-bold">
+                    {amIReciter
+                      ? isAr
+                        ? 'دورك: القارئ'
+                        : 'Role: Reciter'
+                      : isAr
+                      ? 'دورك: المستمع'
+                      : 'Role: Listener'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void updateActiveSessionFields({
+                        reciterSide: (sessionMeta.reciterSide || 'host') === 'host' ? 'guest' : 'host',
+                      })
+                    }
+                    className="px-3 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <ArrowLeftRight className="w-3.5 h-3.5" />
+                    <span>{isAr ? 'تبديل الأدوار' : 'Swap Roles'}</span>
+                  </button>
                 </div>
-                <div className="space-y-0.5">
-                  <div className="text-sm font-extrabold text-[#161E19]">
+              )}
+            </div>
+          </div>
+
+          {/* Active Recitation Workspace Controls & Script */}
+          {sessionMeta.status === 'active' && (
+            <div className="rounded-[24px] bg-[#FFFFFF] border border-[#C5CEBF] p-4 sm:p-5 shadow-sm space-y-4">
+              {/* Visibility, Errors & Ayah Navigation Bar */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#EAF0E7]">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void updateActiveSessionFields({
+                        hideVersesForReciter: !sessionMeta.hideVersesForReciter,
+                      })
+                    }
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border cursor-pointer ${
+                      sessionMeta.hideVersesForReciter
+                        ? 'bg-[#0E6340] text-white border-[#0E6340]'
+                        : 'bg-[#F4F5EE] text-[#161E19] border-[#C5CEBF]'
+                    }`}
+                  >
+                    {sessionMeta.hideVersesForReciter ? (
+                      <EyeOff className="w-3.5 h-3.5" />
+                    ) : (
+                      <Eye className="w-3.5 h-3.5" />
+                    )}
+                    <span>{isAr ? 'إخفاء عن القارئ' : 'Hide for Reciter'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void updateActiveSessionFields({
+                        hideVersesForListener: !sessionMeta.hideVersesForListener,
+                      })
+                    }
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border cursor-pointer ${
+                      sessionMeta.hideVersesForListener
+                        ? 'bg-[#0E6340] text-white border-[#0E6340]'
+                        : 'bg-[#F4F5EE] text-[#161E19] border-[#C5CEBF]'
+                    }`}
+                  >
+                    {sessionMeta.hideVersesForListener ? (
+                      <EyeOff className="w-3.5 h-3.5" />
+                    ) : (
+                      <Eye className="w-3.5 h-3.5" />
+                    )}
+                    <span>{isAr ? 'إخفاء عن المستمع' : 'Hide for Listener'}</span>
+                  </button>
+
+                  {versesHiddenForMe && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setLocalRevealCurrentAyah((v) => !v)}
+                        className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#FEFCE8] border border-[#CA8A04] text-[#713F12] cursor-pointer"
+                      >
+                        {localRevealCurrentAyah
+                          ? isAr
+                            ? 'إعادة الإخفاء'
+                            : 'Re-hide'
+                          : isAr
+                          ? 'كشف الآية الحالية'
+                          : 'Peek Current Ayah'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setLocalFadeFirstWordOnly((v) => !v)}
+                        className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#EAF0E7] text-[#0E5C3E] cursor-pointer"
+                      >
+                        {localFadeFirstWordOnly
+                          ? isAr
+                            ? 'إخفاء كامل'
+                            : 'Hide All'
+                          : isAr
+                          ? 'أول كلمة فقط'
+                          : 'First Word Cue'}
+                      </button>
+                    </>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-1 rounded-lg bg-[#FEF2F2] border border-[#FECACA] text-[#991B1B] text-xs font-bold">
                     {isAr
-                      ? `نتيجة جلسة السرد مع ${lastCallSummary.partnerName}`
-                      : `Session Summary with ${lastCallSummary.partnerName}`}
-                  </div>
-                  <div className="text-xs text-[#4B5650] flex flex-wrap items-center gap-2">
-                    <span className="font-bold text-[#15803D]">
-                      {
-                        EVALUATION_CHOICES.find((c) => c.id === lastCallSummary.evaluation)?.[
-                          isAr ? 'labelAr' : 'labelEn'
-                        ]
+                      ? `التنبيهات: ${sessionMeta.mistakesCount || 0}`
+                      : `Alerts: ${sessionMeta.mistakesCount || 0}`}
+                  </span>
+                  {(sessionMeta.mistakesCount || 0) > 0 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void updateActiveSessionFields({ markedErrors: [], mistakesCount: 0 })
                       }
-                    </span>
-                    <span>·</span>
-                    <span>
-                      {isAr ? 'المدة' : 'Duration'}:{' '}
-                      {formatCallDuration(lastCallSummary.durationSeconds, isAr)}
-                    </span>
-                    <span>·</span>
-                    <span>
-                      {isAr ? 'الإتقان' : 'Accuracy'}:{' '}
-                      {isAr
-                        ? `${toArabicDigits(lastCallSummary.accuracyPct)}٪`
-                        : `${lastCallSummary.accuracyPct}%`}
-                    </span>
+                      className="p-1.5 rounded-lg bg-[#F4F5EE] hover:bg-[#EAF0E7] text-[#4B5650] cursor-pointer"
+                      title={isAr ? 'تصفير التنبيهات' : 'Reset alerts'}
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+
+                  <div className="flex items-center gap-1 bg-[#F4F5EE] rounded-lg px-1.5 py-1">
+                    <button
+                      type="button"
+                      onClick={() => setVerseTextScale((s) => Math.max(0.85, Number((s - 0.1).toFixed(2))))}
+                      className="px-1.5 text-xs font-bold text-[#0E5C3E] cursor-pointer"
+                    >
+                      A-
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setVerseTextScale((s) => Math.min(1.45, Number((s + 0.1).toFixed(2))))}
+                      className="px-1.5 text-xs font-bold text-[#0E5C3E] cursor-pointer"
+                    >
+                      A+
+                    </button>
                   </div>
                 </div>
               </div>
+
+              {/* Verses Container */}
+              {versesLoading ? (
+                <p className="text-center py-8 text-sm text-[#4B5650]">
+                  {isAr ? 'جاري تحميل الآيات بالرسم العثماني...' : 'Loading Uthmani verses...'}
+                </p>
+              ) : versesError ? (
+                <div className="p-4 rounded-xl bg-[#FEF2F2] text-[#991B1B] text-xs font-semibold text-center">
+                  {versesError}
+                </div>
+              ) : (
+                <div className="space-y-3 max-h-[54vh] overflow-y-auto px-1">
+                  {verses.map((v) => {
+                    const isCurrent = sessionMeta.activeAyah === v.ayahNumber;
+                    const hideThisAyah = versesHiddenForMe && !(isCurrent && localRevealCurrentAyah);
+                    const words = v.text.split(/\s+/).filter(Boolean);
+                    const marked = Array.isArray(sessionMeta.markedErrors) ? sessionMeta.markedErrors : [];
+
+                    return (
+                      <div
+                        key={v.verseKey}
+                        ref={(el) => {
+                          ayahRowRefs.current[v.verseKey] = el;
+                        }}
+                        onClick={() =>
+                          void updateActiveSessionFields({ activeAyah: v.ayahNumber })
+                        }
+                        className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${
+                          isCurrent
+                            ? 'bg-[#ECFDF3]/80 border-[#0E6340] shadow-xs'
+                            : 'bg-[#FAFBF8] border-[#E2E8DF] hover:border-[#0E6340]/40'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <span className="text-[11px] font-bold text-[#96701E]">
+                            {isAr ? `الآية ${v.ayahNumber}` : `Ayah ${v.ayahNumber}`}
+                          </span>
+                          {isCurrent && (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-[#0E6340] text-white">
+                              {isAr ? 'الآية الحالية' : 'Active'}
+                            </span>
+                          )}
+                        </div>
+
+                        {hideThisAyah ? (
+                          <div dir="rtl" className="py-2 text-right font-quran text-lg text-[#4B5650]">
+                            {localFadeFirstWordOnly && words.length > 0 ? (
+                              <>
+                                <span className="text-[#0E5C3E] font-bold">{words[0]} </span>
+                                <span className="blur-[5px] select-none opacity-40">
+                                  {words.slice(1).join(' ')}
+                                </span>
+                              </>
+                            ) : (
+                              <span className="text-xs font-sans text-[#6E7A73]">
+                                {isAr
+                                  ? 'مخفية للتسميع الغيبي — اقرأ من حفظك'
+                                  : 'Hidden for memorization — recite from memory'}
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <p
+                            dir="rtl"
+                            style={{ fontSize: `${Math.round(22 * verseTextScale)}px`, lineHeight: 2.05 }}
+                            className="font-quran text-[#161E19] text-right select-text"
+                          >
+                            {words.map((word, idx) => {
+                              const wKey = `${v.surahNumber}:${v.ayahNumber}:${idx}`;
+                              const isMarked = marked.includes(wKey);
+                              return (
+                                <React.Fragment key={wKey}>
+                                  <span
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      void handleToggleWordError(wKey);
+                                    }}
+                                    className={`inline-block px-0.5 rounded transition-colors ${
+                                      isMarked
+                                        ? 'bg-[#FECACA] text-[#991B1B] underline decoration-[#DC2626]'
+                                        : 'hover:bg-[#EAF0E7]'
+                                    }`}
+                                    title={isAr ? 'اضغط لتحديد أو إلغاء خطأ' : 'Tap to toggle error'}
+                                  >
+                                    {word}
+                                  </span>{' '}
+                                </React.Fragment>
+                              );
+                            })}
+                            <span className="text-[#96701E] text-base mx-1">﴿{v.ayahNumber}﴾</span>
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Synced Prev / Next Ayah Controls */}
+              {verses.length > 1 && (
+                <div className="flex items-center justify-between pt-2 border-t border-[#EAF0E7]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const idx = verses.findIndex((v) => v.ayahNumber === sessionMeta.activeAyah);
+                      const prev = idx > 0 ? verses[idx - 1] : verses[0];
+                      if (prev) void updateActiveSessionFields({ activeAyah: prev.ayahNumber });
+                    }}
+                    className="px-3.5 py-2 rounded-xl bg-[#EAF0E7] hover:bg-[#D3DCD1] text-[#0E5C3E] text-xs font-bold flex items-center gap-1 cursor-pointer"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                    <span>{isAr ? 'الآية السابقة' : 'Prev Ayah'}</span>
+                  </button>
+                  <span className="text-xs font-bold text-[#4B5650]">
+                    {isAr
+                      ? 'اضغط على أي كلمة لتسجيل ملاحظة تسميع'
+                      : 'Tap any word to mark a recitation note'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const idx = verses.findIndex((v) => v.ayahNumber === sessionMeta.activeAyah);
+                      const next = idx >= 0 && idx < verses.length - 1 ? verses[idx + 1] : verses[verses.length - 1];
+                      if (next) void updateActiveSessionFields({ activeAyah: next.ayahNumber });
+                    }}
+                    className="px-3.5 py-2 rounded-xl bg-[#0E6340] hover:bg-[#0A4D31] text-white text-xs font-bold flex items-center gap-1 cursor-pointer"
+                  >
+                    <span>{isAr ? 'الآية التالية' : 'Next Ayah'}</span>
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* End Call Evaluation Modal */}
+          {showEndEvalModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+              <div className="w-full max-w-sm rounded-[24px] bg-white border border-[#C5CEBF] p-5 shadow-2xl space-y-4">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-base font-extrabold font-display-islamic text-[#0E5C3E]">
+                    {isAr ? 'تقييم جلسة السرد الثنائي' : 'Rate Duo Session'}
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => setShowEndEvalModal(false)}
+                    className="p-1 rounded-lg hover:bg-[#EAF0E7] text-[#4B5650] cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {EVALUATION_CHOICES.map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      disabled={endingBusy}
+                      onClick={() => void finalizeEndCall(opt.id)}
+                      className={`py-2.5 px-3 rounded-xl border text-xs font-bold cursor-pointer hover:opacity-90 ${opt.colorClass}`}
+                    >
+                      {isAr ? opt.labelAr : opt.labelEn}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  disabled={endingBusy}
+                  onClick={() => void finalizeEndCall(null)}
+                  className="w-full py-2.5 rounded-xl bg-[#A84A32] hover:bg-[#8E3B26] text-white text-xs font-bold cursor-pointer"
+                >
+                  {isAr ? 'إنهاء المكالمة الآن' : 'End Call Now'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
+        /* 4. LOBBY VIEW (Friends, Invite Links, Curriculum Setup) */
+        <div className="space-y-5">
+          {/* Lobby Account Header */}
+          <div className="rounded-[24px] bg-[#FFFFFF] border border-[#C5CEBF] p-4 sm:p-5 shadow-xs flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-[#ECFDF3] border border-[#BBF7D0] flex items-center justify-center text-[#0E6340] font-extrabold">
+                {myDisplayName.slice(0, 1).toUpperCase()}
+              </div>
+              <div>
+                {editingDisplayName ? (
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={displayNameDraft}
+                      onChange={(e) => setDisplayNameDraft(e.target.value)}
+                      className="px-2.5 py-1 rounded-lg border border-[#0E6340] text-xs font-bold text-[#161E19]"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSaveDisplayName}
+                      className="px-2.5 py-1 rounded-lg bg-[#0E6340] text-white text-xs font-bold cursor-pointer"
+                    >
+                      {isAr ? 'حفظ' : 'Save'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditingDisplayName(false)}
+                      className="px-2 py-1 rounded-lg bg-[#EAF0E7] text-[#4B5650] text-xs font-bold cursor-pointer"
+                    >
+                      {isAr ? 'إلغاء' : 'Cancel'}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-base sm:text-lg font-extrabold font-display-islamic text-[#0E5C3E]">
+                      {myDisplayName}
+                    </h2>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDisplayNameDraft(myDisplayName);
+                        setEditingDisplayName(true);
+                      }}
+                      className="text-[11px] text-[#96701E] font-bold underline cursor-pointer"
+                    >
+                      {isAr ? 'تعديل الاسم' : 'Edit'}
+                    </button>
+                  </div>
+                )}
+                <p className="text-[11px] text-[#6E7A73]">
+                  {isAr ? 'معرّف المشاركة:' : 'ID:'} {formatFriendShortCode(user.uid)} ·{' '}
+                  {isAr ? 'صوت P2P مشفّر' : 'Encrypted P2P Audio'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {onOpenPrivacyTerms && (
+                <button
+                  type="button"
+                  onClick={onOpenPrivacyTerms}
+                  className="px-3 py-1.5 rounded-xl bg-[#F4F5EE] hover:bg-[#EAF0E7] text-[#0E5C3E] text-xs font-bold flex items-center gap-1 cursor-pointer"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>{isAr ? 'الخصوصية' : 'Privacy'}</span>
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() => setLastCallSummary(null)}
-                className="p-1.5 rounded-lg bg-[#F4F5EE] text-[#4B5650] hover:bg-[#EAF0E7] cursor-pointer"
+                onClick={() => signOut(auth)}
+                className="px-3 py-1.5 rounded-xl bg-[#FEF2F2] hover:bg-[#FEE2E2] text-[#A84A32] text-xs font-bold flex items-center gap-1 cursor-pointer"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>{isAr ? 'خروج' : 'Sign Out'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Post-Call Summary Banner */}
+          {postCallSummary && (
+            <div className="rounded-[20px] bg-[#ECFDF3] border border-[#15803D]/50 p-4 flex flex-wrap items-center justify-between gap-3">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 text-[#14532D] font-extrabold text-sm">
+                  <Sparkles className="w-4 h-4 text-[#96701E]" />
+                  <span>
+                    {isAr
+                      ? `ملخص جلسة السرد مع ${postCallSummary.peerName}`
+                      : `Session Summary with ${postCallSummary.peerName}`}
+                  </span>
+                </div>
+                <p className="text-xs text-[#166534]">
+                  {postCallSummary.surahLabel} · {formatDuration(postCallSummary.durationSeconds)} ·{' '}
+                  {isAr
+                    ? `الإتقان ${postCallSummary.accuracyPct}%`
+                    : `Accuracy ${postCallSummary.accuracyPct}%`}
+                  {postCallSummary.evaluation
+                    ? ` · ${
+                        isAr
+                          ? EVALUATION_CHOICES.find((e) => e.id === postCallSummary.evaluation)?.labelAr
+                          : EVALUATION_CHOICES.find((e) => e.id === postCallSummary.evaluation)?.labelEn
+                      }`
+                    : ''}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPostCallSummary(null)}
+                className="p-1.5 rounded-lg hover:bg-[#DCFCE7] text-[#14532D] cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
           )}
 
-          {/* Instant On-Screen Pasted-Invite Confirmation Alert Modal */}
-          {previewedInvite && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-              <div className="w-full max-w-sm rounded-[24px] bg-[#FFFFFF] border-2 border-[#166534] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-                <div className="px-4 py-3 bg-[#ECFDF3] border-b border-[#BBF7D0] flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <UserPlus className="w-5 h-5 text-[#15803D]" />
-                    <h3 className="text-sm sm:text-base font-extrabold text-[#14532D]">
-                      {isAr
-                        ? `دعوة صداقة من «${previewedInvite.ownerName}»`
-                        : `Friend Invite from "${previewedInvite.ownerName}"`}
-                    </h3>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPreviewedInvite(null);
-                      onClearFriendInvite?.();
-                    }}
-                    className="p-1 rounded-lg hover:bg-[#DCFCE7] text-[#14532D] cursor-pointer"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-                <div className="p-5 space-y-4">
-                  <p className="text-xs sm:text-sm text-[#161E19] leading-relaxed">
-                    {isAr
-                      ? `هل توافق على إرسال طلب إضافة «${previewedInvite.ownerName}» إلى أصدقائك في السرد الثنائي؟`
-                      : `Approve sending a friend request to "${previewedInvite.ownerName}"?`}
-                  </p>
-                  <div className="grid grid-cols-2 gap-2.5">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPreviewedInvite(null);
-                        onClearFriendInvite?.();
-                      }}
-                      className="py-2.5 px-3 rounded-xl bg-[#EAF0E7] text-xs font-bold text-[#4B5650] cursor-pointer"
-                    >
-                      {isAr ? 'إلغاء' : 'Cancel'}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={inviteBusy}
-                      onClick={handleConfirmSendFriendRequest}
-                      className="py-2.5 px-3 rounded-xl bg-[#166534] hover:bg-[#14532D] text-[#FFFFFF] text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-60"
-                    >
-                      <Check className="w-4 h-4" />
-                      <span>{isAr ? 'موافقة وإرسال' : 'Approve & Send'}</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
+          {/* Status / Error Notice */}
+          {lobbyNotice && (
+            <div
+              className={`rounded-2xl p-3.5 text-xs font-bold flex items-center justify-between gap-2 border ${
+                lobbyNotice.type === 'error'
+                  ? 'bg-[#FEF2F2] border-[#FECACA] text-[#991B1B]'
+                  : lobbyNotice.type === 'success'
+                  ? 'bg-[#ECFDF3] border-[#BBF7D0] text-[#14532D]'
+                  : 'bg-[#FEFCE8] border-[#FDE047] text-[#713F12]'
+              }`}
+            >
+              <span>{lobbyNotice.text}</span>
+              <button
+                type="button"
+                onClick={() => setLobbyNotice(null)}
+                className="p-1 rounded hover:bg-black/5 cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
             </div>
           )}
 
-          {/* Balanced Lobby Grid: Invite Link + Add Friend side-by-side on large screens, Friends below */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
-            {/* LOBBY CARD 1: Welcome + Personal Invite Link + Copy / Share / Sign Out */}
-            <div className="rounded-[20px] bg-[#FFFFFF] frame-card-ivory p-3.5 sm:p-4 flex flex-col justify-between gap-2.5">
-              <div className="flex flex-wrap items-start justify-between gap-2.5">
-                <div className="space-y-0.5 min-w-0">
-                  <h2 className="text-lg sm:text-xl font-extrabold text-[#161E19] truncate">
-                    {isAr
-                      ? `مرحباً، ${getDisplayNameForUser(user)}`
-                      : `Welcome, ${getDisplayNameForUser(user)}`}
-                  </h2>
-                  <p className="text-xs font-semibold text-[#4B5650]">
-                    {isAr ? 'رابط دعوتك الخاص للأصدقاء:' : 'Your personal friend invite link:'}
-                  </p>
-                </div>
+          {/* Curriculum Selection Card */}
+          <div className="rounded-[24px] bg-[#FFFFFF] border border-[#C5CEBF] p-4 sm:p-5 shadow-xs space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <BookOpen className="w-4 h-4 text-[#0E6340]" />
+                <h3 className="text-sm sm:text-base font-extrabold text-[#0E5C3E]">
+                  {isAr ? 'تحديد المقرر والرواية للاتصال' : 'Session Curriculum & Riwayah'}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHighPrivacyMasking((v) => !v)}
+                className={`px-3 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1.5 border cursor-pointer ${
+                  highPrivacyMasking
+                    ? 'bg-[#0E6340] text-white border-[#0E6340]'
+                    : 'bg-[#F4F5EE] text-[#4B5650] border-[#C5CEBF]'
+                }`}
+              >
+                <Shield className="w-3.5 h-3.5" />
+                <span>{isAr ? 'حماية عالية للعنوان' : 'Relay Privacy Mode'}</span>
+              </button>
+            </div>
 
-                <div className="flex items-center gap-1.5 shrink-0">
-                  {notifPerm !== 'granted' && notifPerm !== 'unsupported' && (
-                    <button
-                      type="button"
-                      onClick={handleEnableBackgroundCallAlerts}
-                      className="px-2.5 py-1.5 rounded-xl bg-[#0E6340] hover:bg-[#0A4D31] text-[#FFFFFF] text-xs font-bold flex items-center gap-1 cursor-pointer"
-                    >
-                      <BellRing className="w-3.5 h-3.5" />
-                      <span>{isAr ? 'تفعيل الرنين' : 'Ring Alerts'}</span>
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={handleSignOut}
-                    className="px-3 py-1.5 rounded-xl bg-[#FFFFFF] hover:bg-[#F4F5EE] border border-[#C5CEBF] text-xs font-bold text-[#161E19] flex items-center gap-1.5 cursor-pointer transition-colors"
-                  >
-                    <LogOut className="w-3.5 h-3.5 text-[#4B5650]" />
-                    <span>{isAr ? 'تسجيل الخروج' : 'Sign Out'}</span>
-                  </button>
-                </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div className="sm:col-span-1">
+                <label className="block text-[11px] font-bold text-[#4B5650] mb-1">
+                  {isAr ? 'الرواية' : 'Riwayah'}
+                </label>
+                <select
+                  value={riwayah}
+                  onChange={(e) => setRiwayah(e.target.value as QuranRiwayah)}
+                  className="w-full px-3 py-2 rounded-xl bg-[#F4F5EE] border border-[#C5CEBF] text-xs font-bold text-[#161E19]"
+                >
+                  {RIWAYAH_OPTIONS.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {isAr ? r.labelAr : r.labelEn}
+                    </option>
+                  ))}
+                </select>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
-                <input
-                  type="text"
-                  readOnly
-                  dir="ltr"
-                  value={personalInviteUrl || (isAr ? 'جاري التوليد...' : 'Generating...')}
-                  className="flex-1 min-w-[170px] px-3 py-2 rounded-xl bg-[#F7F9F5] border border-[#C5CEBF] text-xs font-mono-tabular text-[#4B5650] select-all truncate"
-                />
-                <button
-                  type="button"
-                  onClick={handleCopyInviteLink}
-                  className="px-3 py-2 rounded-xl bg-[#FFFFFF] hover:bg-[#F4F5EE] border border-[#C5CEBF] text-xs font-bold text-[#161E19] flex items-center gap-1.5 cursor-pointer"
-                >
-                  {copiedInvite ? (
-                    <Check className="w-3.5 h-3.5 text-[#15803D]" />
-                  ) : (
-                    <Copy className="w-3.5 h-3.5 text-[#4B5650]" />
-                  )}
-                  <span>{copiedInvite ? (isAr ? 'نُسخ الرابط' : 'Copied') : isAr ? 'نسخ الرابط' : 'Copy Link'}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSharePersonalInvite}
-                  className="px-3 py-2 rounded-xl bg-[#ECFDF3] hover:bg-[#DCFCE7] border border-[#BBF7D0] text-xs font-extrabold text-[#15803D] flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Share2 className="w-3.5 h-3.5" />
-                  <span>{isAr ? 'مشاركة' : 'Share'}</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={inviteBusy}
-                  onClick={handleRegenerateInvite}
-                  title={isAr ? 'إصدار رابط جديد وإلغاء السابق' : 'Regenerate & revoke previous link'}
-                  className="p-2 rounded-xl bg-[#F4F5EE] hover:bg-[#EAF0E7] border border-[#C5CEBF] text-[#8A6518] cursor-pointer disabled:opacity-50"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${inviteBusy ? 'animate-spin' : ''}`} />
-                </button>
+              <div className="sm:col-span-2">
+                <label className="block text-[11px] font-bold text-[#4B5650] mb-1">
+                  {isAr ? 'نطاق التسميع' : 'Curriculum Mode'}
+                </label>
+                <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-[#F4F5EE]">
+                  {(
+                    [
+                      { id: 'ayah', ar: 'آيات محددة', en: 'Ayahs' },
+                      { id: 'surah', ar: 'سور كاملة', en: 'Surahs' },
+                      { id: 'page', ar: 'صفحات المصحف', en: 'Pages' },
+                    ] as const
+                  ).map((mode) => (
+                    <button
+                      key={mode.id}
+                      type="button"
+                      onClick={() => setCurriculumMode(mode.id)}
+                      className={`py-1.5 rounded-lg text-xs font-bold cursor-pointer ${
+                        curriculumMode === mode.id
+                          ? 'bg-white text-[#0E5C3E] shadow-xs'
+                          : 'text-[#4B5650]'
+                      }`}
+                    >
+                      {isAr ? mode.ar : mode.en}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
-            {/* LOBBY CARD 2: Invite a Friend by Link */}
-            <div className="rounded-[20px] bg-[#FFFFFF] frame-card-ivory p-3.5 sm:p-4 flex flex-col justify-between gap-2.5">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <UserPlus className="w-4 h-4 text-[#15803D]" />
-                  <h3 className="text-base font-extrabold text-[#161E19]">
-                    {isAr ? 'دعوة صديق عبر الرابط' : 'Invite a Friend via Link'}
-                  </h3>
+            {curriculumMode === 'ayah' && (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <div>
+                  <label className="block text-[11px] font-bold text-[#4B5650] mb-1">
+                    {isAr ? 'السورة' : 'Surah'}
+                  </label>
+                  <select
+                    value={surahNumber}
+                    onChange={(e) => {
+                      const num = Number(e.target.value);
+                      const info = SURAH_LIST.find((s) => s.number === num) || SURAH_LIST[0];
+                      setSurahNumber(num);
+                      setAyahFrom(1);
+                      setAyahTo(info.ayahCount);
+                    }}
+                    className="w-full px-3 py-2 rounded-xl bg-[#F4F5EE] border border-[#C5CEBF] text-xs font-bold text-[#161E19]"
+                  >
+                    {SURAH_LIST.map((s) => (
+                      <option key={s.number} value={s.number}>
+                        {s.number}. {isAr ? s.nameAr : s.nameEn}
+                      </option>
+                    ))}
+                  </select>
                 </div>
-                <p className="text-xs text-[#4B5650]">
-                  {isAr
-                    ? 'أرسل رابطك أو الصق رابط صديقك لإرسال طلب الصداقة:'
-                    : 'Share your link or paste your friend’s link below:'}
-                </p>
+                <div>
+                  <label className="block text-[11px] font-bold text-[#4B5650] mb-1">
+                    {isAr ? 'من آية' : 'From Ayah'}
+                  </label>
+                  <select
+                    value={ayahFrom}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      setAyahFrom(val);
+                      if (val > ayahTo) setAyahTo(val);
+                    }}
+                    className="w-full px-3 py-2 rounded-xl bg-[#F4F5EE] border border-[#C5CEBF] text-xs font-bold text-[#161E19] cursor-pointer"
+                  >
+                    {Array.from({ length: selectedSurahInfo.ayahCount }, (_, i) => i + 1).map((num) => (
+                      <option key={num} value={num}>
+                        {isAr ? `الآية ${num}` : `Ayah ${num}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-[#4B5650] mb-1">
+                    {isAr ? 'إلى آية' : 'To Ayah'}
+                  </label>
+                  <select
+                    value={ayahTo}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      setAyahTo(val);
+                      if (val < ayahFrom) setAyahFrom(val);
+                    }}
+                    className="w-full px-3 py-2 rounded-xl bg-[#F4F5EE] border border-[#C5CEBF] text-xs font-bold text-[#161E19] cursor-pointer"
+                  >
+                    {Array.from({ length: selectedSurahInfo.ayahCount }, (_, i) => i + 1).map((num) => (
+                      <option key={num} value={num}>
+                        {isAr ? `الآية ${num}` : `Ayah ${num}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
+            )}
 
-              <form onSubmit={handleLookupPastedInvite} className="flex items-center gap-2">
-                <div className="relative flex-1">
-                  <Link2 className="w-4 h-4 text-[#6A766E] absolute top-1/2 -translate-y-1/2 end-3 pointer-events-none" />
+            {curriculumMode === 'surah' && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-[11px] font-bold text-[#4B5650] mb-1">
+                    {isAr ? 'من سورة' : 'From Surah'}
+                  </label>
+                  <select
+                    value={surahNumber}
+                    onChange={(e) => setSurahNumber(Number(e.target.value))}
+                    className="w-full px-3 py-2 rounded-xl bg-[#F4F5EE] border border-[#C5CEBF] text-xs font-bold text-[#161E19]"
+                  >
+                    {SURAH_LIST.map((s) => (
+                      <option key={s.number} value={s.number}>
+                        {s.number}. {isAr ? s.nameAr : s.nameEn}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-[#4B5650] mb-1">
+                    {isAr ? 'إلى سورة' : 'To Surah'}
+                  </label>
+                  <select
+                    value={surahEnd}
+                    onChange={(e) => setSurahEnd(Number(e.target.value))}
+                    className="w-full px-3 py-2 rounded-xl bg-[#F4F5EE] border border-[#C5CEBF] text-xs font-bold text-[#161E19]"
+                  >
+                    {SURAH_LIST.filter((s) => s.number >= surahNumber && s.number <= surahNumber + 4).map((s) => (
+                      <option key={s.number} value={s.number}>
+                        {s.number}. {isAr ? s.nameAr : s.nameEn}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {curriculumMode === 'page' && (
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-[11px] font-bold text-[#4B5650] mb-1">
+                    {isAr ? 'من صفحة' : 'From Page'}
+                  </label>
                   <input
-                    type="text"
-                    value={pasteInviteInput}
-                    onChange={(e) => setPasteInviteInput(e.target.value)}
-                    dir="ltr"
-                    placeholder="https://.../?invite=..."
-                    className="w-full ps-3 pe-9 py-2 rounded-xl bg-[#F7F9F5] border border-[#C5CEBF] text-xs sm:text-sm text-[#161E19] focus:outline-none focus:border-[#15803D]"
+                    type="number"
+                    min={1}
+                    max={604}
+                    value={pageFrom}
+                    onChange={(e) => {
+                      const p = Math.max(1, Math.min(604, Number(e.target.value) || 1));
+                      setPageFrom(p);
+                      if (pageTo < p) setPageTo(p);
+                    }}
+                    className="w-full px-3 py-2 rounded-xl bg-[#F4F5EE] border border-[#C5CEBF] text-xs font-bold text-[#161E19]"
                   />
                 </div>
-                <button
-                  type="submit"
-                  disabled={inviteLookupBusy || !pasteInviteInput.trim()}
-                  className="px-4 py-2 rounded-xl bg-[#166534] hover:bg-[#14532D] text-[#FFFFFF] text-xs sm:text-sm font-extrabold cursor-pointer disabled:opacity-50 shrink-0 transition-colors"
-                >
-                  {inviteLookupBusy
-                    ? isAr
-                      ? 'جاري...'
-                      : '...'
-                    : isAr
-                    ? 'إرسال'
-                    : 'Send'}
-                </button>
-              </form>
-
-              {friendFeedback && (
-                <div
-                  className={`rounded-xl p-2.5 text-xs font-semibold border ${
-                    friendFeedback.type === 'ok'
-                      ? 'bg-[#ECFDF3] border-[#86EFAC] text-[#15803D]'
-                      : 'bg-[#F7F1DF] border-[#96701E] text-[#161E19]'
-                  }`}
-                >
-                  {friendFeedback.msg}
+                <div>
+                  <label className="block text-[11px] font-bold text-[#4B5650] mb-1">
+                    {isAr ? 'إلى صفحة' : 'To Page'}
+                  </label>
+                  <input
+                    type="number"
+                    min={pageFrom}
+                    max={Math.min(604, pageFrom + 9)}
+                    value={pageTo}
+                    onChange={(e) =>
+                      setPageTo(Math.max(pageFrom, Math.min(604, pageFrom + 9, Number(e.target.value) || pageFrom)))
+                    }
+                    className="w-full px-3 py-2 rounded-xl bg-[#F4F5EE] border border-[#C5CEBF] text-xs font-bold text-[#161E19]"
+                  />
                 </div>
-              )}
+              </div>
+            )}
+          </div>
 
-              {/* Pending Incoming Approval Requests (Privacy Consent Gate) */}
-              {incomingRequests.length > 0 && (
-                <div className="rounded-xl bg-[#F7F1DF] border-2 border-[#96701E] p-3 space-y-2">
-                  <div className="text-xs font-extrabold text-[#161E19] flex items-center gap-1.5">
-                    <ShieldCheck className="w-4 h-4 text-[#96701E]" />
-                    <span>
-                      {isAr
-                        ? `طلبات صداقة بانتظار موافقتك (${incomingRequests.length})`
-                        : `Pending Friend Requests (${incomingRequests.length})`}
-                    </span>
-                  </div>
-                  <div className="space-y-1.5">
-                    {incomingRequests.map((req) => (
-                      <div
-                        key={req.requestId}
-                        className="rounded-xl bg-[#FFFFFF] border border-[#C5CEBF] p-2.5 flex flex-wrap items-center justify-between gap-2"
-                      >
-                        <span className="text-xs sm:text-sm font-bold text-[#161E19]">
-                          {req.fromName}
-                        </span>
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            disabled={inviteBusy}
-                            onClick={() => handleApproveRequest(req)}
-                            className="px-3 py-1.5 rounded-lg bg-[#166534] hover:bg-[#14532D] text-[#FFFFFF] text-xs font-bold flex items-center gap-1 cursor-pointer"
-                          >
-                            <Check className="w-3.5 h-3.5" />
-                            <span>{isAr ? 'موافقة وإضافة' : 'Approve'}</span>
-                          </button>
-                          <button
-                            type="button"
-                            disabled={inviteBusy}
-                            onClick={() => handleDeclineRequest(req)}
-                            className="px-3 py-1.5 rounded-lg bg-[#F4F5EE] hover:bg-[#EAF0E7] text-[#A84A32] text-xs font-bold flex items-center gap-1 cursor-pointer"
-                          >
-                            <UserX className="w-3.5 h-3.5" />
-                            <span>{isAr ? 'رفض' : 'Decline'}</span>
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {outgoingPendingRequests.length > 0 && (
-                <div className="text-xs text-[#4B5650] bg-[#F7F9F5] border border-[#D3DDD0] rounded-xl px-3 py-2">
-                  {isAr
-                    ? `طلبات صادرة بانتظار موافقة أصحابها: ${outgoingPendingRequests
-                        .map((r) => r.toName)
-                        .join('، ')}`
-                    : `Awaiting approval from: ${outgoingPendingRequests.map((r) => r.toName).join(', ')}`}
-                </div>
-              )}
+          {/* Friends List & Direct Calling */}
+          <div className="rounded-[24px] bg-[#FFFFFF] border border-[#C5CEBF] p-4 sm:p-5 shadow-xs space-y-4">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Users className="w-4 h-4 text-[#0E6340]" />
+                <h3 className="text-sm sm:text-base font-extrabold text-[#0E5C3E]">
+                  {isAr ? `الأصدقاء المعتمدون (${friends.length})` : `Approved Friends (${friends.length})`}
+                </h3>
+              </div>
             </div>
 
-            {/* LOBBY CARD 3: Connected Friends + One-Tap Curriculum Picker + Voice Call */}
-            <div className="lg:col-span-2 rounded-[20px] bg-[#FFFFFF] frame-card-ivory p-3.5 sm:p-4 space-y-2.5">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <Users className="w-4 h-4 text-[#15803D]" />
-                  <h3 className="text-base font-extrabold text-[#161E19]">
-                    {isAr ? 'الأصدقاء المتصلون' : 'Connected Friends'}
-                  </h3>
-                </div>
-                <span className="text-xs font-bold text-[#4B5650]">
+            {friends.length === 0 ? (
+              <div className="p-5 rounded-2xl bg-[#F4F5EE] text-center space-y-1.5">
+                <p className="text-xs sm:text-sm font-bold text-[#161E19]">
+                  {isAr ? 'لا يوجد أصدقاء بعد' : 'No friends added yet'}
+                </p>
+                <p className="text-xs text-[#6E7A73]">
                   {isAr
-                    ? `${toArabicDigits(onlineFriendsCount)} متصل الآن من ${toArabicDigits(
-                        friends.length
-                      )}`
-                    : `${onlineFriendsCount} online of ${friends.length}`}
-                </span>
+                    ? 'شارك رابط دعوتك الشخصي أدناه أو الصق رابط دعوة صديقك للبدء.'
+                    : 'Share your personal invite link below or paste a friend’s link to connect.'}
+                </p>
               </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {friends.map((friend) => {
+                  const lastSeen = presenceMap[friend.friendUid] || 0;
+                  const isOnline = lastSeen > 0 && Date.now() - lastSeen < 90_000;
+                  const isConfirmingRemove = confirmRemoveFriendUid === friend.friendUid;
 
-              {/* Compact Current Riwayah, Curriculum & Privacy Bar */}
-              <div className="rounded-xl bg-[#F7F9F5] border border-[#D3DDD0] px-3 py-2 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2 text-xs min-w-0">
-                  <BookOpen className="w-4 h-4 text-[#96701E] shrink-0" />
-                  <span className="font-bold text-[#161E19] truncate">{lobbyCurriculumSummary}</span>
-                  {highPrivacyIpMask && (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#ECFDF3] border border-[#86EFAC] text-[#15803D] text-[10px] font-bold shrink-0">
-                      <Lock className="w-2.5 h-2.5" />
-                      <span>{isAr ? 'إخفاء IP' : 'IP Masked'}</span>
-                    </span>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowCurriculumModal(true)}
-                  className="px-3 py-1.5 rounded-lg bg-[#FFFFFF] hover:bg-[#EAF0E7] border border-[#C5CEBF] text-xs font-bold text-[#161E19] flex items-center gap-1.5 cursor-pointer shrink-0"
-                >
-                  <SlidersHorizontal className="w-3.5 h-3.5 text-[#96701E]" />
-                  <span>{isAr ? 'الرواية والمقرر' : 'Narration & Curriculum'}</span>
-                </button>
-              </div>
-
-              {friends.length === 0 ? (
-                <div className="rounded-xl bg-[#F7F9F5] border border-dashed border-[#C5CEBF] p-3.5 text-center text-xs sm:text-sm text-[#4B5650]">
-                  {isAr
-                    ? 'لا يوجد أصدقاء بعد — شارك رابط دعوتك أعلاه لإضافتهم.'
-                    : 'No friends yet — share your invite link above.'}
-                </div>
-              ) : (
-                <div
-                  className={
-                    friends.length > 1
-                      ? 'grid grid-cols-1 md:grid-cols-2 gap-2.5'
-                      : 'space-y-2'
-                  }
-                >
-                {friends.map((fr) => {
-                  const isOnline = Boolean(friendPresenceMap[fr.friendUid]?.online);
                   return (
                     <div
-                      key={fr.friendUid}
-                      className="rounded-2xl bg-[#F7F9F5] border-[1.5px] border-[#D3C3A8] shadow-2xs p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors hover:border-[#B5A07D]"
+                      key={friend.friendUid}
+                      className="p-3.5 rounded-2xl bg-[#FAFBF8] border border-[#D3DCD1] flex items-center justify-between gap-2"
                     >
-                      <div className="flex items-center justify-between sm:justify-start gap-3">
-                        <div className="w-11 h-11 rounded-2xl bg-[#E8F2EC] border border-[#BBF7D0] text-[#15803D] flex items-center justify-center shrink-0">
-                          <UserCheck className="w-5 h-5" />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                              isOnline ? 'bg-[#16A34A]' : 'bg-[#9CA3AF]'
+                            }`}
+                          />
+                          <p className="text-sm font-extrabold text-[#161E19] truncate">
+                            {friend.friendName}
+                          </p>
                         </div>
-                        <div className="min-w-0 space-y-0.5">
-                          <div className="text-sm sm:text-base font-extrabold text-[#161E19] truncate">
-                            {fr.friendName}
-                          </div>
-                          <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                            <span
-                              className={`font-bold flex items-center gap-1 ${
-                                isOnline ? 'text-[#15803D]' : 'text-[#6A766E]'
-                              }`}
-                            >
-                              <span
-                                className={`w-2 h-2 rounded-full ${
-                                  isOnline ? 'bg-[#16A34A]' : 'bg-[#B5A897]'
-                                }`}
-                              />
-                              <span>
-                                {isOnline
-                                  ? isAr
-                                    ? 'متصل الآن'
-                                    : 'Online now'
-                                  : isAr
-                                  ? 'صديق معتمد'
-                                  : 'Approved friend'}
-                              </span>
-                            </span>
-                            <span className="text-[#B5A897]">·</span>
-                            <span dir="ltr" className="font-mono-tabular text-[11px] text-[#4B5650]">
-                              {formatFriendShortCode(fr.friendUid)}
-                            </span>
-                          </div>
-                        </div>
+                        <p className="text-[11px] text-[#6E7A73] mt-0.5">
+                          {isOnline
+                            ? isAr
+                              ? 'متصل الآن'
+                              : 'Online now'
+                            : isAr
+                            ? 'متاح عند فتح التطبيق'
+                            : 'Available when open'}
+                        </p>
                       </div>
 
-                      <div className="flex items-center justify-end gap-2 shrink-0">
+                      <div className="flex items-center gap-1.5 shrink-0">
                         <button
                           type="button"
-                          disabled={lobbyBusy}
-                          onClick={() => startDirectFriendCall(fr)}
-                          className="flex-1 sm:flex-initial px-4 py-2.5 rounded-2xl bg-[#166534] hover:bg-[#14532D] text-[#FFFFFF] text-xs sm:text-sm font-extrabold flex items-center justify-center gap-2 cursor-pointer shadow-2xs disabled:opacity-60 transition-colors"
+                          onClick={() => void startFriendAudioCall(friend)}
+                          className="px-3.5 py-2 rounded-xl bg-[#0E6340] hover:bg-[#0A4D31] text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs"
                         >
-                          <PhoneCall className="w-4 h-4" />
-                          <span>{isAr ? 'دعوة للسرد الثنائي' : 'Call for Duo Sard'}</span>
+                          <PhoneCall className="w-3.5 h-3.5" />
+                          <span>{isAr ? 'اتصال' : 'Call'}</span>
                         </button>
 
-                        {confirmRemoveFriendUid === fr.friendUid ? (
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveFriend(fr.friendUid)}
-                            className="px-2.5 py-2.5 rounded-xl bg-[#B93829] text-[#FFFFFF] text-xs font-bold cursor-pointer"
-                          >
-                            {isAr ? 'تأكيد' : 'Confirm'}
-                          </button>
+                        {isConfirmingRemove ? (
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                setConfirmRemoveFriendUid(null);
+                                await removeFriendWithCleanup(user, friend.friendUid);
+                              }}
+                              className="px-2 py-1.5 rounded-lg bg-[#A84A32] text-white text-[11px] font-bold cursor-pointer"
+                            >
+                              {isAr ? 'حذف' : 'Yes'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmRemoveFriendUid(null)}
+                              className="px-2 py-1.5 rounded-lg bg-[#EAF0E7] text-[#4B5650] text-[11px] font-bold cursor-pointer"
+                            >
+                              {isAr ? 'لا' : 'No'}
+                            </button>
+                          </div>
                         ) : (
                           <button
                             type="button"
-                            onClick={() => setConfirmRemoveFriendUid(fr.friendUid)}
+                            onClick={() => setConfirmRemoveFriendUid(friend.friendUid)}
+                            className="p-2 rounded-xl text-[#6E7A73] hover:text-[#A84A32] hover:bg-[#FEF2F2] cursor-pointer"
                             title={isAr ? 'إزالة الصديق' : 'Remove friend'}
-                            className="p-2.5 rounded-xl bg-[#FFFFFF] hover:bg-[#EAF0E7] border border-[#C5CEBF] text-[#A84A32] cursor-pointer"
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -2832,1104 +2817,153 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
               </div>
             )}
 
-              {/* Footer Compliance Link */}
-              <div className="pt-2 border-t border-[#EAF0E7] flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#6A766E]">
-                <span className="flex items-center gap-1 text-[#15803D] font-bold">
-                  <Lock className="w-3 h-3" />
-                  <span>{isAr ? 'اتصال صوتي مشفّر ومؤمّن (E2EE)' : 'Encrypted Audio-Only (E2EE)'}</span>
-                </span>
-                {onOpenPrivacyTerms && (
-                  <button
-                    type="button"
-                    onClick={onOpenPrivacyTerms}
-                    className="font-bold text-[#4B5650] hover:text-[#15803D] hover:underline cursor-pointer"
+            {/* Incoming Friend Requests */}
+            {incomingRequests.length > 0 && (
+              <div className="pt-3 border-t border-[#EAF0E7] space-y-2">
+                <h4 className="text-xs font-extrabold text-[#96701E]">
+                  {isAr ? 'طلبات صداقة بانتظار موافقتك' : 'Pending Friend Requests'}
+                </h4>
+                {incomingRequests.map((req) => (
+                  <div
+                    key={req.requestId}
+                    className="p-3 rounded-xl bg-[#FEFCE8] border border-[#DEC994] flex items-center justify-between gap-2"
                   >
-                    {isAr ? 'سياسة الخصوصية وشروط الاستخدام' : 'Privacy Policy & Terms'}
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* STEP 4: ACTIVE CALL VIEW */}
-      {user && user.emailVerified && sessionId && (
-        <div className="space-y-3">
-          {/* Outgoing Ringing Overlay Modal */}
-          {peerConnState === 'ringing' && outgoingCallTargetName && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-              <div className="w-full max-w-sm rounded-[28px] bg-[#0E5C3E] text-[#FFFFFF] border-2 border-[#E6C25A] p-6 text-center space-y-5 shadow-2xl">
-                <div className="relative w-20 h-20 mx-auto flex items-center justify-center">
-                  <span className="absolute inset-0 rounded-full bg-[#E6C25A]/25 animate-ping" />
-                  <div className="relative w-16 h-16 rounded-full bg-[#166534] border-2 border-[#E6C25A] flex items-center justify-center text-[#FFFFFF]">
-                    <PhoneCall className="w-7 h-7 animate-bounce" />
+                    <span className="text-xs font-bold text-[#161E19]">{req.fromName}</span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => void declineIncomingFriendRequest(req)}
+                        className="px-2.5 py-1.5 rounded-lg bg-white border border-[#D3DCD1] text-[#A84A32] text-xs font-bold cursor-pointer flex items-center gap-1"
+                      >
+                        <UserX className="w-3.5 h-3.5" />
+                        <span>{isAr ? 'رفض' : 'Decline'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void approveIncomingFriendRequest(user, req)}
+                        className="px-3 py-1.5 rounded-lg bg-[#0E6340] text-white text-xs font-bold cursor-pointer flex items-center gap-1"
+                      >
+                        <UserCheck className="w-3.5 h-3.5" />
+                        <span>{isAr ? 'موافقة' : 'Approve'}</span>
+                      </button>
+                    </div>
                   </div>
-                </div>
-                <div className="space-y-1.5">
-                  <p className="text-xs font-bold text-[#E6C25A]">
-                    {isAr ? 'اتصال صوتي مباشر — يرن الآن...' : 'Direct Voice Call — Ringing...'}
-                  </p>
-                  <h3 className="text-xl font-extrabold font-display-islamic">
-                    {outgoingCallTargetName}
-                  </h3>
-                  <p className="text-xs text-[#E6D7BE]">
-                    {activeCurriculumTextOnly} · {activeRiwayahLabel}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleEndCall(true)}
-                  className="w-full py-3 rounded-2xl bg-[#B93829] hover:bg-[#992D20] text-[#FFFFFF] text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <PhoneOff className="w-4 h-4" />
-                  <span>{isAr ? 'إلغاء المكالمة' : 'Cancel Call'}</span>
-                </button>
+                ))}
               </div>
-            </div>
-          )}
-
-          {/* Compact Top Status & Action Bar */}
-          <div className="rounded-[20px] bg-[#FFFFFF] frame-card-ivory p-3.5 space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm font-bold">
-                <Radio
-                  className={`w-4 h-4 shrink-0 ${
-                    peerConnState === 'connected'
-                      ? 'text-[#15803D]'
-                      : 'text-[#15803D] animate-pulse'
-                  }`}
-                />
-                <span className="text-[#15803D]">
-                  {peerConnState === 'connected'
-                    ? isAr
-                      ? `متصل صوتياً مع ${partnerName}`
-                      : `Connected with ${partnerName}`
-                    : peerConnState === 'ended'
-                    ? isAr
-                      ? `انتهت الجلسة مع ${partnerName}`
-                      : `Session ended with ${partnerName}`
-                    : isAr
-                    ? `جاري ربط الصوت مع ${partnerName}...`
-                    : `Connecting audio with ${partnerName}...`}
-                </span>
-                <span className="text-[#B5A897]">·</span>
-                <span className="font-mono-tabular text-[#4B5650]">
-                  {formatCallDuration(callElapsedSeconds, isAr)}
-                </span>
-              </div>
-
-              {/* Green E2EE Security Lock Badge */}
-              <div
-                className="px-2.5 py-1 rounded-lg bg-[#ECFDF3] border border-[#86EFAC] text-[#15803D] text-[11px] font-bold flex items-center gap-1"
-                title={isAr ? 'اتصال صوتي مشفر ومؤمّن (E2EE)' : 'Encrypted & Secured Audio (E2EE)'}
-              >
-                <Lock className="w-3 h-3 shrink-0" />
-                <span>{isAr ? 'صوت مشفر ومؤمّن (E2EE)' : 'E2EE Secured'}</span>
-              </div>
-            </div>
-
-            <div className="space-y-0.5">
-              <div className="text-sm sm:text-base font-extrabold text-[#161E19]">
-                {activeCurriculumTextOnly}{' '}
-                <span className="text-[#6A766E]">·</span>{' '}
-                <span className="text-[#96701E]">
-                  {isAr ? `رواية ${activeRiwayahLabel}` : activeRiwayahLabel}
-                </span>
-              </div>
-              <div className="text-xs sm:text-sm text-[#4B5650]">
-                {isAr ? 'دورك:' : 'Your role:'}{' '}
-                <strong className="text-[#161E19]">
-                  {amICurrentReciter
-                    ? shouldHideVersesForMe
-                      ? isAr
-                        ? 'القارئ (الشاشة مخفية)'
-                        : 'Reciter (Screen Hidden)'
-                      : isAr
-                      ? 'القارئ (النص ظاهر)'
-                      : 'Reciter (Text Visible)'
-                    : isAr
-                    ? 'المُسمِّع (متابعة المصحف وتنبيه الأخطاء)'
-                    : 'Listener (Follow Mushaf & Mark Errors)'}
-                </strong>
-              </div>
-            </div>
-
-            {/* Clean Controls Bar (Mute, Speaker/Earpiece, Curriculum, Swap Roles, Rate & End) */}
-            {needsAudioUnlock && (
-              <button
-                type="button"
-                onClick={() => syncRemoteAudioTracksToMediaElement()}
-                className="w-full py-2 px-3 rounded-xl bg-[#ECFDF3] hover:bg-[#DCFCE7] border border-[#86EFAC] text-[#15803D] text-xs font-extrabold flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <Volume2 className="w-4 h-4 shrink-0" />
-                <span>
-                  {isAr
-                    ? 'اضغط هنا لتشغيل الصوت الوارد من الطرف الآخر'
-                    : 'Tap to enable incoming call audio'}
-                </span>
-              </button>
             )}
-            <div className="flex flex-wrap items-center gap-2 pt-1">
-              <button
-                type="button"
-                onClick={handleToggleMic}
-                className={`px-3.5 py-2 rounded-2xl border text-xs sm:text-sm font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${
-                  isMicMuted
-                    ? 'bg-[#FEE2E2] border-[#FECACA] text-[#B93829]'
-                    : 'bg-[#F7F9F5] hover:bg-[#EAF0E7] border-[#C5CEBF] text-[#161E19]'
-                }`}
-              >
-                {isMicMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                <span>{isMicMuted ? (isAr ? 'صامت' : 'Muted') : isAr ? 'كتم' : 'Mute'}</span>
-                {!isMicMuted && (
-                  <span className="w-6 h-1.5 rounded-full bg-[#C5CEBF] overflow-hidden inline-block ms-0.5">
-                    <span
-                      className="block h-full bg-[#15803D] transition-all duration-75"
-                      style={{ width: `${micLevel}%` }}
-                    />
-                  </span>
-                )}
-              </button>
 
-              <button
-                type="button"
-                onClick={handleToggleSpeakerMode}
-                title={
-                  isAr
-                    ? speakerMode === 'speaker'
-                      ? 'التبديل إلى السماعة'
-                      : 'التبديل إلى مكبر الصوت'
-                    : speakerMode === 'speaker'
-                    ? 'Switch to Earpiece'
-                    : 'Switch to Speaker'
-                }
-                className={`px-3.5 py-2 rounded-2xl border text-xs sm:text-sm font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${
-                  speakerMode === 'speaker'
-                    ? 'bg-[#ECFDF3] hover:bg-[#DCFCE7] border-[#86EFAC] text-[#15803D]'
-                    : 'bg-[#F7F9F5] hover:bg-[#EAF0E7] border-[#C5CEBF] text-[#161E19]'
-                }`}
-              >
-                {speakerMode === 'speaker' ? (
-                  <Volume2 className="w-4 h-4" />
-                ) : (
-                  <Volume1 className="w-4 h-4" />
-                )}
-                <span>
-                  {speakerMode === 'speaker'
-                    ? isAr
-                      ? 'مكبر الصوت'
-                      : 'Speaker'
-                    : isAr
-                    ? 'السماعة'
-                    : 'Earpiece'}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setShowCurriculumModal(true)}
-                className="px-3.5 py-2 rounded-2xl bg-[#F7F9F5] hover:bg-[#EAF0E7] border border-[#C5CEBF] text-xs sm:text-sm font-bold text-[#161E19] flex items-center gap-1.5 cursor-pointer transition-colors"
-              >
-                <SlidersHorizontal className="w-4 h-4 text-[#4B5650]" />
-                <span>{isAr ? 'الرواية والمقرر' : 'Narration & Plan'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleSwapRoles}
-                className="px-3.5 py-2 rounded-2xl bg-[#F7F9F5] hover:bg-[#EAF0E7] border border-[#C5CEBF] text-xs sm:text-sm font-bold text-[#161E19] flex items-center gap-1.5 cursor-pointer transition-colors"
-              >
-                <ArrowLeftRight className="w-4 h-4 text-[#4B5650]" />
-                <span>{isAr ? 'تبادل الأدوار' : 'Swap Roles'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setShowEvalModal(true)}
-                className="px-4 py-2 rounded-2xl bg-[#B93829] hover:bg-[#992D20] text-[#FFFFFF] text-xs sm:text-sm font-extrabold flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs"
-              >
-                <PhoneOff className="w-4 h-4" />
-                <span>{isAr ? 'تقييم وإنهاء' : 'Rate & End'}</span>
-              </button>
-            </div>
+            {/* Outgoing Pending Requests */}
+            {outgoingRequests.length > 0 && (
+              <div className="pt-2 space-y-1.5">
+                {outgoingRequests.map((req) => (
+                  <p key={req.requestId} className="text-[11px] font-semibold text-[#6E7A73]">
+                    {isAr
+                      ? `• بانتظار موافقة «${req.toName}» على طلب الصداقة.`
+                      : `• Waiting for "${req.toName}" to approve your request.`}
+                  </p>
+                ))}
+              </div>
+            )}
           </div>
 
-          {/* Main Reading Area: Hidden Reciter Screen OR Listener Interactive Word-Tap Mushaf */}
-          {shouldHideVersesForMe ? (
-            <div className="rounded-[20px] bg-[#FFFFFF] frame-card-ivory p-4 sm:p-5 flex flex-col justify-between gap-3.5">
-              <div className="flex flex-col items-center justify-center text-center py-3 space-y-2 max-w-md mx-auto">
-                <div className="w-12 h-12 rounded-xl bg-[#F7F9F5] border border-[#D3DDD0] flex items-center justify-center text-[#15803D]">
-                  <EyeOff className="w-6 h-6" />
-                </div>
-                <h2 className="text-lg sm:text-xl font-extrabold text-[#161E19]">
-                  {amICurrentReciter
-                    ? isAr
-                      ? 'شاشة القارئ — النص مخفي'
-                      : 'Reciter Screen — Text Hidden'
-                    : isAr
-                    ? 'شاشة المُسمِّع — النص مخفي'
-                    : 'Listener Screen — Text Hidden'}
-                </h2>
-                <p className="text-xs sm:text-sm text-[#4B5650] leading-relaxed">
-                  {amICurrentReciter
-                    ? isAr
-                      ? `اتلُ غيباً؛ سيظهر هنا أي خطأ يعلّم عليه (${partnerName}).`
-                      : `Recite from memory; marked errors by (${partnerName}) appear here.`
-                    : isAr
-                    ? 'النص مخفي لديك — اضغط أدناه لعرض المصحف.'
-                    : 'Text hidden — tap below to show verses.'}
-                </p>
-
-                {markedErrors.length > 0 && (
-                  <div className="mt-2 px-3.5 py-2 rounded-xl bg-[#FEE2E2] border border-[#FECACA] text-[#991B1B] text-xs font-extrabold animate-in fade-in">
-                    {isAr
-                      ? `تنبيه لحظي: تم التعليم على كلمة «${
-                          parseMarkedErrorToken(markedErrors[0]).word
-                        }» (${parseMarkedErrorToken(markedErrors[0]).verseKey})`
-                      : `Marked word alert: "${parseMarkedErrorToken(markedErrors[0]).word}"`}
-                  </div>
-                )}
-
+          {/* Share Invite Link & Add Friend Card */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* My Shareable Invite */}
+            <div className="rounded-[24px] bg-[#FFFFFF] border border-[#C5CEBF] p-4 sm:p-5 shadow-xs space-y-3">
+              <div className="flex items-center gap-2">
+                <Link2 className="w-4 h-4 text-[#96701E]" />
+                <h3 className="text-sm font-extrabold text-[#0E5C3E]">
+                  {isAr ? 'رابط دعوتك الشخصي' : 'Your Personal Invite Link'}
+                </h3>
+              </div>
+              <p className="text-xs text-[#4B5650]">
+                {isAr
+                  ? 'أرسل هذا الرابط لصديقك — لن يُضاف إلا بعد موافقتك الصريحة.'
+                  : 'Send this link to a friend — approval is required before calling.'}
+              </p>
+              <div className="p-2.5 rounded-xl bg-[#F4F5EE] border border-[#D3DCD1] text-[11px] font-mono text-[#161E19] truncate">
+                {myInviteUrl || '...'}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setLocalHideVerses(false)}
-                  className="text-[11px] font-bold text-[#6A766E] hover:text-[#161E19] flex items-center gap-1 pt-2 cursor-pointer"
+                  onClick={handleCopyInviteLink}
+                  className="px-3 py-2 rounded-xl bg-[#0E6340] hover:bg-[#0A4D31] text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
                 >
-                  <Eye className="w-3.5 h-3.5" />
-                  <span>{isAr ? 'إظهار النص مؤقتاً لي' : 'Show Text Locally'}</span>
+                  {inviteCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{inviteCopied ? (isAr ? 'تم النسخ' : 'Copied') : isAr ? 'نسخ الرابط' : 'Copy'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleShareInviteLink}
+                  className="px-3 py-2 rounded-xl bg-[#EAF0E7] hover:bg-[#D3DCD1] text-[#0E5C3E] text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Share2 className="w-3.5 h-3.5" />
+                  <span>{isAr ? 'مشاركة' : 'Share'}</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={inviteBusy}
+                  onClick={handleRegenerateInvite}
+                  className="px-3 py-2 rounded-xl bg-[#FEFCE8] border border-[#DEC994] text-[#8A6518] text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${inviteBusy ? 'animate-spin' : ''}`} />
+                  <span>{isAr ? 'تجديد الرابط' : 'Reset'}</span>
                 </button>
               </div>
-
-              {/* Bottom Card: Marked Session Errors (Matching Screenshot 2) */}
-              <div className="rounded-2xl bg-[#F7F9F5] border border-[#D3DDD0] p-4 space-y-2.5">
-                <div className="flex items-center justify-between gap-2">
-                  <h3 className="text-sm font-extrabold text-[#161E19]">
-                    {isAr ? 'الأخطاء المعلّم عليها في الجلسة' : 'Marked Errors in Session'}
-                  </h3>
-                  <div className="flex items-center gap-1.5 text-xs font-extrabold text-[#B93829]">
-                    <span className="w-2 h-2 rounded-full bg-[#B93829]" />
-                    <span>{isAr ? toArabicDigits(mistakesCount) : mistakesCount}</span>
-                  </div>
-                </div>
-
-                {markedErrors.length === 0 && mistakesCount === 0 ? (
-                  <p className="text-xs sm:text-sm text-[#4B5650]">
-                    {isAr
-                      ? 'لم تُسجّل أي أخطاء حتى الآن — واصل التلاوة بثبات.'
-                      : 'No errors marked yet — keep reciting steadily.'}
-                  </p>
-                ) : (
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {markedErrors.map((tok, i) => {
-                      const parsed = parseMarkedErrorToken(tok);
-                      return (
-                        <span
-                          key={`${tok}-${i}`}
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-[#FEE2E2] border border-[#FECACA] text-[#991B1B] text-xs font-extrabold"
-                        >
-                          <span className="font-uthmani text-sm">{parsed.word}</span>
-                          {parsed.verseKey && (
-                            <span className="text-[10px] opacity-80 font-mono-tabular">
-                              ({parsed.verseKey})
-                            </span>
-                          )}
-                        </span>
-                      );
-                    })}
-                    {markedErrors.length === 0 && mistakesCount > 0 && (
-                      <span className="text-xs text-[#991B1B] font-bold">
-                        {isAr
-                          ? `تم تسجيل ${toArabicDigits(mistakesCount)} تنبيه خطأ من المُسمِّع.`
-                          : `${mistakesCount} error alert(s) marked by listener.`}
-                      </span>
-                    )}
-                  </div>
-                )}
-              </div>
             </div>
-          ) : (
-            /* Listener Interactive Word-Tap Mushaf Screen */
-            <div className="rounded-[20px] bg-[#FFFFFF] frame-card-ivory p-3.5 sm:p-4 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-[#EAF0E7]">
-                <div className="space-y-0.5">
-                  <div className="text-xs sm:text-sm font-extrabold text-[#15803D]">
-                    {isAr
-                      ? 'المصحف — المس أي كلمة للتنبيه على خطأ'
-                      : 'Mushaf — Tap any word to mark an error'}
-                  </div>
-                  <div className="text-[11px] text-[#4B5650]">
-                    {isAr ? `عدد الأخطاء المسجلة:` : `Marked Errors:`}{' '}
-                    <strong className="text-[#B93829] font-mono-tabular">
-                      {isAr ? toArabicDigits(mistakesCount) : mistakesCount}
-                    </strong>
-                  </div>
-                </div>
 
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => handleAdjustMistakes(-1)}
-                    className="px-2.5 py-1.5 rounded-lg bg-[#F7F9F5] hover:bg-[#EAF0E7] border border-[#C5CEBF] text-xs font-bold text-[#4B5650] cursor-pointer"
-                  >
-                    -1
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleAdjustMistakes(1)}
-                    className="px-3 py-1.5 rounded-lg bg-[#FEE2E2] hover:bg-[#FECACA] border border-[#FCA5A5] text-xs font-bold text-[#991B1B] cursor-pointer"
-                  >
-                    {isAr ? '+ خطأ' : '+ Error'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleStepVerse(-1)}
-                    className="px-2.5 py-1.5 rounded-lg bg-[#F7F9F5] hover:bg-[#EAF0E7] border border-[#C5CEBF] text-xs font-bold text-[#161E19] flex items-center gap-0.5 cursor-pointer"
-                  >
-                    <ChevronRight className="w-3.5 h-3.5" />
-                    <span>{isAr ? 'السابقة' : 'Prev'}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleStepVerse(1)}
-                    className="px-2.5 py-1.5 rounded-lg bg-[#F7F9F5] hover:bg-[#EAF0E7] border border-[#C5CEBF] text-xs font-bold text-[#161E19] flex items-center gap-0.5 cursor-pointer"
-                  >
-                    <span>{isAr ? 'التالية' : 'Next'}</span>
-                    <ChevronLeft className="w-3.5 h-3.5" />
-                  </button>
-                </div>
+            {/* Paste Friend Invite Link */}
+            <div className="rounded-[24px] bg-[#FFFFFF] border border-[#C5CEBF] p-4 sm:p-5 shadow-xs space-y-3">
+              <div className="flex items-center gap-2">
+                <UserPlus className="w-4 h-4 text-[#0E6340]" />
+                <h3 className="text-sm font-extrabold text-[#0E5C3E]">
+                  {isAr ? 'إضافة صديق عبر الرابط' : 'Add Friend by Invite Link'}
+                </h3>
               </div>
+              <form onSubmit={handleLookupFriendInvite} className="flex gap-2">
+                <input
+                  type="text"
+                  value={pasteInviteInput}
+                  onChange={(e) => setPasteInviteInput(e.target.value)}
+                  placeholder={isAr ? 'الصق رابط دعوة الصديق هنا...' : 'Paste friend invite link or code...'}
+                  className="flex-1 px-3 py-2 rounded-xl bg-[#F4F5EE] border border-[#C5CEBF] text-xs text-[#161E19] focus:outline-none focus:border-[#0E6340]"
+                />
+                <button
+                  type="submit"
+                  disabled={lookupBusy || !pasteInviteInput.trim()}
+                  className="px-3.5 py-2 rounded-xl bg-[#96701E] hover:bg-[#7A5A16] text-white text-xs font-bold cursor-pointer disabled:opacity-60"
+                >
+                  {isAr ? 'تحقق' : 'Check'}
+                </button>
+              </form>
 
-              {versesLoading ? (
-                <div className="py-10 flex items-center justify-center gap-2 text-sm text-[#4B5650]">
-                  <RefreshCw className="w-4 h-4 animate-spin text-[#96701E]" />
-                  <span>
+              {lookupInviteResult && (
+                <div className="p-3 rounded-xl bg-[#ECFDF3] border border-[#BBF7D0] flex items-center justify-between gap-2">
+                  <div className="text-xs font-bold text-[#14532D]">
                     {isAr
-                      ? `جاري تحميل الآيات برواية ${getRiwayahLabel(selectedRiwayah, 'ar')}...`
-                      : `Loading verses in ${getRiwayahLabel(selectedRiwayah, 'en')}...`}
-                  </span>
-                </div>
-              ) : verses.length === 0 ? (
-                <div className="py-8 text-center text-xs text-[#6A766E]">
-                  {isAr
-                    ? 'تعذر جلب النص حالياً — الاتصال الصوتي المباشر ما زال يعمل بشكل طبيعي.'
-                    : 'Unable to load Quran text right now — direct P2P audio remains active.'}
-                </div>
-              ) : (
-                <div className="space-y-2.5 max-h-[54vh] overflow-y-auto pe-1">
-                  {verses.map((v, idx) => {
-                    const isActive = activeAyah === v.ayahNumber;
-                    const isPeeking = peekVerseKey === v.verseKey;
-                    const prevSurah = idx > 0 ? verses[idx - 1].surahNumber : null;
-                    const surahObj = SURAH_LIST.find((s) => s.number === v.surahNumber);
-                    const words = v.text.trim().split(/\s+/).filter(Boolean);
-
-                    return (
-                      <React.Fragment key={`${v.verseKey}-${idx}`}>
-                        {(idx === 0 || prevSurah !== v.surahNumber) && surahObj && (
-                          <div className="px-3 py-1.5 rounded-xl bg-[#F5ECD4]/70 border border-[#96701E]/35 text-xs font-extrabold text-[#0E5C3E] text-center">
-                            {isAr ? `سورة ${surahObj.nameAr}` : `Surah ${surahObj.nameEn}`}
-                          </div>
-                        )}
-                        <div
-                          onClick={() => handleSelectAyahSync(v.ayahNumber)}
-                          className={`w-full text-start p-3.5 sm:p-4 rounded-2xl border transition-all cursor-pointer ${
-                            isActive
-                              ? 'bg-[#F7F1DF] border-[#96701E] ring-1 ring-[#96701E]/40 shadow-2xs'
-                              : 'bg-[#F7F9F5] hover:bg-[#EAF0E7]/70 border-[#D3DDD0]'
-                          }`}
-                        >
-                          {fadeFirstWordOnly && !isPeeking ? (
-                            <div className="flex items-center justify-between gap-2">
-                              <p
-                                dir="rtl"
-                                className={`font-uthmani text-[#161E19] leading-[2.2] ${
-                                  textScale === 'xlarge'
-                                    ? 'text-2xl sm:text-3xl'
-                                    : textScale === 'large'
-                                    ? 'text-xl sm:text-2xl'
-                                    : 'text-lg sm:text-xl'
-                                }`}
-                              >
-                                {extractFirstWordMask(v.textCleanUthmani)}{' '}
-                                <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-[#96701E]/15 border border-[#96701E]/40 text-xs font-mono-tabular font-bold text-[#8A6518] align-middle mx-1">
-                                  {v.ayahNumber}
-                                </span>
-                              </p>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setPeekVerseKey(v.verseKey);
-                                }}
-                                className="px-2.5 py-1 rounded-lg bg-[#FFFFFF] border border-[#C5CEBF] text-[11px] font-bold text-[#8A6518] shrink-0 cursor-pointer"
-                              >
-                                {isAr ? 'كشف' : 'Reveal'}
-                              </button>
-                            </div>
-                          ) : (
-                            <p
-                              dir="rtl"
-                              className={`font-uthmani text-[#161E19] leading-[2.3] flex flex-wrap items-baseline gap-x-1.5 gap-y-1 ${
-                                textScale === 'xlarge'
-                                  ? 'text-2xl sm:text-3xl'
-                                  : textScale === 'large'
-                                  ? 'text-xl sm:text-2xl'
-                                  : 'text-lg sm:text-xl'
-                              }`}
-                            >
-                              {words.map((word, wIdx) => {
-                                const token = `${v.verseKey}|${word.slice(0, 28)}|${wIdx}`.slice(0, 80);
-                                const isMarked = markedErrors.includes(token);
-                                return (
-                                  <button
-                                    key={`${v.verseKey}-w-${wIdx}`}
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleSelectAyahSync(v.ayahNumber);
-                                      handleToggleWordError(v.verseKey, word, wIdx);
-                                    }}
-                                    className={`inline-block rounded-md px-0.5 transition-colors cursor-pointer ${
-                                      isMarked
-                                        ? 'bg-[#FEE2E2] text-[#991B1B] border-b-2 border-[#DC2626]'
-                                        : 'hover:bg-[#D3DDD0]/70'
-                                    }`}
-                                  >
-                                    {word}
-                                  </button>
-                                );
-                              })}
-                              <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-[#96701E]/15 border border-[#96701E]/40 text-xs font-mono-tabular font-bold text-[#8A6518] align-middle mx-1">
-                                {v.ayahNumber}
-                              </span>
-                            </p>
-                          )}
-                        </div>
-                      </React.Fragment>
-                    );
-                  })}
+                      ? `إرسال طلب صداقة إلى «${lookupInviteResult.ownerName}»؟`
+                      : `Send friend request to "${lookupInviteResult.ownerName}"?`}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setLookupInviteResult(null)}
+                      className="px-2.5 py-1 rounded-lg bg-white text-[#4B5650] text-xs font-bold cursor-pointer"
+                    >
+                      {isAr ? 'إلغاء' : 'Cancel'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={lookupBusy}
+                      onClick={handleSendLookupRequest}
+                      className="px-3 py-1 rounded-lg bg-[#0E6340] text-white text-xs font-bold cursor-pointer"
+                    >
+                      {isAr ? 'إرسال' : 'Send'}
+                    </button>
+                  </div>
                 </div>
               )}
-
-              {/* Trusted Source Links */}
-              <div className="pt-2 border-t border-[#EAF0E7] flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#4B5650]">
-                <span className="font-bold text-[#0E6340]">
-                  {isAr ? `المصدر: ${activeSourceMeta.labelAr}` : `Source: ${activeSourceMeta.labelEn}`}
-                </span>
-                <div className="flex items-center gap-3">
-                  <a
-                    href={activeSourceMeta.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-0.5 text-[#8A6518] hover:underline"
-                  >
-                    <span>{isAr ? 'مجمع الملك فهد' : 'KFGQPC'}</span>
-                    <ExternalLink className="w-3 h-3" />
-                  </a>
-                  <a
-                    href={activeSourceMeta.partnerUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-0.5 text-[#8A6518] hover:underline"
-                  >
-                    <span>{activeSourceMeta.partnerLabelAr}</span>
-                    <ExternalLink className="w-3 h-3" />
-                  </a>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* IN-CALL & LOBBY MODAL: RIWAYAH, CURRICULUM, HIDING & IP PRIVACY */}
-      {showCurriculumModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-xs p-3 sm:p-4"
-          onClick={() => setShowCurriculumModal(false)}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-xl max-h-[88vh] flex flex-col rounded-[26px] bg-[#FFFFFF] border border-[#C5CEBF] shadow-2xl overflow-hidden text-[#161E19]"
-          >
-            <div className="px-4 sm:px-5 py-3.5 bg-[#0E5C3E] text-[#FFFFFF] flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <SlidersHorizontal className="w-4 h-4 text-[#E6C25A]" />
-                <h3 className="text-sm sm:text-base font-extrabold">
-                  {isAr ? 'الرواية والمقرر وخيارات السرد' : 'Narration, Curriculum & Options'}
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowCurriculumModal(false)}
-                className="p-1.5 rounded-lg bg-[#FFFFFF]/10 hover:bg-[#FFFFFF]/20 cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="p-4 sm:p-5 overflow-y-auto space-y-4">
-              {/* Riwayah Switcher */}
-              <div className="space-y-1.5">
-                <label className="block text-xs font-bold text-[#4B5650]">
-                  {isAr ? 'الرواية القرآنية:' : 'Quran Narration:'}
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {RIWAYAH_OPTIONS.map((rw) => {
-                    const active = selectedRiwayah === rw.id;
-                    return (
-                      <button
-                        key={rw.id}
-                        type="button"
-                        onClick={() => setSelectedRiwayah(rw.id)}
-                        className={`py-2.5 px-2 rounded-xl border text-center cursor-pointer transition-colors ${
-                          active
-                            ? 'bg-[#0E5C3E] border-[#96701E] text-[#E6C25A]'
-                            : 'bg-[#F7F9F5] border-[#C5CEBF] text-[#161E19]'
-                        }`}
-                      >
-                        <div className="text-xs sm:text-sm font-extrabold">
-                          {isAr ? rw.labelAr : rw.labelEn}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* 3 Curriculum Modes */}
-              <div className="space-y-2.5">
-                <div className="grid grid-cols-3 gap-1.5 p-1 bg-[#F4F5EE] rounded-xl border border-[#C5CEBF]">
-                  {(
-                    [
-                      { id: 'surah', label: isAr ? 'بالسور' : 'By Surah', icon: BookOpen },
-                      { id: 'ayah', label: isAr ? 'بأرقام الآيات' : 'By Ayahs', icon: Hash },
-                      { id: 'page', label: isAr ? 'بالصفحات' : 'By Pages', icon: FileText },
-                    ] as const
-                  ).map((tab) => {
-                    const Icon = tab.icon;
-                    const active = curriculumMode === tab.id;
-                    return (
-                      <button
-                        key={tab.id}
-                        type="button"
-                        onClick={() => setCurriculumMode(tab.id)}
-                        className={`py-2 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1 cursor-pointer ${
-                          active
-                            ? 'bg-[#166534] text-[#FFFFFF]'
-                            : 'text-[#4B5650] hover:text-[#161E19]'
-                        }`}
-                      >
-                        <Icon className="w-3.5 h-3.5" />
-                        <span>{tab.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* By Surah */}
-                {curriculumMode === 'surah' && (
-                  <div className="rounded-xl bg-[#F7F9F5] border border-[#C5CEBF] p-3 space-y-2.5">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-1 p-0.5 bg-[#EAF0E7] rounded-lg border border-[#C5CEBF]">
-                        <button
-                          type="button"
-                          onClick={() => setSurahPickStyle('touch')}
-                          className={`px-2.5 py-1 rounded-md text-xs font-bold flex items-center gap-1 cursor-pointer ${
-                            surahPickStyle === 'touch'
-                              ? 'bg-[#0E5C3E] text-[#E6C25A]'
-                              : 'text-[#4B5650]'
-                          }`}
-                        >
-                          <Touchpad className="w-3.5 h-3.5" />
-                          <span>{isAr ? 'باللمس' : 'Touch'}</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setSurahPickStyle('dropdown')}
-                          className={`px-2.5 py-1 rounded-md text-xs font-bold flex items-center gap-1 cursor-pointer ${
-                            surahPickStyle === 'dropdown'
-                              ? 'bg-[#0E5C3E] text-[#E6C25A]'
-                              : 'text-[#4B5650]'
-                          }`}
-                        >
-                          <ListFilter className="w-3.5 h-3.5" />
-                          <span>{isAr ? 'قائمة منسدلة' : 'Dropdown'}</span>
-                        </button>
-                      </div>
-
-                      <label className="inline-flex items-center gap-1.5 text-xs font-bold text-[#4B5650] cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={multiSurahRange}
-                          onChange={(e) => {
-                            setMultiSurahRange(e.target.checked);
-                            if (!e.target.checked) setSelectedSurahEnd(selectedSurah);
-                          }}
-                          className="rounded border-[#96701E] text-[#96701E]"
-                        />
-                        <span>{isAr ? 'عدة سور متتالية' : 'Multi-Surah'}</span>
-                      </label>
-                    </div>
-
-                    {surahPickStyle === 'dropdown' ? (
-                      <div className={`grid gap-2 ${multiSurahRange ? 'grid-cols-2' : 'grid-cols-1'}`}>
-                        <select
-                          value={selectedSurah}
-                          onChange={(e) => setSelectedSurah(Number(e.target.value))}
-                          className="w-full px-3 py-2 rounded-xl bg-[#FFFFFF] border border-[#C5CEBF] text-xs sm:text-sm font-bold"
-                        >
-                          {SURAH_LIST.map((s) => (
-                            <option key={s.number} value={s.number}>
-                              {s.number}. {isAr ? `سورة ${s.nameAr}` : s.nameEn}
-                            </option>
-                          ))}
-                        </select>
-                        {multiSurahRange && (
-                          <select
-                            value={selectedSurahEnd}
-                            onChange={(e) => setSelectedSurahEnd(Number(e.target.value))}
-                            className="w-full px-3 py-2 rounded-xl bg-[#FFFFFF] border border-[#C5CEBF] text-xs sm:text-sm font-bold"
-                          >
-                            {SURAH_LIST.filter(
-                              (s) => s.number >= selectedSurah && s.number <= selectedSurah + 4
-                            ).map((s) => (
-                              <option key={s.number} value={s.number}>
-                                {s.number}. {isAr ? `سورة ${s.nameAr}` : s.nameEn}
-                              </option>
-                            ))}
-                          </select>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="space-y-2">
-                        <div className="relative">
-                          <Search className="w-3.5 h-3.5 text-[#6A766E] absolute top-1/2 -translate-y-1/2 start-3 pointer-events-none" />
-                          <input
-                            type="text"
-                            value={surahSearchQuery}
-                            onChange={(e) => setSurahSearchQuery(e.target.value)}
-                            placeholder={isAr ? 'ابحث باسم السورة أو رقمها...' : 'Search Surah...'}
-                            className="w-full ps-8 pe-3 py-1.5 rounded-xl bg-[#FFFFFF] border border-[#C5CEBF] text-xs"
-                          />
-                        </div>
-                        <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5 max-h-40 overflow-y-auto">
-                          {filteredSurahs.map((s) => {
-                            const isStart = s.number === selectedSurah;
-                            const isInRange =
-                              multiSurahRange &&
-                              s.number >= selectedSurah &&
-                              s.number <= selectedSurahEnd;
-                            return (
-                              <button
-                                key={s.number}
-                                type="button"
-                                onClick={() => {
-                                  if (!multiSurahRange) {
-                                    setSelectedSurah(s.number);
-                                    setSelectedSurahEnd(s.number);
-                                  } else if (
-                                    s.number < selectedSurah ||
-                                    selectedSurahEnd !== selectedSurah
-                                  ) {
-                                    setSelectedSurah(s.number);
-                                    setSelectedSurahEnd(s.number);
-                                  } else {
-                                    setSelectedSurahEnd(Math.min(s.number, selectedSurah + 4));
-                                  }
-                                }}
-                                className={`px-2 py-1.5 rounded-xl border text-center cursor-pointer ${
-                                  isStart
-                                    ? 'bg-[#0E5C3E] border-[#96701E] text-[#E6C25A]'
-                                    : isInRange
-                                    ? 'bg-[#0E6340]/15 border-[#0E6340] text-[#161E19]'
-                                    : 'bg-[#FFFFFF] border-[#C5CEBF] text-[#161E19]'
-                                }`}
-                              >
-                                <div className="text-[10px] opacity-70">{s.number}</div>
-                                <div className="text-xs font-bold truncate">
-                                  {isAr ? s.nameAr : s.nameEn}
-                                </div>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* By Ayah Range */}
-                {curriculumMode === 'ayah' && (
-                  <div className="rounded-xl bg-[#F7F9F5] border border-[#C5CEBF] p-3 space-y-2.5">
-                    <div className="grid grid-cols-3 gap-2">
-                      <div>
-                        <label className="block text-[11px] font-bold text-[#4B5650] mb-1">
-                          {isAr ? 'السورة' : 'Surah'}
-                        </label>
-                        <select
-                          value={selectedSurah}
-                          onChange={(e) => setSelectedSurah(Number(e.target.value))}
-                          className="w-full px-2.5 py-2 rounded-xl bg-[#FFFFFF] border border-[#C5CEBF] text-xs font-bold"
-                        >
-                          {SURAH_LIST.map((s) => (
-                            <option key={s.number} value={s.number}>
-                              {s.number}. {isAr ? s.nameAr : s.nameEn}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-bold text-[#4B5650] mb-1">
-                          {isAr ? 'من الآية' : 'From'}
-                        </label>
-                        <select
-                          value={ayahFrom}
-                          onChange={(e) => {
-                            const v = Math.max(
-                              1,
-                              Math.min(Number(e.target.value) || 1, currentSurahInfo.ayahCount)
-                            );
-                            setAyahFrom(v);
-                            if (ayahTo < v) setAyahTo(v);
-                          }}
-                          className="w-full px-2.5 py-2 rounded-xl bg-[#FFFFFF] border border-[#C5CEBF] text-xs font-mono-tabular font-bold"
-                        >
-                          {Array.from(
-                            { length: currentSurahInfo.ayahCount },
-                            (_, idx) => idx + 1
-                          ).map((num) => (
-                            <option key={num} value={num}>
-                              {isAr ? toArabicDigits(num) : num}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-bold text-[#4B5650] mb-1">
-                          {isAr ? 'إلى الآية' : 'To'}
-                        </label>
-                        <select
-                          value={ayahTo}
-                          onChange={(e) =>
-                            setAyahTo(
-                              Math.max(
-                                ayahFrom,
-                                Math.min(Number(e.target.value) || ayahFrom, currentSurahInfo.ayahCount)
-                              )
-                            )
-                          }
-                          className="w-full px-2.5 py-2 rounded-xl bg-[#FFFFFF] border border-[#C5CEBF] text-xs font-mono-tabular font-bold"
-                        >
-                          {Array.from(
-                            { length: Math.max(1, currentSurahInfo.ayahCount - ayahFrom + 1) },
-                            (_, idx) => ayahFrom + idx
-                          ).map((num) => (
-                            <option key={num} value={num}>
-                              {isAr ? toArabicDigits(num) : num}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* By Page Range */}
-                {curriculumMode === 'page' && (
-                  <div className="rounded-xl bg-[#F7F9F5] border border-[#C5CEBF] p-3 grid grid-cols-2 gap-2.5">
-                    <div>
-                      <label className="block text-[11px] font-bold text-[#4B5650] mb-1">
-                        {isAr ? 'من الصفحة (١–٦٠٤)' : 'From Page (1–604)'}
-                      </label>
-                      <select
-                        value={pageFrom}
-                        onChange={(e) => {
-                          const v = Math.max(1, Math.min(604, Number(e.target.value) || 1));
-                          setPageFrom(v);
-                          if (pageTo < v) {
-                            setPageTo(v);
-                          } else if (pageTo > Math.min(604, v + 9)) {
-                            setPageTo(Math.min(604, v + 9));
-                          }
-                        }}
-                        className="w-full px-3 py-2 rounded-xl bg-[#FFFFFF] border border-[#C5CEBF] text-xs font-mono-tabular font-bold"
-                      >
-                        {Array.from({ length: 604 }, (_, idx) => idx + 1).map((p) => (
-                          <option key={p} value={p}>
-                            {isAr ? `صفحة ${toArabicDigits(p)}` : `Page ${p}`}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-bold text-[#4B5650] mb-1">
-                        {isAr ? 'إلى الصفحة (حد ١٠)' : 'To Page (max 10)'}
-                      </label>
-                      <select
-                        value={pageTo}
-                        onChange={(e) =>
-                          setPageTo(
-                            Math.max(
-                              pageFrom,
-                              Math.min(604, pageFrom + 9, Number(e.target.value) || pageFrom)
-                            )
-                          )
-                        }
-                        className="w-full px-3 py-2 rounded-xl bg-[#FFFFFF] border border-[#C5CEBF] text-xs font-mono-tabular font-bold"
-                      >
-                        {Array.from(
-                          { length: Math.max(1, Math.min(604, pageFrom + 9) - pageFrom + 1) },
-                          (_, idx) => pageFrom + idx
-                        ).map((p) => (
-                          <option key={p} value={p}>
-                            {isAr ? `صفحة ${toArabicDigits(p)}` : `Page ${p}`}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Hiding, Font Size & IP Privacy Controls */}
-              <div className="space-y-2.5">
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleToggleSyncedHideReciter}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 cursor-pointer ${
-                      hideVersesForReciter
-                        ? 'bg-[#0E5C3E] text-[#E6C25A] border-[#0E5C3E]'
-                        : 'bg-[#F7F9F5] text-[#4B5650] border-[#C5CEBF]'
-                    }`}
-                  >
-                    {hideVersesForReciter ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                    <span>{isAr ? 'إخفاء عن القارئ' : 'Hide for Reciter'}</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleToggleSyncedHideListener}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 cursor-pointer ${
-                      hideVersesForListener
-                        ? 'bg-[#0E5C3E] text-[#E6C25A] border-[#0E5C3E]'
-                        : 'bg-[#F7F9F5] text-[#4B5650] border-[#C5CEBF]'
-                    }`}
-                  >
-                    {hideVersesForListener ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                    <span>{isAr ? 'إخفاء عن المُسمِّع' : 'Hide for Listener'}</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setFadeFirstWordOnly(!fadeFirstWordOnly)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 cursor-pointer ${
-                      fadeFirstWordOnly
-                        ? 'bg-[#166534] text-[#FFFFFF] border-[#166534]'
-                        : 'bg-[#F7F9F5] text-[#4B5650] border-[#C5CEBF]'
-                    }`}
-                  >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>{isAr ? 'تلاشي' : 'Fade'}</span>
-                  </button>
-                </div>
-
-                {/* Text Scale */}
-                <div className="flex items-center justify-between gap-2 rounded-xl bg-[#F7F9F5] border border-[#C5CEBF] px-3 py-2">
-                  <span className="text-xs font-bold text-[#4B5650]">
-                    {isAr ? 'حجم خط الآيات:' : 'Verse Font Size:'}
-                  </span>
-                  <div className="flex items-center gap-1">
-                    {(
-                      [
-                        { id: 'normal', label: isAr ? 'عادي' : 'S' },
-                        { id: 'large', label: isAr ? 'كبير' : 'M' },
-                        { id: 'xlarge', label: isAr ? 'مكبر' : 'L' },
-                      ] as const
-                    ).map((sz) => (
-                      <button
-                        key={sz.id}
-                        type="button"
-                        onClick={() => setTextScale(sz.id)}
-                        className={`px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer ${
-                          textScale === sz.id
-                            ? 'bg-[#0E5C3E] text-[#E6C25A]'
-                            : 'bg-[#FFFFFF] text-[#4B5650]'
-                        }`}
-                      >
-                        {sz.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* High Privacy IP Masking Toggle */}
-                <div className="flex items-center justify-between gap-3 rounded-xl bg-[#ECFDF3] border border-[#86EFAC] px-3.5 py-2.5">
-                  <div className="flex items-center gap-2">
-                    <Lock className="w-4 h-4 text-[#15803D] shrink-0" />
-                    <div>
-                      <div className="text-xs font-extrabold text-[#161E19]">
-                        {isAr ? 'وضع الخصوصية العالية (إخفاء الـ IP)' : 'High Privacy Mode (IP Masking)'}
-                      </div>
-                      <div className="text-[11px] text-[#15803D]">
-                        {isAr
-                          ? 'تمرير عبر TURN الوسيط وحظر أي تبادل للملفات'
-                          : 'TURN relay + strict audio-only'}
-                      </div>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={highPrivacyIpMask}
-                    onClick={() => setHighPrivacyIpMask((prev) => !prev)}
-                    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
-                      highPrivacyIpMask ? 'bg-[#15803D]' : 'bg-[#C4B7A0]'
-                    }`}
-                  >
-                    <span
-                      className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition ${
-                        highPrivacyIpMask
-                          ? isAr
-                            ? '-translate-x-5'
-                            : 'translate-x-5'
-                          : 'translate-x-0'
-                      }`}
-                    />
-                  </button>
-                </div>
-
-                {highPrivacyIpMask && !TURN_SERVER_URL.trim() && (
-                  <p className="text-[11px] text-[#8A6518] bg-[#F7F1DF] border border-[#DEC994] rounded-lg px-3 py-1.5 font-semibold">
-                    {isAr
-                      ? 'توجيه مشفّر تلقائي لضمان عمل الصوت فوراً؛ أضف TURN_SERVER_URL لإجبار التمرير عبر خادم وسيط.'
-                      : 'Encrypted STUN fallback is active so audio works immediately; set TURN_SERVER_URL to enforce strict relay.'}
-                  </p>
-                )}
-              </div>
-            </div>
-
-            <div className="px-4 sm:px-5 py-3 bg-[#F4F5EE] border-t border-[#C5CEBF] flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={handleApplyCurriculumSettings}
-                className="px-5 py-2 rounded-xl bg-[#166534] hover:bg-[#14532D] text-[#FFFFFF] text-xs sm:text-sm font-extrabold cursor-pointer"
-              >
-                {sessionId
-                  ? isAr
-                    ? 'حفظ ومزامنة في الجلسة'
-                    : 'Save & Sync Live'
-                  : isAr
-                  ? 'حفظ وإغلاق'
-                  : 'Save & Close'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* END-CALL EVALUATION MODAL (MATCHING SCREENSHOT 1) */}
-      {showEvalModal && sessionId && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/55 backdrop-blur-xs p-4">
-          <div className="w-full max-w-md rounded-[28px] bg-[#FFFFFF] border border-[#C5CEBF] p-5 sm:p-6 shadow-2xl space-y-5 text-[#161E19]">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <Award className="w-5 h-5 text-[#96701E]" />
-                <h3 className="text-base sm:text-lg font-extrabold">
-                  {isAr ? 'التقييم وإنهاء الاتصال' : 'Evaluate & End Call'}
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowEvalModal(false)}
-                className="p-1.5 rounded-lg hover:bg-[#F4F5EE] text-[#4B5650] cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* 3 Metrics Card */}
-            <div className="rounded-2xl bg-[#F7F9F5] border border-[#D3DDD0] grid grid-cols-3 py-3.5 px-2 text-center divide-x rtl:divide-x-reverse divide-[#D3DDD0]">
-              <div className="space-y-1">
-                <div className="text-[11px] font-bold text-[#4B5650]">
-                  {isAr ? 'المدة' : 'Duration'}
-                </div>
-                <div className="text-base font-extrabold font-mono-tabular text-[#161E19]">
-                  {formatCallDuration(callElapsedSeconds, isAr)}
-                </div>
-              </div>
-              <div className="space-y-1">
-                <div className="text-[11px] font-bold text-[#4B5650]">
-                  {isAr ? 'الأخطاء' : 'Errors'}
-                </div>
-                <div className="text-base font-extrabold font-mono-tabular text-[#B93829]">
-                  {isAr ? toArabicDigits(mistakesCount) : mistakesCount}
-                </div>
-              </div>
-              <div className="space-y-1">
-                <div className="text-[11px] font-bold text-[#4B5650]">
-                  {isAr ? 'نسبة الإتقان' : 'Accuracy'}
-                </div>
-                <div className="text-base font-extrabold font-mono-tabular text-[#15803D]">
-                  {isAr ? `٪${toArabicDigits(computedAccuracyPct)}` : `${computedAccuracyPct}%`}
-                </div>
-              </div>
-            </div>
-
-            {/* Final Rating Choices */}
-            <div className="space-y-2.5">
-              <p className="text-xs sm:text-sm font-bold text-[#161E19]">
-                {isAr
-                  ? 'التقدير النهائي للجلسة (سيظهر لك ولصديقك)'
-                  : 'Final Session Rating (visible to you & your friend)'}
-              </p>
-
-              <div className="grid grid-cols-2 gap-2.5">
-                {EVALUATION_CHOICES.map((opt) => {
-                  const selected = selectedEvaluation === opt.id;
-                  return (
-                    <button
-                      key={opt.id}
-                      type="button"
-                      onClick={() => setSelectedEvaluation(opt.id)}
-                      className={`py-2.5 px-3 rounded-2xl border text-xs sm:text-sm font-bold text-center cursor-pointer transition-all ${
-                        selected
-                          ? 'bg-[#E6F4EE] border-[#15803D] text-[#155E42] shadow-2xs'
-                          : 'bg-[#FFFFFF] border-[#C5CEBF] text-[#161E19] hover:bg-[#F7F9F5]'
-                      }`}
-                    >
-                      {isAr ? opt.labelAr : opt.labelEn}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Actions */}
-            <div className="grid grid-cols-2 gap-2.5 pt-1">
-              <button
-                type="button"
-                onClick={() =>
-                  handleEndCall(true, {
-                    evaluation: selectedEvaluation,
-                    durationSeconds: callElapsedSeconds,
-                    accuracyPct: computedAccuracyPct,
-                  })
-                }
-                className="py-3 px-3 rounded-2xl bg-[#B93829] hover:bg-[#992D20] text-[#FFFFFF] text-xs sm:text-sm font-extrabold flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
-              >
-                <PhoneOff className="w-4 h-4" />
-                <span>{isAr ? 'حفظ وإنهاء الاتصال' : 'Save & End Call'}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowEvalModal(false)}
-                className="py-3 px-3 rounded-2xl bg-[#FFFFFF] hover:bg-[#F7F9F5] border border-[#C5CEBF] text-[#161E19] text-xs sm:text-sm font-bold cursor-pointer"
-              >
-                {isAr ? 'متابعة الجلسة' : 'Continue Session'}
-              </button>
             </div>
           </div>
         </div>

@@ -14,12 +14,13 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { db, OperationType, handleFirestoreError } from '../firebase';
-import { QuranRiwayah } from '../data/quranData';
 
-export interface FriendContactItem {
-  friendUid: string;
-  friendName: string;
-  note?: string;
+export interface UserDirectoryEntry {
+  lookupId: string;
+  uid: string;
+  displayName: string;
+  lastSeen?: number;
+  updatedAt?: unknown;
 }
 
 export interface FriendInviteDoc {
@@ -27,6 +28,8 @@ export interface FriendInviteDoc {
   ownerUid: string;
   ownerName: string;
   status: 'open' | 'revoked';
+  createdAt?: unknown;
+  updatedAt?: unknown;
 }
 
 export interface FriendRequestDoc {
@@ -38,16 +41,38 @@ export interface FriendRequestDoc {
   inviteToken: string;
   status: 'pending' | 'accepted' | 'declined';
   syncedBySender: boolean;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
+export interface FriendContactDoc {
+  friendUid: string;
+  friendName: string;
+  note?: string | null;
+  createdAt?: unknown;
+  updatedAt?: unknown;
 }
 
 export interface IncomingDuoCall {
   sessionId: string;
   hostUid: string;
   hostName: string;
-  calleeUid?: string | null;
-  callMode?: 'friend_call';
-  riwayah?: QuranRiwayah;
+  guestUid?: string | null;
+  guestName?: string | null;
+  calleeUid: string;
+  callMode: 'friend_call';
+  riwayah?: 'hafs' | 'qalun' | 'warsh';
   curriculumMode?: 'surah' | 'ayah' | 'page';
+  hideVersesForReciter?: boolean;
+  hideVersesForListener?: boolean;
+  activeAyah?: number;
+  reciterSide?: 'host' | 'guest';
+  mistakesCount?: number;
+  markedErrors?: string[];
+  endedByUid?: string | null;
+  sessionEvaluation?: 'excellent' | 'very_good' | 'good_practice' | 'needs_review' | null;
+  callDurationSeconds?: number | null;
+  accuracyPct?: number | null;
   surahNumber: number;
   surahEnd?: number;
   ayahFrom: number;
@@ -56,307 +81,326 @@ export interface IncomingDuoCall {
   pageTo?: number;
   offerType: string;
   offerSdp: string;
-  hideVersesForReciter?: boolean;
-  hideVersesForListener?: boolean;
+  answerType?: string | null;
+  answerSdp?: string | null;
   status: 'ringing' | 'active' | 'declined' | 'ended';
+  createdAt?: unknown;
+  updatedAt?: unknown;
 }
 
-function generateCryptoToken(prefix: string, length = 10): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  const bytes = new Uint8Array(length);
-  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+export interface IceCandidateDoc {
+  candidateId: string;
+  sessionId: string;
+  senderUid: string;
+  recipientUid: string;
+  candidate: string;
+  sdpMid?: string | null;
+  sdpMLineIndex?: number | null;
+  createdAt?: unknown;
+}
+
+const VALID_ID_REGEX = /^[a-zA-Z0-9_-]{1,128}$/;
+
+export function sanitizeDisplayName(raw: string | null | undefined, fallbackEmail?: string | null): string {
+  const trimmed = (raw || '').trim();
+  if (trimmed.length >= 1) {
+    return trimmed.slice(0, 80);
+  }
+  const emailPrefix = (fallbackEmail || '').split('@')[0]?.trim();
+  if (emailPrefix && emailPrefix.length >= 1) {
+    return emailPrefix.slice(0, 80);
+  }
+  return 'مستخدم الأترجة';
+}
+
+export function getDisplayNameForUser(user: User): string {
+  return sanitizeDisplayName(user.displayName, user.email);
+}
+
+export function formatFriendShortCode(uid: string): string {
+  return (uid || '').slice(0, 6).toUpperCase();
+}
+
+export function extractInviteTokenFromInput(rawInput: string): string {
+  const trimmed = (rawInput || '').trim();
+  if (!trimmed) return '';
+  if (trimmed.includes('http://') || trimmed.includes('https://') || trimmed.includes('?')) {
+    try {
+      const normalized = trimmed.startsWith('http') ? trimmed : `https://alutrujjah.app/${trimmed.replace(/^\/+/, '')}`;
+      const url = new URL(normalized);
+      const token = url.searchParams.get('friendInvite') || url.searchParams.get('invite') || '';
+      return token.trim();
+    } catch {
+      // fall through
+    }
+  }
+  return trimmed;
+}
+
+function generateSecureToken(prefix: string): string {
+  const alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  const bytes = new Uint8Array(18);
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
     crypto.getRandomValues(bytes);
   } else {
     for (let i = 0; i < bytes.length; i++) {
       bytes[i] = Math.floor(Math.random() * 256);
     }
   }
-  let out = '';
-  for (let i = 0; i < length; i++) {
-    out += chars.charAt(bytes[i] % chars.length);
+  let suffix = '';
+  for (let i = 0; i < bytes.length; i++) {
+    suffix += alphabet[bytes[i] % alphabet.length];
   }
-  return `${prefix}-${out}`;
-}
-
-export function getDisplayNameForUser(user: User): string {
-  const candidate =
-    user.displayName?.trim() ||
-    user.email?.split('@')[0]?.trim() ||
-    'قارئ الأترجة';
-  return candidate.slice(0, 80);
-}
-
-export function formatFriendShortCode(uid: string): string {
-  const clean = (uid || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-  const suffix = (clean.slice(0, 6) || 'USER01').padEnd(6, 'X');
-  return `SRD-${suffix}`;
+  return `${prefix}_${suffix}`;
 }
 
 export async function syncVerifiedUserProfileAndDirectory(user: User): Promise<void> {
-  if (!user.emailVerified) return;
+  if (!user.emailVerified || !user.email) return;
+  const displayName = getDisplayNameForUser(user);
+  const safeEmail = user.email.trim().slice(0, 254);
 
-  const safeName = getDisplayNameForUser(user);
-  const safeEmail = (user.email || `${user.uid}@user.local`).slice(0, 254);
+  const privateRef = doc(db, 'users', user.uid, 'private', 'profile');
+  const dirRef = doc(db, 'userDirectory', user.uid);
 
-  // 1. Private Profile (strictly owner-only)
-  const privatePath = `users/${user.uid}/private/profile`;
   try {
-    await setDoc(doc(db, 'users', user.uid, 'private', 'profile'), {
-      uid: user.uid,
-      email: safeEmail,
-      displayName: safeName,
-      updatedAt: serverTimestamp(),
-    });
+    await setDoc(
+      privateRef,
+      {
+        uid: user.uid,
+        email: safeEmail,
+        displayName,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
   } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, privatePath);
+    handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/private/profile`);
   }
 
-  // 2. Zero-PII UID Directory entry (enables verifying user display name & online heartbeat)
-  const uidDirPath = `userDirectory/${user.uid}`;
   try {
-    await setDoc(doc(db, 'userDirectory', user.uid), {
-      lookupId: user.uid,
-      uid: user.uid,
-      displayName: safeName,
-      lastSeen: Date.now(),
-      updatedAt: serverTimestamp(),
-    });
+    await setDoc(
+      dirRef,
+      {
+        lookupId: user.uid,
+        uid: user.uid,
+        displayName,
+        lastSeen: Date.now(),
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
   } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, uidDirPath);
+    handleFirestoreError(err, OperationType.WRITE, `userDirectory/${user.uid}`);
   }
 }
 
 export async function updateUserPresenceHeartbeat(user: User): Promise<void> {
   if (!user.emailVerified) return;
-  const uidDirPath = `userDirectory/${user.uid}`;
+  const dirRef = doc(db, 'userDirectory', user.uid);
   try {
-    await updateDoc(doc(db, 'userDirectory', user.uid), {
+    await updateDoc(dirRef, {
       displayName: getDisplayNameForUser(user),
       lastSeen: Date.now(),
       updatedAt: serverTimestamp(),
     });
-  } catch (err) {
-    handleFirestoreError(err, OperationType.UPDATE, uidDirPath);
+  } catch {
+    await syncVerifiedUserProfileAndDirectory(user);
   }
 }
 
 export function subscribeFriendPresence(
-  friendUid: string,
-  onPresence: (uid: string, online: boolean, lastSeen?: number) => void
+  friendUids: string[],
+  onUpdate: (presenceMap: Record<string, number>) => void
 ): () => void {
-  const dirPath = `userDirectory/${friendUid}`;
-  return onSnapshot(
-    doc(db, 'userDirectory', friendUid),
-    (snap) => {
-      if (!snap.exists()) {
-        onPresence(friendUid, false);
-        return;
+  const uniqueUids = Array.from(new Set(friendUids.filter((id) => VALID_ID_REGEX.test(id)))).slice(0, 30);
+  if (uniqueUids.length === 0) {
+    onUpdate({});
+    return () => {};
+  }
+
+  const presenceMap: Record<string, number> = {};
+  const unsubs = uniqueUids.map((uid) =>
+    onSnapshot(
+      doc(db, 'userDirectory', uid),
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data() as UserDirectoryEntry;
+          presenceMap[uid] = typeof data.lastSeen === 'number' ? data.lastSeen : 0;
+        } else {
+          presenceMap[uid] = 0;
+        }
+        onUpdate({ ...presenceMap });
+      },
+      (err) => {
+        handleFirestoreError(err, OperationType.GET, `userDirectory/${uid}`);
       }
-      const data = snap.data() as { lastSeen?: number };
-      const lastSeen = typeof data.lastSeen === 'number' ? data.lastSeen : 0;
-      const isOnline = lastSeen > 0 && Date.now() - lastSeen < 120_000;
-      onPresence(friendUid, isOnline, lastSeen);
-    },
-    (err) => {
-      handleFirestoreError(err, OperationType.GET, dirPath);
-    }
+    )
   );
+
+  return () => {
+    unsubs.forEach((u) => u());
+  };
 }
 
-export async function getOrCreateMyFriendInvite(user: User): Promise<FriendInviteDoc | null> {
-  if (!user.emailVerified) return null;
+export async function getOrCreateMyFriendInvite(user: User): Promise<FriendInviteDoc> {
+  const ownerName = getDisplayNameForUser(user);
   const invitesCol = collection(db, 'friendInvites');
-  const q = query(invitesCol, where('ownerUid', '==', user.uid));
 
   try {
+    const q = query(invitesCol, where('ownerUid', '==', user.uid), where('status', '==', 'open'));
     const snap = await getDocs(q);
-    const openDoc = snap.docs.find((d) => (d.data() as FriendInviteDoc).status === 'open');
-    if (openDoc) {
-      return openDoc.data() as FriendInviteDoc;
+    if (!snap.empty) {
+      const existing = snap.docs[0].data() as FriendInviteDoc;
+      if (existing.ownerName !== ownerName) {
+        await updateDoc(doc(db, 'friendInvites', existing.inviteToken), {
+          ownerName,
+          updatedAt: serverTimestamp(),
+        });
+        return { ...existing, ownerName };
+      }
+      return existing;
     }
-  } catch (err) {
-    handleFirestoreError(err, OperationType.LIST, 'friendInvites');
-  }
 
-  const newToken = generateCryptoToken('INV', 10);
-  const ownerName = getDisplayNameForUser(user);
-  const invitePath = `friendInvites/${newToken}`;
-  try {
-    await setDoc(doc(db, 'friendInvites', newToken), {
-      inviteToken: newToken,
+    const token = generateSecureToken('inv');
+    const inviteDoc: FriendInviteDoc = {
+      inviteToken: token,
       ownerUid: user.uid,
       ownerName,
       status: 'open',
+    };
+    await setDoc(doc(db, 'friendInvites', token), {
+      ...inviteDoc,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
-    return {
+    return inviteDoc;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, 'friendInvites');
+  }
+}
+
+export async function regenerateMyFriendInvite(user: User): Promise<FriendInviteDoc> {
+  const ownerName = getDisplayNameForUser(user);
+  const invitesCol = collection(db, 'friendInvites');
+
+  try {
+    const q = query(invitesCol, where('ownerUid', '==', user.uid), where('status', '==', 'open'));
+    const snap = await getDocs(q);
+    const batch = writeBatch(db);
+    snap.docs.forEach((d) => {
+      batch.update(d.ref, {
+        status: 'revoked',
+        updatedAt: serverTimestamp(),
+      });
+    });
+
+    const newToken = generateSecureToken('inv');
+    const newInvite: FriendInviteDoc = {
       inviteToken: newToken,
       ownerUid: user.uid,
       ownerName,
       status: 'open',
     };
-  } catch (err) {
-    handleFirestoreError(err, OperationType.CREATE, invitePath);
-    return null;
-  }
-}
-
-export async function regenerateMyFriendInvite(user: User): Promise<FriendInviteDoc | null> {
-  if (!user.emailVerified) return null;
-  const q = query(collection(db, 'friendInvites'), where('ownerUid', '==', user.uid));
-  try {
-    const snap = await getDocs(q);
-    await Promise.all(
-      snap.docs
-        .filter((d) => (d.data() as FriendInviteDoc).status === 'open')
-        .map((d) =>
-          updateDoc(d.ref, {
-            status: 'revoked',
-            updatedAt: serverTimestamp(),
-          })
-        )
-    );
-  } catch (err) {
-    handleFirestoreError(err, OperationType.UPDATE, 'friendInvites');
-  }
-
-  const newToken = generateCryptoToken('INV', 10);
-  const ownerName = getDisplayNameForUser(user);
-  const invitePath = `friendInvites/${newToken}`;
-  try {
-    await setDoc(doc(db, 'friendInvites', newToken), {
-      inviteToken: newToken,
-      ownerUid: user.uid,
-      ownerName,
-      status: 'open',
+    batch.set(doc(db, 'friendInvites', newToken), {
+      ...newInvite,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
-    return {
-      inviteToken: newToken,
-      ownerUid: user.uid,
-      ownerName,
-      status: 'open',
-    };
+    await batch.commit();
+    return newInvite;
   } catch (err) {
-    handleFirestoreError(err, OperationType.CREATE, invitePath);
-    return null;
+    handleFirestoreError(err, OperationType.WRITE, 'friendInvites');
   }
 }
 
-export async function fetchFriendInviteDetails(
-  tokenOrUrl: string
-): Promise<FriendInviteDoc | null> {
-  let clean = tokenOrUrl.trim();
-  if (!clean) return null;
-
-  // Allow pasting a full invite URL (?invite=... or ?friendInvite=...) or raw token
-  if (clean.includes('friendInvite=') || clean.includes('invite=')) {
-    try {
-      const parsed = new URL(clean);
-      clean =
-        parsed.searchParams.get('friendInvite') ||
-        parsed.searchParams.get('invite') ||
-        clean;
-    } catch {
-      const m = clean.match(/(?:friendInvite|invite)=([a-zA-Z0-9_\-]+)/);
-      if (m?.[1]) clean = m[1];
-    }
+export async function fetchFriendInviteDetails(inviteToken: string): Promise<FriendInviteDoc | null> {
+  const cleanToken = extractInviteTokenFromInput(inviteToken);
+  if (!cleanToken || cleanToken.length > 64 || !VALID_ID_REGEX.test(cleanToken)) {
+    return null;
   }
-
-  clean = clean.trim();
-  if (!/^[a-zA-Z0-9_\-]{4,64}$/.test(clean)) return null;
-
-  const path = `friendInvites/${clean}`;
   try {
-    const snap = await getDoc(doc(db, 'friendInvites', clean));
+    const snap = await getDoc(doc(db, 'friendInvites', cleanToken));
     if (!snap.exists()) return null;
     const data = snap.data() as FriendInviteDoc;
     if (data.status !== 'open') return null;
     return data;
   } catch (err) {
-    handleFirestoreError(err, OperationType.GET, path);
-    return null;
+    handleFirestoreError(err, OperationType.GET, `friendInvites/${cleanToken}`);
   }
 }
 
 export async function sendConsentFriendRequest(
-  currentUser: User,
+  user: User,
   invite: FriendInviteDoc
-): Promise<'sent' | 'already_pending' | 'already_accepted'> {
-  const requestId = `${currentUser.uid}_${invite.ownerUid}`;
-  const reverseRequestId = `${invite.ownerUid}_${currentUser.uid}`;
-  const reqRef = doc(db, 'friendRequests', requestId);
-  const reverseReqRef = doc(db, 'friendRequests', reverseRequestId);
-  const friendRef = doc(db, 'users', currentUser.uid, 'friends', invite.ownerUid);
-  const safeOwnerName = invite.ownerName?.trim().slice(0, 80) || 'قارئ';
-  const reqPath = `friendRequests/${requestId}`;
+): Promise<'sent' | 'already_accepted' | 'already_pending'> {
+  if (!user.emailVerified) {
+    throw new Error('Email verification required');
+  }
+  const myUid = user.uid;
+  const targetUid = invite.ownerUid;
+  if (myUid === targetUid) {
+    throw new Error('Cannot invite yourself');
+  }
+
+  const myFriendDocRef = doc(db, 'users', myUid, 'friends', targetUid);
+  try {
+    const existingFriend = await getDoc(myFriendDocRef);
+    if (existingFriend.exists()) {
+      return 'already_accepted';
+    }
+  } catch (err) {
+    handleFirestoreError(err, OperationType.GET, `users/${myUid}/friends/${targetUid}`);
+  }
+
+  const forwardId = `${myUid}_${targetUid}`;
+  const reverseId = `${targetUid}_${myUid}`;
+  const forwardRef = doc(db, 'friendRequests', forwardId);
+  const reverseRef = doc(db, 'friendRequests', reverseId);
 
   try {
-    // Check if inviter already sent us a pending/accepted request in the opposite direction
-    const reverseSnap = await getDoc(reverseReqRef);
+    const [forwardSnap, reverseSnap] = await Promise.all([getDoc(forwardRef), getDoc(reverseRef)]);
+
     if (reverseSnap.exists()) {
-      const reverseData = reverseSnap.data() as FriendRequestDoc;
-      if (reverseData.status === 'pending') {
-        await approveIncomingFriendRequest(currentUser, reverseData);
+      const revData = reverseSnap.data() as FriendRequestDoc;
+      if (revData.status === 'pending') {
+        await approveIncomingFriendRequest(user, revData);
         return 'already_accepted';
       }
-      if (reverseData.status === 'accepted') {
-        const friendSnap = await getDoc(friendRef);
-        if (!friendSnap.exists()) {
-          await setDoc(friendRef, {
-            friendUid: invite.ownerUid,
-            friendName: safeOwnerName,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          });
-        }
+      if (revData.status === 'accepted') {
+        await setDoc(myFriendDocRef, {
+          friendUid: targetUid,
+          friendName: sanitizeDisplayName(invite.ownerName),
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
         return 'already_accepted';
       }
     }
 
-    const existingSnap = await getDoc(reqRef);
-    if (existingSnap.exists()) {
-      const prev = existingSnap.data() as FriendRequestDoc;
-      if (prev.status === 'pending') return 'already_pending';
-      if (prev.status === 'accepted') {
-        const friendSnap = await getDoc(friendRef);
-        if (!friendSnap.exists() || !prev.syncedBySender) {
-          const batch = writeBatch(db);
-          if (!friendSnap.exists()) {
-            batch.set(friendRef, {
-              friendUid: invite.ownerUid,
-              friendName: safeOwnerName,
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
-            });
-          } else {
-            batch.update(friendRef, {
-              friendName: safeOwnerName,
-              updatedAt: serverTimestamp(),
-            });
-          }
-          if (!prev.syncedBySender) {
-            batch.update(reqRef, {
-              syncedBySender: true,
-              updatedAt: serverTimestamp(),
-            });
-          }
-          await batch.commit();
-        }
+    if (forwardSnap.exists()) {
+      const fwdData = forwardSnap.data() as FriendRequestDoc;
+      if (fwdData.status === 'pending') {
+        return 'already_pending';
+      }
+      if (fwdData.status === 'accepted') {
+        await setDoc(myFriendDocRef, {
+          friendUid: targetUid,
+          friendName: sanitizeDisplayName(invite.ownerName),
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
         return 'already_accepted';
       }
-      // If previously declined, delete stale doc so user can re-send a fresh request
-      await deleteDoc(reqRef);
+      // If previously declined, delete stale doc so fresh consent request can be created cleanly
+      await deleteDoc(forwardRef);
     }
 
-    await setDoc(reqRef, {
-      requestId,
-      fromUid: currentUser.uid,
-      fromName: getDisplayNameForUser(currentUser),
-      toUid: invite.ownerUid,
-      toName: safeOwnerName,
+    await setDoc(forwardRef, {
+      requestId: forwardId,
+      fromUid: myUid,
+      fromName: getDisplayNameForUser(user),
+      toUid: targetUid,
+      toName: sanitizeDisplayName(invite.ownerName),
       inviteToken: invite.inviteToken,
       status: 'pending',
       syncedBySender: false,
@@ -365,114 +409,104 @@ export async function sendConsentFriendRequest(
     });
     return 'sent';
   } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, reqPath);
-    throw err;
+    handleFirestoreError(err, OperationType.WRITE, `friendRequests/${forwardId}`);
   }
 }
 
-export async function approveIncomingFriendRequest(
-  currentUser: User,
-  req: FriendRequestDoc
-): Promise<void> {
+export async function approveIncomingFriendRequest(user: User, req: FriendRequestDoc): Promise<void> {
+  if (!user.emailVerified) {
+    throw new Error('Email verification required');
+  }
   const reqRef = doc(db, 'friendRequests', req.requestId);
-  const friendRef = doc(db, 'users', currentUser.uid, 'friends', req.fromUid);
-  const safeFromName = req.fromName?.trim().slice(0, 80) || 'صديق';
+  const friendRef = doc(db, 'users', user.uid, 'friends', req.fromUid);
 
   try {
-    const [reqSnap, friendSnap] = await Promise.all([getDoc(reqRef), getDoc(friendRef)]);
+    const existingFriend = await getDoc(friendRef);
     const batch = writeBatch(db);
-    let hasWrites = false;
-
-    if (reqSnap.exists()) {
-      const reqData = reqSnap.data() as FriendRequestDoc;
-      if (reqData.status === 'pending') {
-        batch.update(reqRef, {
-          status: 'accepted',
-          syncedBySender: true,
-          updatedAt: serverTimestamp(),
-        });
-        hasWrites = true;
-      }
-    }
-
-    if (friendSnap.exists()) {
+    batch.update(reqRef, {
+      status: 'accepted',
+      syncedBySender: false,
+      updatedAt: serverTimestamp(),
+    });
+    if (existingFriend.exists()) {
       batch.update(friendRef, {
-        friendName: safeFromName,
+        friendName: sanitizeDisplayName(req.fromName),
         updatedAt: serverTimestamp(),
       });
-      hasWrites = true;
     } else {
       batch.set(friendRef, {
         friendUid: req.fromUid,
-        friendName: safeFromName,
+        friendName: sanitizeDisplayName(req.fromName),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
-      hasWrites = true;
     }
-
-    if (hasWrites) {
-      await batch.commit();
-    }
+    await batch.commit();
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, `friendRequests/${req.requestId}`);
   }
 }
 
 export async function declineIncomingFriendRequest(req: FriendRequestDoc): Promise<void> {
-  const reqPath = `friendRequests/${req.requestId}`;
+  const reqRef = doc(db, 'friendRequests', req.requestId);
   try {
-    await updateDoc(doc(db, 'friendRequests', req.requestId), {
+    await updateDoc(reqRef, {
       status: 'declined',
-      syncedBySender: false,
       updatedAt: serverTimestamp(),
     });
   } catch (err) {
-    handleFirestoreError(err, OperationType.UPDATE, reqPath);
+    handleFirestoreError(err, OperationType.UPDATE, `friendRequests/${req.requestId}`);
   }
 }
 
-export async function syncAcceptedOutgoingRequest(
-  currentUser: User,
-  req: FriendRequestDoc
-): Promise<void> {
-  const friendRef = doc(db, 'users', currentUser.uid, 'friends', req.toUid);
+export async function syncAcceptedOutgoingRequest(user: User, req: FriendRequestDoc): Promise<void> {
+  if (!user.emailVerified) return;
   const reqRef = doc(db, 'friendRequests', req.requestId);
-  const safeToName = req.toName?.trim().slice(0, 80) || 'صديق';
+  const friendRef = doc(db, 'users', user.uid, 'friends', req.toUid);
 
   try {
-    const [reqSnap, friendSnap] = await Promise.all([getDoc(reqRef), getDoc(friendRef)]);
-    const reqSyncedAlready =
-      reqSnap.exists() && (reqSnap.data() as FriendRequestDoc).syncedBySender === true;
-
-    if (reqSyncedAlready && friendSnap.exists()) {
-      return;
-    }
-
+    const existingFriend = await getDoc(friendRef);
     const batch = writeBatch(db);
-    if (friendSnap.exists()) {
+    if (existingFriend.exists()) {
       batch.update(friendRef, {
-        friendName: safeToName,
+        friendName: sanitizeDisplayName(req.toName),
         updatedAt: serverTimestamp(),
       });
     } else {
       batch.set(friendRef, {
         friendUid: req.toUid,
-        friendName: safeToName,
+        friendName: sanitizeDisplayName(req.toName),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
     }
-
-    if (!reqSyncedAlready) {
-      batch.update(reqRef, {
-        syncedBySender: true,
-        updatedAt: serverTimestamp(),
-      });
-    }
-
+    batch.update(reqRef, {
+      syncedBySender: true,
+      updatedAt: serverTimestamp(),
+    });
     await batch.commit();
   } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, `users/${currentUser.uid}/friends/${req.toUid}`);
+    handleFirestoreError(err, OperationType.WRITE, `friendRequests/${req.requestId}`);
+  }
+}
+
+export async function removeFriendWithCleanup(user: User, friendUid: string): Promise<void> {
+  const friendRef = doc(db, 'users', user.uid, 'friends', friendUid);
+  try {
+    await deleteDoc(friendRef);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, `users/${user.uid}/friends/${friendUid}`);
+  }
+
+  // Also clean up mutual request records so either user can re-invite later cleanly
+  for (const reqId of [`${user.uid}_${friendUid}`, `${friendUid}_${user.uid}`]) {
+    try {
+      const reqSnap = await getDoc(doc(db, 'friendRequests', reqId));
+      if (reqSnap.exists()) {
+        await deleteDoc(doc(db, 'friendRequests', reqId));
+      }
+    } catch {
+      // Non-fatal if already deleted or inaccessible
+    }
   }
 }

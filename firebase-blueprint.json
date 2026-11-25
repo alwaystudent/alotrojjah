@@ -28,7 +28,7 @@
     },
     "UserDirectoryEntry": {
       "title": "UserDirectoryEntry",
-      "description": "Zero-PII lookup record keyed by UID for verified display name resolution.",
+      "description": "Zero-PII lookup record keyed by UID for verified display name resolution and presence.",
       "type": "object",
       "properties": {
         "lookupId": {
@@ -318,6 +318,56 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "IceCandidate": {
+      "title": "IceCandidate",
+      "description": "Trickle WebRTC ICE candidate exchanged between active call participants.",
+      "type": "object",
+      "properties": {
+        "candidateId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "sessionId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "senderUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "recipientUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "candidate": {
+          "type": "string",
+          "maxLength": 2048
+        },
+        "sdpMid": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "sdpMLineIndex": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "candidateId",
+        "sessionId",
+        "senderUid",
+        "recipientUid",
+        "candidate",
+        "createdAt"
+      ]
     }
   },
   "firestore": {
@@ -344,6 +394,10 @@
     "/duoSessions/{sessionId}": {
       "schema": { "$ref": "#/entities/DuoSession" },
       "description": "Direct friend-to-friend audio-only WebRTC call signaling."
+    },
+    "/duoSessions/{sessionId}/candidates/{candidateId}": {
+      "schema": { "$ref": "#/entities/IceCandidate" },
+      "description": "Trickle WebRTC ICE candidates scoped to call participants."
     }
   }
 }

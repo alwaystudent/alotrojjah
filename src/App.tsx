@@ -90,7 +90,7 @@ import { PlanModal } from './components/PlanModal';
 import { AnalyticsSection } from './components/AnalyticsSection';
 import { RemindersSection } from './components/RemindersSection';
 import { MutunAdhkarSection } from './components/MutunAdhkarSection';
-import { DuoRecitationSection } from './components/DuoRecitationSection';
+import { DuoRecitationSection, DuoActiveCallSummary } from './components/DuoRecitationSection';
 import { SardMushafView } from './components/SardMushafView';
 import { SmartMemorizationSystem } from './components/SmartMemorizationSystem';
 import { RandomQuizModal } from './components/RandomQuizModal';
@@ -173,11 +173,22 @@ export default function App() {
       const params = new URLSearchParams(window.location.search);
       const code = params.get('duo');
       const action = params.get('callAction');
-      return code && action === 'answer' ? code.trim().toUpperCase() : null;
+      return code && action === 'answer' ? code.trim() : null;
     } catch {
       return null;
     }
   });
+  const [pendingDeclineCallId, setPendingDeclineCallId] = useState<string | null>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get('duo');
+      const action = params.get('callAction');
+      return code && action === 'decline' ? code.trim() : null;
+    } catch {
+      return null;
+    }
+  });
+  const [activeDuoCall, setActiveDuoCall] = useState<DuoActiveCallSummary | null>(null);
   const [authUser, setAuthUser] = useState<User | null>(auth.currentUser);
   const [incomingCall, setIncomingCall] = useState<IncomingDuoCall | null>(null);
   const lastRingingCallIdRef = useRef<string | null>(null);
@@ -218,6 +229,7 @@ export default function App() {
   // Immediately strip transient URL invite/call query params after capturing them
   // so pulling down to refresh Home never redirects back to Duo Recitation!
   useEffect(() => {
+    (window as unknown as { __hideAppSplash?: () => void }).__hideAppSplash?.();
     try {
       const url = new URL(window.location.href);
       let modified = false;
@@ -682,6 +694,14 @@ export default function App() {
     setActiveSection('duo');
   };
 
+  // Process cold-start callAction=decline launch parameter once authenticated
+  useEffect(() => {
+    if (!pendingDeclineCallId || !authUser || !authUser.emailVerified) return;
+    const targetId = pendingDeclineCallId;
+    setPendingDeclineCallId(null);
+    void handleDeclineIncomingCall(targetId);
+  }, [pendingDeclineCallId, authUser]);
+
   useEffect(() => {
     if (!authUser || !authUser.emailVerified) {
       setIncomingCall(null);
@@ -698,7 +718,16 @@ export default function App() {
     const unsubCalls = onSnapshot(
       incomingQuery,
       (snap) => {
-        if (snap.empty) {
+        const now = Date.now();
+        const freshDocs = snap.docs.filter((d) => {
+          const raw = d.data() as IncomingDuoCall & { createdAt?: { toMillis?: () => number } };
+          if (raw.createdAt && typeof raw.createdAt === 'object' && typeof raw.createdAt.toMillis === 'function') {
+            return now - raw.createdAt.toMillis() <= 120_000;
+          }
+          return true;
+        });
+
+        if (freshDocs.length === 0) {
           if (lastRingingCallIdRef.current) {
             dismissBackgroundCallNotification(lastRingingCallIdRef.current);
             lastRingingCallIdRef.current = null;
@@ -708,7 +737,7 @@ export default function App() {
           return;
         }
 
-        const firstDoc = snap.docs[0];
+        const firstDoc = freshDocs[0];
         const callData = firstDoc.data() as IncomingDuoCall;
         setIncomingCall(callData);
 
@@ -1540,6 +1569,28 @@ export default function App() {
 
       {/* Main Content Container */}
       <main className="flex-1 w-full px-3 sm:px-6 lg:px-10 pt-3 sm:pt-4 pb-1.5 sm:pb-2 space-y-4">
+        {/* Persistent Active Duo Call Return Banner when browsing other tabs */}
+        {activeDuoCall?.isInCall && activeSection !== 'duo' && (
+          <button
+            type="button"
+            onClick={() => setActiveSection('duo')}
+            className="w-full max-w-5xl mx-auto rounded-2xl bg-[#0E5C3E] text-white border border-[#E6C25A] px-4 py-2.5 shadow-md flex items-center justify-between gap-3 cursor-pointer hover:bg-[#0A4D31] transition-colors"
+          >
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#4ADE80] animate-pulse shrink-0" />
+              <PhoneCall className="w-4 h-4 text-[#E6C25A] shrink-0" />
+              <span className="text-xs sm:text-sm font-bold truncate">
+                {lang === 'ar'
+                  ? `مكالمة سرد ثنائي جارية مع ${activeDuoCall.peerName || 'صديقك'}`
+                  : `Active Duo Call with ${activeDuoCall.peerName || 'Friend'}`}
+              </span>
+            </div>
+            <span className="px-2.5 py-1 rounded-lg bg-[#E6C25A] text-[#0E5C3E] text-[11px] font-extrabold shrink-0">
+              {lang === 'ar' ? 'العودة للمكالمة' : 'Return'}
+            </span>
+          </button>
+        )}
+
         {/* HOME VIEW — Original Warm Umber, Parchment, Mustard Gold & Olive Theme (NO Tables Shown on Home!) */}
         {activeSection === 'home' && (
           <section className="max-w-5xl mx-auto space-y-4">
@@ -2307,17 +2358,20 @@ export default function App() {
         {/* MUTUN & ADHKAR DEDICATED VIEW */}
         {activeSection === 'mutun' && <MutunAdhkarSection lang={lang} />}
 
-        {/* BROWSER P2P DUO RECITATION DEDICATED VIEW */}
-        {activeSection === 'duo' && (
-          <DuoRecitationSection
-            lang={lang}
-            defaultRiwayah={defaultRiwayah}
-            initialFriendInviteToken={initialFriendInviteToken}
-            onClearFriendInvite={() => setInitialFriendInviteToken('')}
-            pendingAcceptCallId={pendingAcceptCallId}
-            onClearPendingCall={() => setPendingAcceptCallId(null)}
-            onOpenPrivacyTerms={() => setIsPrivacyTermsOpen(true)}
-          />
+        {/* BROWSER P2P DUO RECITATION DEDICATED VIEW (kept alive while a call is active) */}
+        {(activeSection === 'duo' || activeDuoCall?.isInCall) && (
+          <div className={activeSection === 'duo' ? '' : 'hidden'}>
+            <DuoRecitationSection
+              lang={lang}
+              defaultRiwayah={defaultRiwayah}
+              initialFriendInviteToken={initialFriendInviteToken}
+              onClearFriendInvite={() => setInitialFriendInviteToken('')}
+              pendingAcceptCallId={pendingAcceptCallId}
+              onClearPendingCall={() => setPendingAcceptCallId(null)}
+              onOpenPrivacyTerms={() => setIsPrivacyTermsOpen(true)}
+              onActiveCallStateChange={setActiveDuoCall}
+            />
+          </div>
         )}
       </main>
 
