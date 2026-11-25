@@ -90,7 +90,7 @@ import { PlanModal } from './components/PlanModal';
 import { AnalyticsSection } from './components/AnalyticsSection';
 import { RemindersSection } from './components/RemindersSection';
 import { MutunAdhkarSection } from './components/MutunAdhkarSection';
-import { DuoRecitationSection } from './components/DuoRecitationSection';
+import { DuoRecitationSection, ActiveDuoCallInfo } from './components/DuoRecitationSection';
 import { SardMushafView } from './components/SardMushafView';
 import { SmartMemorizationSystem } from './components/SmartMemorizationSystem';
 import { RandomQuizModal } from './components/RandomQuizModal';
@@ -181,9 +181,13 @@ export default function App() {
       return null;
     }
   });
+  const [pendingAcceptCallData, setPendingAcceptCallData] = useState<IncomingDuoCall | null>(null);
+  const [activeDuoCallInfo, setActiveDuoCallInfo] = useState<ActiveDuoCallInfo | null>(null);
   const [authUser, setAuthUser] = useState<User | null>(auth.currentUser);
   const [incomingCall, setIncomingCall] = useState<IncomingDuoCall | null>(null);
   const lastRingingCallIdRef = useRef<string | null>(null);
+  const handleAcceptCallRef = useRef<(sessionId: string) => void>(() => {});
+  const handleDeclineCallRef = useRef<(sessionId: string) => Promise<void> | void>(() => {});
   const [isPrivacyTermsOpen, setIsPrivacyTermsOpen] = useState<boolean>(false);
   const [privacyTermsTab, setPrivacyTermsTab] = useState<'privacy' | 'terms'>('privacy');
   const [isSideMenuOpen, setIsSideMenuOpen] = useState<boolean>(false);
@@ -399,11 +403,13 @@ export default function App() {
   const dict = t(lang);
   const todayId = getTodayDayId();
 
+  const isDuoEligibleUser = (u: User | null): u is User => Boolean(u && !u.isAnonymous);
+
   // Global Firebase Auth + Incoming Friend Call & Friend Request Listeners (active on all screens)
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, async (nextUser) => {
       setAuthUser(nextUser);
-      if (nextUser && nextUser.emailVerified) {
+      if (isDuoEligibleUser(nextUser)) {
         try {
           await syncVerifiedUserProfileAndDirectory(nextUser);
         } catch (err) {
@@ -416,7 +422,7 @@ export default function App() {
 
   // Global listener for incoming pending friend requests & reliable one-time accepted outgoing sync
   useEffect(() => {
-    if (!authUser || !authUser.emailVerified) {
+    if (!isDuoEligibleUser(authUser)) {
       setPendingIncomingFriendReqs([]);
       return;
     }
@@ -548,7 +554,7 @@ export default function App() {
     };
   }, [authUser]);
 
-  // Automatically resolve shared invite link when signed in & verified -> show instant alert modal
+  // Automatically resolve shared invite link when signed in -> show instant alert modal
   useEffect(() => {
     if (!initialFriendInviteToken) {
       setInviteModalDoc(null);
@@ -556,7 +562,7 @@ export default function App() {
       setInviteSignInDeferred(false);
       return;
     }
-    if (!authUser || !authUser.emailVerified) {
+    if (!isDuoEligibleUser(authUser)) {
       setInviteModalDoc(null);
       return;
     }
@@ -607,7 +613,7 @@ export default function App() {
   }, [initialFriendInviteToken, authUser, lang]);
 
   const handleConfirmGlobalInvite = async () => {
-    if (!authUser || !authUser.emailVerified || !inviteModalDoc) return;
+    if (!isDuoEligibleUser(authUser) || !inviteModalDoc) return;
     setFriendAlertBusy(true);
     setInviteModalError(null);
     try {
@@ -645,7 +651,7 @@ export default function App() {
   };
 
   const handleApproveGlobalFriendRequest = async (req: FriendRequestDoc) => {
-    if (!authUser || !authUser.emailVerified) return;
+    if (!isDuoEligibleUser(authUser)) return;
     handledIncomingReqIdsRef.current.add(req.requestId);
     setPendingIncomingFriendReqs((prev) => prev.filter((item) => item.requestId !== req.requestId));
     setFriendAlertBusy(true);
@@ -694,7 +700,7 @@ export default function App() {
     dismissBackgroundCallNotification(targetSessionId);
     setIncomingCall(null);
     lastRingingCallIdRef.current = null;
-    if (!auth.currentUser?.emailVerified) return;
+    if (!isDuoEligibleUser(auth.currentUser)) return;
     const callPath = `duoSessions/${targetSessionId}`;
     try {
       await updateDoc(doc(db, 'duoSessions', targetSessionId), {
@@ -710,14 +716,20 @@ export default function App() {
     callRingtone.stop();
     callRingtone.unlockAudio();
     dismissBackgroundCallNotification(targetSessionId);
+    const matchingCall =
+      incomingCall && incomingCall.sessionId === targetSessionId ? incomingCall : null;
     setIncomingCall(null);
     lastRingingCallIdRef.current = null;
+    setPendingAcceptCallData(matchingCall);
     setPendingAcceptCallId(targetSessionId);
     setActiveSection('duo');
   };
 
+  handleAcceptCallRef.current = handleAcceptIncomingCall;
+  handleDeclineCallRef.current = handleDeclineIncomingCall;
+
   useEffect(() => {
-    if (!authUser || !authUser.emailVerified) {
+    if (!isDuoEligibleUser(authUser)) {
       setIncomingCall(null);
       callRingtone.stop();
       return;
@@ -732,7 +744,23 @@ export default function App() {
     const unsubCalls = onSnapshot(
       incomingQuery,
       (snap) => {
-        if (snap.empty) {
+        const now = Date.now();
+        const freshDocs = snap.docs
+          .map((d) => {
+            const raw = d.data() as IncomingDuoCall & {
+              createdAt?: { toMillis?: () => number } | null;
+            };
+            const createdMs =
+              raw.createdAt && typeof raw.createdAt.toMillis === 'function'
+                ? raw.createdAt.toMillis()
+                : now;
+            return { raw, createdMs };
+          })
+          // Ignore orphaned ringing sessions older than 5 minutes
+          .filter((item) => now - item.createdMs <= 300_000)
+          .sort((a, b) => b.createdMs - a.createdMs);
+
+        if (freshDocs.length === 0) {
           if (lastRingingCallIdRef.current) {
             dismissBackgroundCallNotification(lastRingingCallIdRef.current);
             lastRingingCallIdRef.current = null;
@@ -742,8 +770,7 @@ export default function App() {
           return;
         }
 
-        const firstDoc = snap.docs[0];
-        const callData = firstDoc.data() as IncomingDuoCall;
+        const callData = freshDocs[0].raw;
         setIncomingCall(callData);
 
         if (lastRingingCallIdRef.current !== callData.sessionId) {
@@ -788,9 +815,9 @@ export default function App() {
       const msg = event.data;
       if (!msg || msg.type !== 'CALL_NOTIFICATION_ACTION' || !msg.sessionId) return;
       if (msg.action === 'decline') {
-        handleDeclineIncomingCall(msg.sessionId);
+        handleDeclineCallRef.current(msg.sessionId);
       } else {
-        handleAcceptIncomingCall(msg.sessionId);
+        handleAcceptCallRef.current(msg.sessionId);
       }
     };
     navigator.serviceWorker.addEventListener('message', onSwMessage);
@@ -2341,17 +2368,45 @@ export default function App() {
         {/* MUTUN & ADHKAR DEDICATED VIEW */}
         {activeSection === 'mutun' && <MutunAdhkarSection lang={lang} />}
 
-        {/* BROWSER P2P DUO RECITATION DEDICATED VIEW */}
-        {activeSection === 'duo' && (
-          <DuoRecitationSection
-            lang={lang}
-            defaultRiwayah={defaultRiwayah}
-            initialFriendInviteToken={initialFriendInviteToken}
-            onClearFriendInvite={() => setInitialFriendInviteToken('')}
-            pendingAcceptCallId={pendingAcceptCallId}
-            onClearPendingCall={() => setPendingAcceptCallId(null)}
-            onOpenPrivacyTerms={() => setIsPrivacyTermsOpen(true)}
-          />
+        {/* Active Duo Call Return Banner when navigating to other tabs */}
+        {activeDuoCallInfo && activeSection !== 'duo' && (
+          <button
+            type="button"
+            onClick={() => setActiveSection('duo')}
+            className="w-full rounded-2xl bg-[#166534] hover:bg-[#14532D] text-[#FFFDF9] px-4 py-2.5 flex items-center justify-between gap-2 shadow-sm cursor-pointer transition-colors"
+          >
+            <div className="flex items-center gap-2 text-xs sm:text-sm font-extrabold">
+              <PhoneCall className="w-4 h-4 text-[#EAB338] animate-pulse shrink-0" />
+              <span>
+                {lang === 'ar'
+                  ? `مكالمة السرد الثنائي جارية مع ${activeDuoCallInfo.partnerName}`
+                  : `Active Duo Call with ${activeDuoCallInfo.partnerName}`}
+              </span>
+            </div>
+            <span className="px-2.5 py-1 rounded-lg bg-[#FFFDF9]/15 text-[11px] font-bold">
+              {lang === 'ar' ? 'العودة للمكالمة' : 'Return to Call'}
+            </span>
+          </button>
+        )}
+
+        {/* BROWSER P2P DUO RECITATION DEDICATED VIEW (Kept mounted during active call across tab switches) */}
+        {(activeSection === 'duo' || Boolean(activeDuoCallInfo) || Boolean(pendingAcceptCallId)) && (
+          <div className={activeSection === 'duo' ? '' : 'hidden'}>
+            <DuoRecitationSection
+              lang={lang}
+              defaultRiwayah={defaultRiwayah}
+              initialFriendInviteToken={initialFriendInviteToken}
+              onClearFriendInvite={() => setInitialFriendInviteToken('')}
+              pendingAcceptCallId={pendingAcceptCallId}
+              pendingAcceptCallData={pendingAcceptCallData}
+              onClearPendingCall={() => {
+                setPendingAcceptCallId(null);
+                setPendingAcceptCallData(null);
+              }}
+              onOpenPrivacyTerms={() => setIsPrivacyTermsOpen(true)}
+              onActiveCallChange={setActiveDuoCallInfo}
+            />
+          </div>
         )}
 
         {/* APP OWNER DASHBOARD VIEW (Strictly Owner-Verified) */}
@@ -2507,33 +2562,6 @@ export default function App() {
                       className="w-full py-2 px-4 rounded-xl bg-[#EFE9DC] text-[#5C4B3B] text-xs font-bold cursor-pointer"
                     >
                       {lang === 'ar' ? 'إغلاق' : 'Dismiss'}
-                    </button>
-                  </div>
-                </>
-              ) : !authUser.emailVerified ? (
-                <>
-                  <p className="text-xs sm:text-sm text-[#261C14] leading-relaxed font-semibold">
-                    {lang === 'ar'
-                      ? 'فعّل بريدك الإلكتروني من شاشة السرد الثنائي أولاً لتظهر لك بيانات الصديق وتتم الموافقة.'
-                      : 'Verify your email in Duo Sard first to accept this friend invite.'}
-                  </p>
-                  <div className="flex items-center justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setInitialFriendInviteToken('')}
-                      className="px-3.5 py-2 rounded-xl bg-[#EFE9DC] text-[#5C4B3B] text-xs font-bold cursor-pointer"
-                    >
-                      {lang === 'ar' ? 'إلغاء' : 'Cancel'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setInviteSignInDeferred(true);
-                        setActiveSection('duo');
-                      }}
-                      className="px-4 py-2 rounded-xl bg-[#166534] text-[#FFFDF9] text-xs font-bold cursor-pointer"
-                    >
-                      {lang === 'ar' ? 'الانتقال للسرد الثنائي' : 'Go to Duo Sard'}
                     </button>
                   </div>
                 </>

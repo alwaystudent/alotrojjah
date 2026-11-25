@@ -268,6 +268,18 @@
         "iceEpoch": {
           "type": "number"
         },
+        "answerIceEpoch": {
+          "type": "number"
+        },
+        "iceRestartNonce": {
+          "type": "number"
+        },
+        "hostCandidates": {
+          "type": "array"
+        },
+        "guestCandidates": {
+          "type": "array"
+        },
         "endedByUid": {
           "type": "string",
           "maxLength": 128

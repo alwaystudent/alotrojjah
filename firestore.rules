@@ -133,7 +133,8 @@ service cloud.firestore {
           'hideVersesForReciter', 'hideVersesForListener',
           'hostRole', 'guestRole',
           'activeAyah', 'reciterSide', 'mistakesCount', 'markedErrors',
-          'boardHintText', 'boardHintKind', 'boardHintSenderName', 'boardHintSeq', 'iceEpoch',
+          'boardHintText', 'boardHintKind', 'boardHintSenderName', 'boardHintSeq',
+          'iceEpoch', 'answerIceEpoch', 'iceRestartNonce', 'hostCandidates', 'guestCandidates',
           'endedByUid', 'sessionEvaluation', 'callDurationSeconds', 'accuracyPct',
           'surahNumber', 'surahEnd', 'ayahFrom', 'ayahTo', 'pageFrom', 'pageTo',
           'offerType', 'offerSdp', 'answerType', 'answerSdp',
@@ -167,6 +168,18 @@ service cloud.firestore {
         && (!('boardHintSenderName' in data) || data.boardHintSenderName == null || (data.boardHintSenderName is string && data.boardHintSenderName.size() <= 80))
         && (!('boardHintSeq' in data) || (data.boardHintSeq is number && data.boardHintSeq >= 0 && data.boardHintSeq <= 10000))
         && (!('iceEpoch' in data) || (data.iceEpoch is number && data.iceEpoch >= 0 && data.iceEpoch <= 100))
+        && (!('answerIceEpoch' in data) || (data.answerIceEpoch is number && data.answerIceEpoch >= 0 && data.answerIceEpoch <= 100))
+        && (!('iceRestartNonce' in data) || (data.iceRestartNonce is number && data.iceRestartNonce >= 0 && data.iceRestartNonce <= 1000))
+        && (!('hostCandidates' in data) || (
+          data.hostCandidates is list
+          && data.hostCandidates.size() <= 40
+          && (data.hostCandidates.size() == 0 || (data.hostCandidates[0] is string && data.hostCandidates[0].size() >= 1 && data.hostCandidates[0].size() <= 512))
+        ))
+        && (!('guestCandidates' in data) || (
+          data.guestCandidates is list
+          && data.guestCandidates.size() <= 40
+          && (data.guestCandidates.size() == 0 || (data.guestCandidates[0] is string && data.guestCandidates[0].size() >= 1 && data.guestCandidates[0].size() <= 512))
+        ))
         && (!('endedByUid' in data) || data.endedByUid == null || isValidId(data.endedByUid))
         && (!('sessionEvaluation' in data) || data.sessionEvaluation == null || data.sessionEvaluation in ['excellent', 'very_good', 'good_practice', 'needs_review'])
         && (!('callDurationSeconds' in data) || data.callDurationSeconds == null || (data.callDurationSeconds is number && data.callDurationSeconds >= 0 && data.callDurationSeconds <= 86400))
@@ -443,7 +456,16 @@ service cloud.firestore {
             && incoming().status == 'active'
             && incoming().answerType is string
             && incoming().answerSdp is string
-            && incoming().diff(existing()).affectedKeys().hasOnly(['guestUid', 'guestName', 'answerType', 'answerSdp', 'status', 'updatedAt'])
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'guestUid', 'guestName', 'answerType', 'answerSdp', 'answerIceEpoch', 'guestCandidates', 'status', 'updatedAt'
+            ])
+          )
+          ||
+          (
+            existing().status == 'ringing'
+            && incoming().status == 'ringing'
+            && existing().hostUid == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly(['hostCandidates', 'updatedAt'])
           )
           ||
           (
@@ -476,7 +498,8 @@ service cloud.firestore {
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'activeAyah', 'reciterSide', 'mistakesCount', 'markedErrors',
               'boardHintText', 'boardHintKind', 'boardHintSenderName', 'boardHintSeq',
-              'iceEpoch', 'offerType', 'offerSdp', 'answerType', 'answerSdp',
+              'iceEpoch', 'answerIceEpoch', 'iceRestartNonce', 'hostCandidates', 'guestCandidates',
+              'offerType', 'offerSdp', 'answerType', 'answerSdp',
               'hideVersesForReciter', 'hideVersesForListener',
               'hostRole', 'guestRole',
               'riwayah', 'curriculumMode', 'surahNumber', 'surahEnd', 'ayahFrom', 'ayahTo', 'pageFrom', 'pageTo',

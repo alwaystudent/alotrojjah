@@ -91,6 +91,7 @@ import {
   sendConsentFriendRequest,
   approveIncomingFriendRequest,
   declineIncomingFriendRequest,
+  syncAcceptedOutgoingRequest,
   getDisplayNameForUser,
 } from '../utils/friendsDirectory';
 import {
@@ -181,6 +182,10 @@ interface DuoSessionDoc {
   boardHintSenderName?: string;
   boardHintSeq?: number;
   iceEpoch?: number;
+  answerIceEpoch?: number;
+  iceRestartNonce?: number;
+  hostCandidates?: string[];
+  guestCandidates?: string[];
   endedByUid?: string | null;
   sessionEvaluation?: SessionEvaluationRating | null;
   callDurationSeconds?: number | null;
@@ -245,9 +250,7 @@ function buildRtcConfiguration(highPrivacyRelay: boolean): RTCConfiguration {
     iceServers.push(
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun2.l.google.com:19302' },
-      { urls: 'stun:stun3.l.google.com:19302' },
-      { urls: 'stun:stun4.l.google.com:19302' }
+      { urls: 'stun:stun.cloudflare.com:3478' }
     );
   }
 
@@ -307,7 +310,7 @@ function generateEphemeralSessionId(): string {
   return `SARD-${suffix}`;
 }
 
-function waitForIceComplete(pc: RTCPeerConnection, timeoutMs = 1800): Promise<void> {
+function waitForIceComplete(pc: RTCPeerConnection, timeoutMs = 2600): Promise<void> {
   if (pc.iceGatheringState === 'complete') {
     return Promise.resolve();
   }
@@ -547,6 +550,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   const [isMicUnavailable, setIsMicUnavailable] = useState<boolean>(false);
   const [speakerMode, setSpeakerMode] = useState<'speaker' | 'earpiece'>('speaker');
   const [needsAudioUnlock, setNeedsAudioUnlock] = useState<boolean>(false);
+  const [connectingStalled, setConnectingStalled] = useState<boolean>(false);
   const [micLevel, setMicLevel] = useState<number>(0);
   const [copiedInvite, setCopiedInvite] = useState<boolean>(false);
   const [callElapsedSeconds, setCallElapsedSeconds] = useState<number>(0);
@@ -593,6 +597,17 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   const appliedIceAnswerEpochRef = useRef<number>(0);
   const iceRestartInFlightRef = useRef<boolean>(false);
   const lastIceRestartAttemptAtRef = useRef<number>(0);
+  const handledRestartNonceRef = useRef<number>(0);
+  const guestRestartNonceRef = useRef<number>(0);
+  const lastGuestRestartReqAtRef = useRef<number>(0);
+  const localCandidatesRef = useRef<string[]>([]);
+  const flushedCandidatesCountRef = useRef<number>(0);
+  const candidateFlushTimerRef = useRef<number | null>(null);
+  const appliedRemoteCandidatesRef = useRef<Set<string>>(new Set());
+  const pendingRemoteCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
+  const sdpOpChainRef = useRef<Promise<void>>(Promise.resolve());
+  const callAttemptTokenRef = useRef<number>(0);
+  const outgoingRingTimeoutRef = useRef<number | null>(null);
   const micRecoveryInFlightRef = useRef<boolean>(false);
   const micFallbackModeRef = useRef<boolean>(false);
   const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null);
@@ -679,7 +694,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     try {
       if (typeof MediaMetadata !== 'undefined') {
         navigator.mediaSession.metadata = new MediaMetadata({
-          title: isAr ? 'السرد الثنائي المباشر — مشكاة السرد' : 'Duo Recitation — Mishkat Al-Sard',
+          title: isAr ? 'السرد الثنائي المباشر — منصة الأترجة' : 'Duo Recitation — Al-Utrujjah',
           artist:
             myRoleInCall === 'host'
               ? sessionMeta?.guestName || outgoingCallTargetName || (isAr ? 'مكالمة تسميع' : 'Voice Call')
@@ -691,6 +706,112 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       // MediaSession optional
     }
   }, [sessionId, myRoleInCall, sessionMeta?.hostName, sessionMeta?.guestName, outgoingCallTargetName, isAr]);
+
+  const enqueueSdpOp = (fn: () => Promise<void>): Promise<void> => {
+    const next = sdpOpChainRef.current.then(fn, fn);
+    sdpOpChainRef.current = next.catch(() => {});
+    return next;
+  };
+
+  const flushLocalIceCandidates = async () => {
+    const activeCallId = sessionIdRef.current;
+    const status = sessionStatusRef.current;
+    if (!activeCallId || !auth.currentUser) return;
+    if (status !== 'ringing' && status !== 'active') return;
+    if (myRoleRef.current === 'guest' && status !== 'active') return;
+
+    const list = localCandidatesRef.current.slice(0, 40);
+    if (list.length === 0 || list.length <= flushedCandidatesCountRef.current) return;
+    flushedCandidatesCountRef.current = list.length;
+
+    const field = myRoleRef.current === 'host' ? 'hostCandidates' : 'guestCandidates';
+    try {
+      await updateDoc(doc(db, 'duoSessions', activeCallId), {
+        [field]: list,
+        updatedAt: serverTimestamp(),
+      });
+    } catch {
+      // Non-fatal; next flush or snapshot will retry if needed
+    }
+  };
+
+  const queueLocalIceCandidate = (candidate: RTCIceCandidate) => {
+    try {
+      const jsonStr = JSON.stringify(candidate.toJSON());
+      if (!jsonStr || jsonStr.length > 512) return;
+      if (localCandidatesRef.current.length >= 40) return;
+      if (localCandidatesRef.current.includes(jsonStr)) return;
+      localCandidatesRef.current.push(jsonStr);
+
+      if (sessionIdRef.current) {
+        if (candidateFlushTimerRef.current !== null) {
+          window.clearTimeout(candidateFlushTimerRef.current);
+        }
+        candidateFlushTimerRef.current = window.setTimeout(() => {
+          candidateFlushTimerRef.current = null;
+          void flushLocalIceCandidates();
+        }, 250);
+      }
+    } catch {
+      // ignore invalid candidate
+    }
+  };
+
+  const drainPendingRemoteCandidates = async (pc: RTCPeerConnection | null) => {
+    if (!pc || pc.connectionState === 'closed' || !pc.remoteDescription) return;
+    const queued = pendingRemoteCandidatesRef.current.splice(0);
+    for (const candInit of queued) {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candInit));
+      } catch {
+        // ignore obsolete candidate from prior epoch
+      }
+    }
+  };
+
+  const applyRemoteIceCandidates = async (
+    pc: RTCPeerConnection | null,
+    rawCandidates?: string[] | null
+  ) => {
+    if (!pc || pc.connectionState === 'closed' || !Array.isArray(rawCandidates)) return;
+    for (const raw of rawCandidates) {
+      if (typeof raw !== 'string' || !raw || appliedRemoteCandidatesRef.current.has(raw)) continue;
+      appliedRemoteCandidatesRef.current.add(raw);
+      try {
+        const parsed = JSON.parse(raw) as RTCIceCandidateInit;
+        if (pc.remoteDescription) {
+          await pc.addIceCandidate(new RTCIceCandidate(parsed)).catch(() => {});
+        } else {
+          pendingRemoteCandidatesRef.current.push(parsed);
+        }
+      } catch {
+        // ignore malformed candidate string
+      }
+    }
+  };
+
+  const requestGuestIceRestart = async (targetPc?: RTCPeerConnection | null) => {
+    const pc = targetPc ?? pcRef.current;
+    const activeCallId = sessionIdRef.current;
+    if (!pc || !activeCallId || !auth.currentUser) return;
+    if (myRoleRef.current !== 'guest') return;
+    if (sessionStatusRef.current !== 'active') return;
+    if (pc.connectionState === 'closed') return;
+    const now = Date.now();
+    if (now - lastGuestRestartReqAtRef.current < 6000) return;
+    if (guestRestartNonceRef.current >= 999) return;
+    lastGuestRestartReqAtRef.current = now;
+    const nextNonce = guestRestartNonceRef.current + 1;
+    guestRestartNonceRef.current = nextNonce;
+    try {
+      await updateDoc(doc(db, 'duoSessions', activeCallId), {
+        iceRestartNonce: nextNonce,
+        updatedAt: serverTimestamp(),
+      });
+    } catch {
+      // Non-fatal
+    }
+  };
 
   // Helper to recover local microphone track automatically if OS/Bluetooth/hardware stops it mid-call
   const recoverLocalMicrophoneTrack = async (forceInteractive = false) => {
@@ -775,6 +896,8 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
 
     try {
       await recoverLocalMicrophoneTrack();
+      localCandidatesRef.current = [];
+      flushedCandidatesCountRef.current = 0;
       const restartOffer = await pc.createOffer({
         iceRestart: true,
         offerToReceiveAudio: true,
@@ -788,7 +911,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       } catch {
         await pc.setLocalDescription(restartOffer);
       }
-      await waitForIceComplete(pc, 3500);
+      await waitForIceComplete(pc, 2600);
 
       if (pcRef.current !== pc || sessionIdRef.current !== activeCallId) return;
       const finalOffer = pc.localDescription;
@@ -796,10 +919,13 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
 
       const nextEpoch = iceEpochRef.current + 1;
       iceEpochRef.current = nextEpoch;
+      const initialCandidates = localCandidatesRef.current.slice(0, 40);
+      flushedCandidatesCountRef.current = initialCandidates.length;
       await updateDoc(doc(db, 'duoSessions', activeCallId), {
         iceEpoch: nextEpoch,
         offerType: finalOffer.type || 'offer',
         offerSdp: finalOffer.sdp,
+        hostCandidates: initialCandidates,
         updatedAt: serverTimestamp(),
       });
     } catch {
@@ -907,6 +1033,32 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       }
     };
   }, [sessionId]);
+
+  // Automatically unlock incoming audio on next touch/click if browser autoplay blocked playback
+  useEffect(() => {
+    if (!needsAudioUnlock || !sessionId) return;
+    const unlockOnGesture = () => {
+      syncRemoteAudioTracksToMediaElement();
+    };
+    document.addEventListener('pointerdown', unlockOnGesture, { once: true, passive: true });
+    document.addEventListener('touchstart', unlockOnGesture, { once: true, passive: true });
+    return () => {
+      document.removeEventListener('pointerdown', unlockOnGesture);
+      document.removeEventListener('touchstart', unlockOnGesture);
+    };
+  }, [needsAudioUnlock, sessionId]);
+
+  // Surface a friendly Reconnect Audio action if P2P ICE negotiation takes >10s
+  useEffect(() => {
+    if (!sessionId || peerConnState !== 'connecting') {
+      setConnectingStalled(false);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setConnectingStalled(true);
+    }, 10_000);
+    return () => window.clearTimeout(timer);
+  }, [sessionId, peerConnState]);
 
   const currentSurahInfo = useMemo(
     () => SURAH_LIST.find((s) => s.number === selectedSurah) || SURAH_LIST[0],
@@ -1092,6 +1244,11 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       (snap) => {
         const allOut = snap.docs.map((d) => d.data() as FriendRequestDoc);
         setOutgoingPendingRequests(allOut.filter((r) => r.status === 'pending'));
+        allOut
+          .filter((r) => r.status === 'accepted' && !r.syncedBySender)
+          .forEach((r) => {
+            void syncAcceptedOutgoingRequest(user, r).catch(() => {});
+          });
       },
       (err) => {
         logFirestoreListenerError(err, OperationType.LIST, 'friendRequests');
@@ -1107,6 +1264,14 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
 
   const teardownWebRtcResources = (skipStateReset = false) => {
     callRingtone.stop();
+    if (outgoingRingTimeoutRef.current !== null) {
+      window.clearTimeout(outgoingRingTimeoutRef.current);
+      outgoingRingTimeoutRef.current = null;
+    }
+    if (candidateFlushTimerRef.current !== null) {
+      window.clearTimeout(candidateFlushTimerRef.current);
+      candidateFlushTimerRef.current = null;
+    }
     if (unsubSessionRef.current) {
       try {
         unsubSessionRef.current();
@@ -1153,6 +1318,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       const pc = pcRef.current;
       pc.ontrack = null;
       pc.ondatachannel = null;
+      pc.onicecandidate = null;
       pc.oniceconnectionstatechange = null;
       pc.onconnectionstatechange = null;
       try {
@@ -1218,6 +1384,14 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     appliedIceAnswerEpochRef.current = 0;
     iceRestartInFlightRef.current = false;
     lastIceRestartAttemptAtRef.current = 0;
+    handledRestartNonceRef.current = 0;
+    guestRestartNonceRef.current = 0;
+    lastGuestRestartReqAtRef.current = 0;
+    localCandidatesRef.current = [];
+    flushedCandidatesCountRef.current = 0;
+    appliedRemoteCandidatesRef.current.clear();
+    pendingRemoteCandidatesRef.current = [];
+    sdpOpChainRef.current = Promise.resolve();
     micRecoveryInFlightRef.current = false;
     micFallbackModeRef.current = false;
     appliedSinkIdRef.current = '';
@@ -1228,6 +1402,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     if (!skipStateReset && isMountedRef.current) {
       setSpeakerMode('speaker');
       setNeedsAudioUnlock(false);
+      setConnectingStalled(false);
       setMicLevel(0);
       setIsMicMuted(false);
       setIsMicUnavailable(false);
@@ -1277,7 +1452,12 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         if (!cancelled) {
           setVerses(result.verses);
           setActiveUsedSource(result.usedSource);
-          setActiveAyah(result.verses[0]?.ayahNumber || sessionMeta.ayahFrom || 1);
+          const preservedAyah =
+            sessionMeta.activeAyah &&
+            result.verses.some((v) => v.ayahNumber === sessionMeta.activeAyah)
+              ? sessionMeta.activeAyah
+              : result.verses[0]?.ayahNumber || sessionMeta.ayahFrom || 1;
+          setActiveAyah(preservedAyah);
         }
       } catch {
         if (!cancelled) {
@@ -1892,7 +2072,10 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     }
   }, [sessionId, peerConnState]);
 
-  const setupPeerConnection = (stream: MediaStream | null): RTCPeerConnection => {
+  const setupPeerConnection = (
+    stream: MediaStream | null,
+    options?: { isAnswerer?: boolean }
+  ): RTCPeerConnection => {
     const pc = new RTCPeerConnection(buildRtcConfiguration(highPrivacyRef.current));
     pcRef.current = pc;
 
@@ -1910,13 +2093,19 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
           // Sender bitrate tuning optional
         }
       });
-    } else {
+    } else if (!options?.isAnswerer) {
       try {
         pc.addTransceiver('audio', { direction: 'sendrecv' });
       } catch {
         // Transceiver optional
       }
     }
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        queueLocalIceCandidate(event.candidate);
+      }
+    };
 
     pc.ontrack = (event) => {
       syncRemoteAudioTracksToMediaElement(event, pc);
@@ -1949,8 +2138,15 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
           window.clearTimeout(iceRestartTimerRef.current);
           iceRestartTimerRef.current = null;
         }
+        callRingtone.stop();
+        setOutgoingCallTargetName(null);
+        setConnectingStalled(false);
+        if (pc.connectionState === 'connected' || !('connectionState' in pc)) {
+          setPeerConnState('connected');
+        }
         syncRemoteAudioTracksToMediaElement(undefined, pc);
       } else if (iceState === 'disconnected' || iceState === 'failed') {
+        const delayMs = iceState === 'failed' ? 600 : 2500;
         if (iceRestartTimerRef.current === null) {
           iceRestartTimerRef.current = window.setTimeout(() => {
             iceRestartTimerRef.current = null;
@@ -1961,14 +2157,10 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
               if (myRoleRef.current === 'host') {
                 void attemptHostIceRestart(pc);
               } else {
-                try {
-                  pc.restartIce?.();
-                } catch {
-                  // ignore
-                }
+                void requestGuestIceRestart(pc);
               }
             }
-          }, 2000);
+          }, delayMs);
         }
       }
     };
@@ -1978,6 +2170,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       if (state === 'connected') {
         callRingtone.stop();
         setOutgoingCallTargetName(null);
+        setConnectingStalled(false);
         setPeerConnState('connected');
         syncRemoteAudioTracksToMediaElement(undefined, pc);
       } else if (state === 'connecting' || state === 'new') {
@@ -1988,11 +2181,13 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
           prev === 'ended' || prev === 'declined' ? prev : 'connecting'
         );
       } else if (state === 'failed') {
-        // Attempt graceful ICE restart on Host rather than dropping voice call
+        // Attempt graceful ICE restart rather than dropping voice call
         if (sessionIdRef.current && sessionStatusRef.current === 'active') {
           setPeerConnState('connecting');
           if (myRoleRef.current === 'host') {
             void attemptHostIceRestart(pc);
+          } else {
+            void requestGuestIceRestart(pc);
           }
         } else {
           callRingtone.stop();
@@ -2100,6 +2295,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       );
       return;
     }
+    const myAttemptToken = ++callAttemptTokenRef.current;
     callRingtone.unlockAudio();
     teardownWebRtcResources();
     setLobbyError(null);
@@ -2111,11 +2307,14 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     const sessionPath = `duoSessions/${newSessionId}`;
 
     try {
-      // Ensure Firebase ID token carries fresh email_verified claim before signaling write
       await currentUser.getIdToken(false).catch(() => {});
 
       const stream = await acquireMicrophoneOptional();
-      const pc = setupPeerConnection(stream);
+      if (callAttemptTokenRef.current !== myAttemptToken || !isMountedRef.current) {
+        teardownWebRtcResources();
+        return;
+      }
+      const pc = setupPeerConnection(stream, { isAnswerer: false });
 
       const offer = await pc.createOffer({ offerToReceiveAudio: true });
       const tunedOffer: RTCSessionDescriptionInit = {
@@ -2127,7 +2326,12 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       } catch {
         await pc.setLocalDescription(offer);
       }
-      await waitForIceComplete(pc, 1800);
+      await waitForIceComplete(pc, 2600);
+
+      if (callAttemptTokenRef.current !== myAttemptToken || !isMountedRef.current) {
+        teardownWebRtcResources();
+        return;
+      }
 
       const finalDesc = pc.localDescription;
       if (!finalDesc || !finalDesc.sdp) {
@@ -2154,6 +2358,9 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         ? initListenerRole === 'student'
         : hideVersesForListener;
 
+      const initialHostCandidates = localCandidatesRef.current.slice(0, 40);
+      flushedCandidatesCountRef.current = initialHostCandidates.length;
+
       const callPayload: Record<string, unknown> = {
         sessionId: newSessionId,
         hostUid: currentUser.uid,
@@ -2163,6 +2370,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         ...currFields,
         offerType: finalDesc.type || 'offer',
         offerSdp: finalDesc.sdp,
+        hostCandidates: initialHostCandidates,
         hideVersesForReciter: effectiveInitHideReciter,
         hideVersesForListener: effectiveInitHideListener,
         hostRole: hostAppRole,
@@ -2176,6 +2384,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         boardHintSenderName: '',
         boardHintSeq: 0,
         iceEpoch: 0,
+        iceRestartNonce: 0,
         status: 'ringing',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -2185,10 +2394,23 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         setDoc(doc(db, 'duoSessions', newSessionId), callPayload)
       );
 
+      if (callAttemptTokenRef.current !== myAttemptToken || !isMountedRef.current) {
+        await updateDoc(doc(db, 'duoSessions', newSessionId), {
+          status: 'ended',
+          updatedAt: serverTimestamp(),
+        }).catch(() => {});
+        teardownWebRtcResources();
+        return;
+      }
+
       iceEpochRef.current = 0;
       appliedIceOfferEpochRef.current = 0;
       appliedIceAnswerEpochRef.current = 0;
+      handledRestartNonceRef.current = 0;
       iceRestartInFlightRef.current = false;
+      myRoleRef.current = 'host';
+      sessionIdRef.current = newSessionId;
+      sessionStatusRef.current = 'ringing';
       setMyRoleInCall('host');
       setSessionId(newSessionId);
       setSessionMeta(callPayload as unknown as DuoSessionDoc);
@@ -2207,93 +2429,149 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       setPeerConnState('ringing');
       callRingtone.start('outgoing');
 
+      if (localCandidatesRef.current.length > flushedCandidatesCountRef.current) {
+        void flushLocalIceCandidates();
+      }
+
+      if (outgoingRingTimeoutRef.current !== null) {
+        window.clearTimeout(outgoingRingTimeoutRef.current);
+      }
+      outgoingRingTimeoutRef.current = window.setTimeout(() => {
+        outgoingRingTimeoutRef.current = null;
+        if (
+          sessionIdRef.current === newSessionId &&
+          sessionStatusRef.current === 'ringing' &&
+          isMountedRef.current
+        ) {
+          void handleEndCall(true);
+          setLobbyError(
+            isAr
+              ? `لم يرد «${targetFriend.friendName}» على المكالمة.`
+              : `"${targetFriend.friendName}" did not answer the call.`
+          );
+        }
+      }, 60_000);
+
       unsubSessionRef.current = onSnapshot(
         doc(db, 'duoSessions', newSessionId),
-        async (snap) => {
-          if (!snap.exists()) {
-            teardownWebRtcResources();
-            setShowEvalModal(false);
-            setSessionId(null);
-            setSessionMeta(null);
-            setPeerConnState('idle');
-            return;
-          }
-          const data = snap.data() as DuoSessionDoc;
-          setSessionMeta(data);
-
-          if (data.status === 'declined') {
-            callRingtone.stop();
-            setOutgoingCallTargetName(null);
-            teardownWebRtcResources();
-            setShowEvalModal(false);
-            setSessionId(null);
-            setSessionMeta(null);
-            setPeerConnState('idle');
-            setLobbyError(
-              isAr ? `اعتذر «${targetFriend.friendName}» عن المكالمة.` : `${targetFriend.friendName} declined the call.`
-            );
-            return;
-          }
-
-          if (data.status === 'ended') {
-            callRingtone.stop();
-            setOutgoingCallTargetName(null);
-            teardownWebRtcResources();
-            if (data.sessionEvaluation) {
-              setLastCallSummary({
-                partnerName: data.guestName || targetFriend.friendName,
-                evaluation: data.sessionEvaluation,
-                durationSeconds: data.callDurationSeconds ?? 0,
-                mistakesCount: data.mistakesCount ?? 0,
-                accuracyPct: data.accuracyPct ?? 100,
-              });
+        (snap) => {
+          void enqueueSdpOp(async () => {
+            if (sessionIdRef.current !== newSessionId) return;
+            if (!snap.exists()) {
+              teardownWebRtcResources();
+              setShowEvalModal(false);
+              setSessionId(null);
+              setSessionMeta(null);
+              setPeerConnState('idle');
+              return;
             }
-            setShowEvalModal(false);
-            setSessionId(null);
-            setSessionMeta(null);
-            setPeerConnState('idle');
-            return;
-          }
+            const data = snap.data() as DuoSessionDoc;
+            sessionStatusRef.current = data.status;
+            setSessionMeta(data);
 
-          if (data.status === 'active') {
-            callRingtone.stop();
-            setOutgoingCallTargetName(null);
-            setPeerConnState((prev) => (prev === 'ringing' ? 'connecting' : prev));
-            applySyncedSessionSnapshot(data);
-          }
-
-          const remoteAnswerEpoch = typeof data.iceEpoch === 'number' ? data.iceEpoch : 0;
-          const isInitialAnswer = !remoteAnswerAppliedRef.current;
-          const isRestartAnswer =
-            remoteAnswerEpoch > 0 &&
-            remoteAnswerEpoch === iceEpochRef.current &&
-            remoteAnswerEpoch > appliedIceAnswerEpochRef.current;
-
-          if (
-            data.status === 'active' &&
-            data.answerSdp &&
-            data.answerType &&
-            (isInitialAnswer || isRestartAnswer) &&
-            pcRef.current
-          ) {
-            remoteAnswerAppliedRef.current = true;
-            if (remoteAnswerEpoch > appliedIceAnswerEpochRef.current) {
-              appliedIceAnswerEpochRef.current = remoteAnswerEpoch;
+            if (data.status !== 'ringing' && outgoingRingTimeoutRef.current !== null) {
+              window.clearTimeout(outgoingRingTimeoutRef.current);
+              outgoingRingTimeoutRef.current = null;
             }
-            callRingtone.stop();
-            setOutgoingCallTargetName(null);
-            setPeerConnState((prev) => (prev === 'connected' ? 'connected' : 'connecting'));
-            try {
-              await pcRef.current.setRemoteDescription(
-                new RTCSessionDescription({
-                  type: data.answerType as RTCSdpType,
-                  sdp: data.answerSdp,
-                })
+
+            if (data.status === 'declined') {
+              callRingtone.stop();
+              setOutgoingCallTargetName(null);
+              teardownWebRtcResources();
+              setShowEvalModal(false);
+              setSessionId(null);
+              setSessionMeta(null);
+              setPeerConnState('idle');
+              setLobbyError(
+                isAr
+                  ? `اعتذر «${targetFriend.friendName}» عن المكالمة.`
+                  : `${targetFriend.friendName} declined the call.`
               );
-            } catch {
-              if (isInitialAnswer) remoteAnswerAppliedRef.current = false;
+              return;
             }
-          }
+
+            if (data.status === 'ended') {
+              callRingtone.stop();
+              setOutgoingCallTargetName(null);
+              teardownWebRtcResources();
+              if (data.sessionEvaluation) {
+                setLastCallSummary({
+                  partnerName: data.guestName || targetFriend.friendName,
+                  evaluation: data.sessionEvaluation,
+                  durationSeconds: data.callDurationSeconds ?? 0,
+                  mistakesCount: data.mistakesCount ?? 0,
+                  accuracyPct: data.accuracyPct ?? 100,
+                });
+              }
+              setShowEvalModal(false);
+              setSessionId(null);
+              setSessionMeta(null);
+              setPeerConnState('idle');
+              return;
+            }
+
+            if (data.status === 'active') {
+              callRingtone.stop();
+              setOutgoingCallTargetName(null);
+              setPeerConnState((prev) => (prev === 'ringing' ? 'connecting' : prev));
+              applySyncedSessionSnapshot(data);
+            }
+
+            const activePc = pcRef.current;
+            if (!activePc || activePc.connectionState === 'closed') return;
+
+            const remoteAnswerEpoch =
+              typeof data.answerIceEpoch === 'number'
+                ? data.answerIceEpoch
+                : data.answerSdp
+                ? 0
+                : -1;
+            const isInitialAnswer = !remoteAnswerAppliedRef.current;
+            const isRestartAnswer =
+              remoteAnswerEpoch > 0 &&
+              remoteAnswerEpoch === iceEpochRef.current &&
+              remoteAnswerEpoch > appliedIceAnswerEpochRef.current;
+
+            if (
+              data.status === 'active' &&
+              data.answerSdp &&
+              data.answerType &&
+              (isInitialAnswer || isRestartAnswer) &&
+              activePc.signalingState === 'have-local-offer'
+            ) {
+              remoteAnswerAppliedRef.current = true;
+              if (remoteAnswerEpoch > appliedIceAnswerEpochRef.current) {
+                appliedIceAnswerEpochRef.current = remoteAnswerEpoch;
+              }
+              callRingtone.stop();
+              setOutgoingCallTargetName(null);
+              setPeerConnState((prev) => (prev === 'connected' ? 'connected' : 'connecting'));
+              try {
+                await activePc.setRemoteDescription(
+                  new RTCSessionDescription({
+                    type: data.answerType as RTCSdpType,
+                    sdp: data.answerSdp,
+                  })
+                );
+                await drainPendingRemoteCandidates(activePc);
+              } catch {
+                if (isInitialAnswer) remoteAnswerAppliedRef.current = false;
+              }
+            }
+
+            if (Array.isArray(data.guestCandidates) && data.guestCandidates.length > 0) {
+              await applyRemoteIceCandidates(activePc, data.guestCandidates);
+            }
+
+            if (
+              data.status === 'active' &&
+              typeof data.iceRestartNonce === 'number' &&
+              data.iceRestartNonce > handledRestartNonceRef.current
+            ) {
+              handledRestartNonceRef.current = data.iceRestartNonce;
+              void attemptHostIceRestart(activePc);
+            }
+          });
         },
         (err) => {
           console.error('Host session listener error:', err);
@@ -2345,6 +2623,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   ) => {
     const currentUser = auth.currentUser ?? user;
     if (!currentUser) return;
+    const myAttemptToken = ++callAttemptTokenRef.current;
     callRingtone.stop();
     callRingtone.unlockAudio();
 
@@ -2372,6 +2651,11 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
           getDoc(doc(db, 'duoSessions', cleanId))
         );
 
+        if (callAttemptTokenRef.current !== myAttemptToken || !isMountedRef.current) {
+          teardownWebRtcResources();
+          return;
+        }
+
         if (!snap.exists()) {
           setLobbyError(
             isAr
@@ -2394,7 +2678,11 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       }
 
       const stream = await acquireMicrophoneOptional();
-      const pc = setupPeerConnection(stream);
+      if (callAttemptTokenRef.current !== myAttemptToken || !isMountedRef.current) {
+        teardownWebRtcResources();
+        return;
+      }
+      const pc = setupPeerConnection(stream, { isAnswerer: true });
 
       await pc.setRemoteDescription(
         new RTCSessionDescription({
@@ -2402,6 +2690,10 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
           sdp: callData.offerSdp,
         })
       );
+
+      if (Array.isArray(callData.hostCandidates) && callData.hostCandidates.length > 0) {
+        await applyRemoteIceCandidates(pc, callData.hostCandidates);
+      }
 
       const answer = await pc.createAnswer();
       const tunedAnswer: RTCSessionDescriptionInit = {
@@ -2413,7 +2705,12 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       } catch {
         await pc.setLocalDescription(answer);
       }
-      await waitForIceComplete(pc, 1800);
+      await waitForIceComplete(pc, 2600);
+
+      if (callAttemptTokenRef.current !== myAttemptToken || !isMountedRef.current) {
+        teardownWebRtcResources();
+        return;
+      }
 
       const finalAnswer = pc.localDescription;
       if (!finalAnswer || !finalAnswer.sdp) {
@@ -2423,6 +2720,9 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       }
 
       const guestDisplayName = getDisplayNameForUser(currentUser);
+      const initialOfferEpoch = typeof callData.iceEpoch === 'number' ? callData.iceEpoch : 0;
+      const initialGuestCandidates = localCandidatesRef.current.slice(0, 40);
+      flushedCandidatesCountRef.current = initialGuestCandidates.length;
 
       await runWithVerifiedTokenRetry(() =>
         updateDoc(doc(db, 'duoSessions', cleanId), {
@@ -2430,105 +2730,136 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
           guestName: guestDisplayName,
           answerType: finalAnswer.type || 'answer',
           answerSdp: finalAnswer.sdp,
+          answerIceEpoch: initialOfferEpoch,
+          guestCandidates: initialGuestCandidates,
           status: 'active',
           updatedAt: serverTimestamp(),
         })
       );
 
+      if (callAttemptTokenRef.current !== myAttemptToken || !isMountedRef.current) {
+        teardownWebRtcResources();
+        return;
+      }
+
       dismissBackgroundCallNotification(cleanId);
-      iceEpochRef.current = typeof callData.iceEpoch === 'number' ? callData.iceEpoch : 0;
-      appliedIceOfferEpochRef.current = iceEpochRef.current;
-      appliedIceAnswerEpochRef.current = iceEpochRef.current;
+      iceEpochRef.current = initialOfferEpoch;
+      appliedIceOfferEpochRef.current = initialOfferEpoch;
+      appliedIceAnswerEpochRef.current = initialOfferEpoch;
+      guestRestartNonceRef.current =
+        typeof callData.iceRestartNonce === 'number' ? callData.iceRestartNonce : 0;
+      myRoleRef.current = 'guest';
+      sessionIdRef.current = cleanId;
+      sessionStatusRef.current = 'active';
       setMyRoleInCall('guest');
       setSessionId(cleanId);
       setSessionMeta({
         ...callData,
         guestUid: currentUser.uid,
         guestName: guestDisplayName,
+        answerIceEpoch: initialOfferEpoch,
         status: 'active',
       });
       applySyncedSessionSnapshot(callData);
       setOutgoingCallTargetName(null);
-      setPeerConnState('connecting');
+      setPeerConnState((prev) => (prev === 'connected' ? 'connected' : 'connecting'));
+
+      if (localCandidatesRef.current.length > flushedCandidatesCountRef.current) {
+        void flushLocalIceCandidates();
+      }
 
       unsubSessionRef.current = onSnapshot(
         doc(db, 'duoSessions', cleanId),
-        async (nextSnap) => {
-          if (!nextSnap.exists()) {
-            teardownWebRtcResources();
-            setShowEvalModal(false);
-            setSessionId(null);
-            setSessionMeta(null);
-            setPeerConnState('idle');
-            return;
-          }
-          const updated = nextSnap.data() as DuoSessionDoc;
-          setSessionMeta(updated);
-          if (updated.status === 'ended' || updated.status === 'declined') {
-            teardownWebRtcResources();
-            if (updated.status === 'ended' && updated.sessionEvaluation) {
-              setLastCallSummary({
-                partnerName: updated.hostName,
-                evaluation: updated.sessionEvaluation,
-                durationSeconds: updated.callDurationSeconds ?? 0,
-                mistakesCount: updated.mistakesCount ?? 0,
-                accuracyPct: updated.accuracyPct ?? 100,
-              });
+        (nextSnap) => {
+          void enqueueSdpOp(async () => {
+            if (sessionIdRef.current !== cleanId) return;
+            if (!nextSnap.exists()) {
+              teardownWebRtcResources();
+              setShowEvalModal(false);
+              setSessionId(null);
+              setSessionMeta(null);
+              setPeerConnState('idle');
+              return;
             }
-            setShowEvalModal(false);
-            setSessionId(null);
-            setSessionMeta(null);
-            setPeerConnState('idle');
-            return;
-          }
-          if (updated.status === 'active') {
-            applySyncedSessionSnapshot(updated);
+            const updated = nextSnap.data() as DuoSessionDoc;
+            sessionStatusRef.current = updated.status;
+            setSessionMeta(updated);
+            if (updated.status === 'ended' || updated.status === 'declined') {
+              teardownWebRtcResources();
+              if (updated.status === 'ended' && updated.sessionEvaluation) {
+                setLastCallSummary({
+                  partnerName: updated.hostName,
+                  evaluation: updated.sessionEvaluation,
+                  durationSeconds: updated.callDurationSeconds ?? 0,
+                  mistakesCount: updated.mistakesCount ?? 0,
+                  accuracyPct: updated.accuracyPct ?? 100,
+                });
+              }
+              setShowEvalModal(false);
+              setSessionId(null);
+              setSessionMeta(null);
+              setPeerConnState('idle');
+              return;
+            }
+            if (updated.status === 'active') {
+              applySyncedSessionSnapshot(updated);
+              const activePc = pcRef.current;
+              if (!activePc || activePc.connectionState === 'closed') return;
 
-            const incomingEpoch = typeof updated.iceEpoch === 'number' ? updated.iceEpoch : 0;
-            if (
-              incomingEpoch > appliedIceOfferEpochRef.current &&
-              updated.offerSdp &&
-              updated.offerType &&
-              pcRef.current &&
-              pcRef.current.connectionState !== 'closed'
-            ) {
-              appliedIceOfferEpochRef.current = incomingEpoch;
-              iceEpochRef.current = incomingEpoch;
-              try {
-                const activePc = pcRef.current;
-                await recoverLocalMicrophoneTrack();
-                await activePc.setRemoteDescription(
-                  new RTCSessionDescription({
-                    type: updated.offerType as RTCSdpType,
-                    sdp: updated.offerSdp,
-                  })
-                );
-                const restartAnswer = await activePc.createAnswer();
-                const tunedRestartAnswer: RTCSessionDescriptionInit = {
-                  type: restartAnswer.type,
-                  sdp: tuneOpusSdpForVoice(restartAnswer.sdp),
-                };
+              const incomingEpoch = typeof updated.iceEpoch === 'number' ? updated.iceEpoch : 0;
+              if (
+                incomingEpoch > appliedIceOfferEpochRef.current &&
+                updated.offerSdp &&
+                updated.offerType
+              ) {
+                appliedIceOfferEpochRef.current = incomingEpoch;
+                iceEpochRef.current = incomingEpoch;
                 try {
-                  await activePc.setLocalDescription(tunedRestartAnswer);
+                  await recoverLocalMicrophoneTrack();
+                  localCandidatesRef.current = [];
+                  flushedCandidatesCountRef.current = 0;
+                  await activePc.setRemoteDescription(
+                    new RTCSessionDescription({
+                      type: updated.offerType as RTCSdpType,
+                      sdp: updated.offerSdp,
+                    })
+                  );
+                  await drainPendingRemoteCandidates(activePc);
+                  const restartAnswer = await activePc.createAnswer();
+                  const tunedRestartAnswer: RTCSessionDescriptionInit = {
+                    type: restartAnswer.type,
+                    sdp: tuneOpusSdpForVoice(restartAnswer.sdp),
+                  };
+                  try {
+                    await activePc.setLocalDescription(tunedRestartAnswer);
+                  } catch {
+                    await activePc.setLocalDescription(restartAnswer);
+                  }
+                  await waitForIceComplete(activePc, 2600);
+                  const finalRestartAnswer = activePc.localDescription;
+                  if (finalRestartAnswer?.sdp && pcRef.current === activePc) {
+                    appliedIceAnswerEpochRef.current = incomingEpoch;
+                    const restartCandidates = localCandidatesRef.current.slice(0, 40);
+                    flushedCandidatesCountRef.current = restartCandidates.length;
+                    await updateDoc(doc(db, 'duoSessions', cleanId), {
+                      iceEpoch: incomingEpoch,
+                      answerIceEpoch: incomingEpoch,
+                      answerType: finalRestartAnswer.type || 'answer',
+                      answerSdp: finalRestartAnswer.sdp,
+                      guestCandidates: restartCandidates,
+                      updatedAt: serverTimestamp(),
+                    });
+                  }
                 } catch {
-                  await activePc.setLocalDescription(restartAnswer);
+                  // Allow next offer epoch retry
                 }
-                await waitForIceComplete(activePc, 1800);
-                const finalRestartAnswer = activePc.localDescription;
-                if (finalRestartAnswer?.sdp && pcRef.current === activePc) {
-                  appliedIceAnswerEpochRef.current = incomingEpoch;
-                  await updateDoc(doc(db, 'duoSessions', cleanId), {
-                    iceEpoch: incomingEpoch,
-                    answerType: finalRestartAnswer.type || 'answer',
-                    answerSdp: finalRestartAnswer.sdp,
-                    updatedAt: serverTimestamp(),
-                  });
-                }
-              } catch {
-                // Allow next offer epoch retry
+              }
+
+              if (Array.isArray(updated.hostCandidates) && updated.hostCandidates.length > 0) {
+                await applyRemoteIceCandidates(activePc, updated.hostCandidates);
               }
             }
-          }
+          });
         },
         (err) => {
           console.error('Guest session listener error:', err);
@@ -2623,6 +2954,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       accuracyPct: number;
     }
   ) => {
+    callAttemptTokenRef.current += 1;
     const activeCallId = sessionIdRef.current;
     const currentMeta = sessionMeta;
 
@@ -4025,6 +4357,27 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
             </div>
 
             {/* Clean Controls Bar (Mute, Speaker/Earpiece, Curriculum, Swap Roles, Rate & End) */}
+            {connectingStalled && peerConnState === 'connecting' && (
+              <button
+                type="button"
+                onClick={() => {
+                  syncRemoteAudioTracksToMediaElement();
+                  if (myRoleRef.current === 'host') {
+                    void attemptHostIceRestart();
+                  } else {
+                    void requestGuestIceRestart();
+                  }
+                }}
+                className="w-full py-2 px-3 rounded-xl bg-[#FBF3DF] hover:bg-[#F3E2BA] border border-[#C88A14] text-[#9E650C] text-xs font-extrabold flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5 shrink-0" />
+                <span>
+                  {isAr
+                    ? 'تأخر ربط الصوت — اضغط هنا لإعادة المحاولة'
+                    : 'Audio taking long to connect — Tap to reconnect'}
+                </span>
+              </button>
+            )}
             {needsAudioUnlock && (
               <button
                 type="button"
