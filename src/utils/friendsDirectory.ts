@@ -13,7 +13,7 @@ import {
   where,
   writeBatch,
 } from 'firebase/firestore';
-import { db, OperationType, handleFirestoreError } from '../firebase';
+import { db, OperationType, handleFirestoreError, logFirestoreListenerError } from '../firebase';
 import { QuranRiwayah } from '../data/quranData';
 
 export interface FriendContactItem {
@@ -58,6 +58,11 @@ export interface IncomingDuoCall {
   offerSdp: string;
   hideVersesForReciter?: boolean;
   hideVersesForListener?: boolean;
+  hostRole?: 'student' | 'teacher';
+  guestRole?: 'student' | 'teacher';
+  iceEpoch?: number;
+  activeAyah?: number;
+  reciterSide?: 'host' | 'guest';
   status: 'ringing' | 'active' | 'declined' | 'ended';
 }
 
@@ -93,7 +98,7 @@ export function formatFriendShortCode(uid: string): string {
 }
 
 export async function syncVerifiedUserProfileAndDirectory(user: User): Promise<void> {
-  if (!user.emailVerified) return;
+  if (!user?.uid) return;
 
   const safeName = getDisplayNameForUser(user);
   const safeEmail = (user.email || `${user.uid}@user.local`).slice(0, 254);
@@ -127,16 +132,34 @@ export async function syncVerifiedUserProfileAndDirectory(user: User): Promise<v
 }
 
 export async function updateUserPresenceHeartbeat(user: User): Promise<void> {
-  if (!user.emailVerified) return;
+  if (!user?.uid) return;
   const uidDirPath = `userDirectory/${user.uid}`;
+  const displayName = getDisplayNameForUser(user);
+  const now = Date.now();
   try {
     await updateDoc(doc(db, 'userDirectory', user.uid), {
-      displayName: getDisplayNameForUser(user),
-      lastSeen: Date.now(),
+      displayName,
+      lastSeen: now,
       updatedAt: serverTimestamp(),
     });
   } catch (err) {
-    handleFirestoreError(err, OperationType.UPDATE, uidDirPath);
+    const code = (err as { code?: unknown })?.code;
+    if (code === 'not-found') {
+      try {
+        await setDoc(doc(db, 'userDirectory', user.uid), {
+          lookupId: user.uid,
+          uid: user.uid,
+          displayName,
+          lastSeen: now,
+          updatedAt: serverTimestamp(),
+        });
+        return;
+      } catch (createErr) {
+        logFirestoreListenerError(createErr, OperationType.WRITE, uidDirPath);
+        return;
+      }
+    }
+    logFirestoreListenerError(err, OperationType.UPDATE, uidDirPath);
   }
 }
 
@@ -158,52 +181,64 @@ export function subscribeFriendPresence(
       onPresence(friendUid, isOnline, lastSeen);
     },
     (err) => {
-      handleFirestoreError(err, OperationType.GET, dirPath);
+      logFirestoreListenerError(err, OperationType.GET, dirPath);
     }
   );
 }
 
+const inflightInviteByUid = new Map<string, Promise<FriendInviteDoc | null>>();
+
 export async function getOrCreateMyFriendInvite(user: User): Promise<FriendInviteDoc | null> {
-  if (!user.emailVerified) return null;
-  const invitesCol = collection(db, 'friendInvites');
-  const q = query(invitesCol, where('ownerUid', '==', user.uid));
+  if (!user?.uid) return null;
+  const existing = inflightInviteByUid.get(user.uid);
+  if (existing) return existing;
 
-  try {
-    const snap = await getDocs(q);
-    const openDoc = snap.docs.find((d) => (d.data() as FriendInviteDoc).status === 'open');
-    if (openDoc) {
-      return openDoc.data() as FriendInviteDoc;
+  const task = (async (): Promise<FriendInviteDoc | null> => {
+    const invitesCol = collection(db, 'friendInvites');
+    const q = query(invitesCol, where('ownerUid', '==', user.uid));
+
+    try {
+      const snap = await getDocs(q);
+      const openDoc = snap.docs.find((d) => (d.data() as FriendInviteDoc).status === 'open');
+      if (openDoc) {
+        return openDoc.data() as FriendInviteDoc;
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.LIST, 'friendInvites');
     }
-  } catch (err) {
-    handleFirestoreError(err, OperationType.LIST, 'friendInvites');
-  }
 
-  const newToken = generateCryptoToken('INV', 10);
-  const ownerName = getDisplayNameForUser(user);
-  const invitePath = `friendInvites/${newToken}`;
-  try {
-    await setDoc(doc(db, 'friendInvites', newToken), {
-      inviteToken: newToken,
-      ownerUid: user.uid,
-      ownerName,
-      status: 'open',
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-    return {
-      inviteToken: newToken,
-      ownerUid: user.uid,
-      ownerName,
-      status: 'open',
-    };
-  } catch (err) {
-    handleFirestoreError(err, OperationType.CREATE, invitePath);
-    return null;
-  }
+    const newToken = generateCryptoToken('INV', 10);
+    const ownerName = getDisplayNameForUser(user);
+    const invitePath = `friendInvites/${newToken}`;
+    try {
+      await setDoc(doc(db, 'friendInvites', newToken), {
+        inviteToken: newToken,
+        ownerUid: user.uid,
+        ownerName,
+        status: 'open',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      return {
+        inviteToken: newToken,
+        ownerUid: user.uid,
+        ownerName,
+        status: 'open',
+      };
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, invitePath);
+      return null;
+    }
+  })().finally(() => {
+    inflightInviteByUid.delete(user.uid);
+  });
+
+  inflightInviteByUid.set(user.uid, task);
+  return task;
 }
 
 export async function regenerateMyFriendInvite(user: User): Promise<FriendInviteDoc | null> {
-  if (!user.emailVerified) return null;
+  if (!user?.uid) return null;
   const q = query(collection(db, 'friendInvites'), where('ownerUid', '==', user.uid));
   try {
     const snap = await getDocs(q);

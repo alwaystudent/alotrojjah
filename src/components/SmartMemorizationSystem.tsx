@@ -1251,28 +1251,28 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
   return (
     <div
       dir="rtl"
-      className="fixed inset-0 z-50 bg-[#1A140E]/90 backdrop-blur-md flex flex-col justify-between overflow-y-auto w-full min-w-full min-h-screen text-[#261C14]"
+      className="fixed inset-0 z-50 bg-[#1A140E]/90 backdrop-blur-md flex flex-col justify-between overflow-y-auto w-full min-w-full min-h-screen text-[#161E19]"
     >
       {/* Top Header Bar */}
-      <header className="sticky top-0 z-30 bg-[#FFFDF9]/95 border-b border-[#DDD2BE] shadow-xs px-3 sm:px-6 py-2.5 flex items-center justify-between gap-3">
+      <header className="sticky top-0 z-30 bg-[#FFFFFF]/95 border-b border-[#C5CEBF] shadow-xs px-3 sm:px-6 py-2.5 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
-          <div className="w-8 h-8 rounded-xl bg-[#C88A14]/15 border border-[#C88A14]/30 flex items-center justify-center shrink-0">
-            <Brain className="w-4 h-4 text-[#9E650C]" />
+          <div className="w-8 h-8 rounded-xl bg-[#96701E]/15 border border-[#96701E]/30 flex items-center justify-center shrink-0">
+            <Brain className="w-4 h-4 text-[#8A6518]" />
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="font-bold text-sm sm:text-base font-display-islamic text-[#261C14]">
+              <span className="font-bold text-sm sm:text-base font-display-islamic text-[#161E19]">
                 {lang === 'ar' ? 'نظام إدارة خطة الحفظ الذكي' : 'Smart Quran Memorization System'}
               </span>
-              <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-[#4A6144]/15 text-[#4A6144] border border-[#4A6144]/25">
+              <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-[#0E6340]/15 text-[#0E6340] border border-[#0E6340]/25">
                 {lang === 'ar' ? '3 مراحل متتالية وصارمة' : '3 Strict Consecutive Stages'}
               </span>
-              <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-[#C88A14]/15 text-[#9E650C] border border-[#C88A14]/25 flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#C88A14] animate-ping" />
+              <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-[#96701E]/15 text-[#8A6518] border border-[#96701E]/25 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#96701E] animate-ping" />
                 <span>{lang === 'ar' ? 'انتقال تلقائي شامل ⚡' : 'Auto-Transitions ⚡'}</span>
               </span>
             </div>
-            <p className="text-[11px] text-[#84715E] truncate">
+            <p className="text-[11px] text-[#6A766E] truncate">
               {formatCurriculumTitle(plan, lang)} · {verses.length}{' '}
               {lang === 'ar' ? 'آيات' : 'Ayahs'} (~{flatWords.length}{' '}
               {lang === 'ar' ? 'كلمة' : 'Words'})
@@ -1286,7 +1286,7 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
             cleanupRamAudio();
             onClose();
           }}
-          className="p-1.5 rounded-xl bg-[#F7F3EB] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-[#5C4B3B] hover:text-[#261C14] transition-colors cursor-pointer shrink-0"
+          className="p-1.5 rounded-xl bg-[#F4F5EE] hover:bg-[#EAF0E7] border border-[#C5CEBF] text-[#4B5650] hover:text-[#161E19] transition-colors cursor-pointer shrink-0"
           title={lang === 'ar' ? 'إغلاق ومغادرة الخطة' : 'Close'}
         >
           <X className="w-4 h-4" />
@@ -1296,19 +1296,19 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
       {/* Main Working Space */}
       <main className="flex-1 w-full max-w-5xl mx-auto px-3 sm:px-6 py-4 space-y-4 flex flex-col justify-start">
         {/* Strict 3-Stage Progress Nav */}
-        <div className="grid grid-cols-3 gap-2 p-1.5 rounded-2xl bg-[#FFFDF9] border border-[#DDD2BE] shadow-2xs">
+        <div className="grid grid-cols-3 gap-2 p-1.5 rounded-2xl bg-[#FFFFFF] border border-[#C5CEBF] shadow-2xs">
           {/* Stage 1 */}
           <div
             className={`p-2.5 rounded-xl flex items-center justify-between gap-2 transition-all ${
               currentStage === 'stage1_listen'
-                ? 'bg-[#2D2218] text-[#FFFDF9] shadow-xs'
+                ? 'bg-[#0E5C3E] text-[#FFFFFF] shadow-xs'
                 : completedStages.has('stage1_listen')
-                ? 'bg-[#4A6144]/15 text-[#4A6144] border border-[#4A6144]/30'
-                : 'bg-[#F7F3EB] text-[#84715E]'
+                ? 'bg-[#0E6340]/15 text-[#0E6340] border border-[#0E6340]/30'
+                : 'bg-[#F4F5EE] text-[#6A766E]'
             }`}
           >
             <div className="flex items-center gap-2 min-w-0">
-              <Headphones className="w-4 h-4 shrink-0 text-[#EAB338]" />
+              <Headphones className="w-4 h-4 shrink-0 text-[#E6C25A]" />
               <div className="min-w-0">
                 <div className="text-[10px] font-bold opacity-80">
                   {lang === 'ar' ? 'المرحلة الأولى' : 'Stage 1'}
@@ -1319,7 +1319,7 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
               </div>
             </div>
             {completedStages.has('stage1_listen') ? (
-              <CheckCircle2 className="w-4 h-4 text-[#4A6144] shrink-0" />
+              <CheckCircle2 className="w-4 h-4 text-[#0E6340] shrink-0" />
             ) : (
               <span className="text-[10px] font-mono-tabular shrink-0">
                 {currentStepIndex + 1}/{cumulativeSteps.length}
@@ -1331,16 +1331,16 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
           <div
             className={`p-2.5 rounded-xl flex items-center justify-between gap-2 transition-all ${
               currentStage === 'stage2_fadeout'
-                ? 'bg-[#2D2218] text-[#FFFDF9] shadow-xs'
+                ? 'bg-[#0E5C3E] text-[#FFFFFF] shadow-xs'
                 : completedStages.has('stage2_fadeout')
-                ? 'bg-[#4A6144]/15 text-[#4A6144] border border-[#4A6144]/30'
+                ? 'bg-[#0E6340]/15 text-[#0E6340] border border-[#0E6340]/30'
                 : !completedStages.has('stage1_listen')
-                ? 'bg-[#EFE9DC]/60 text-[#84715E] opacity-75'
-                : 'bg-[#F7F3EB] text-[#84715E]'
+                ? 'bg-[#EAF0E7]/60 text-[#6A766E] opacity-75'
+                : 'bg-[#F4F5EE] text-[#6A766E]'
             }`}
           >
             <div className="flex items-center gap-2 min-w-0">
-              <EyeOff className="w-4 h-4 shrink-0 text-[#C88A14]" />
+              <EyeOff className="w-4 h-4 shrink-0 text-[#96701E]" />
               <div className="min-w-0">
                 <div className="text-[10px] font-bold opacity-80">
                   {lang === 'ar' ? 'المرحلة الثانية' : 'Stage 2'}
@@ -1352,10 +1352,10 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
             </div>
             {!completedStages.has('stage1_listen') ? (
               <span title={lang === 'ar' ? 'مقفلة حتى إتمام المرحلة الأولى' : 'Locked'}>
-                <Lock className="w-3.5 h-3.5 text-[#84715E] shrink-0" />
+                <Lock className="w-3.5 h-3.5 text-[#6A766E] shrink-0" />
               </span>
             ) : completedStages.has('stage2_fadeout') ? (
-              <CheckCircle2 className="w-4 h-4 text-[#4A6144] shrink-0" />
+              <CheckCircle2 className="w-4 h-4 text-[#0E6340] shrink-0" />
             ) : (
               <span className="text-[10px] font-mono-tabular shrink-0">
                 {stage2WordIndex}/{flatWords.length}
@@ -1367,12 +1367,12 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
           <div
             className={`p-2.5 rounded-xl flex items-center justify-between gap-2 transition-all ${
               currentStage === 'stage3_recitation'
-                ? 'bg-[#2D2218] text-[#FFFDF9] shadow-xs'
+                ? 'bg-[#0E5C3E] text-[#FFFFFF] shadow-xs'
                 : completedStages.has('stage3_recitation')
-                ? 'bg-[#4A6144]/15 text-[#4A6144] border border-[#4A6144]/30'
+                ? 'bg-[#0E6340]/15 text-[#0E6340] border border-[#0E6340]/30'
                 : !completedStages.has('stage2_fadeout')
-                ? 'bg-[#EFE9DC]/60 text-[#84715E] opacity-75'
-                : 'bg-[#F7F3EB] text-[#84715E]'
+                ? 'bg-[#EAF0E7]/60 text-[#6A766E] opacity-75'
+                : 'bg-[#F4F5EE] text-[#6A766E]'
             }`}
           >
             <div className="flex items-center gap-2 min-w-0">
@@ -1388,10 +1388,10 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
             </div>
             {!completedStages.has('stage2_fadeout') ? (
               <span title={lang === 'ar' ? 'مقفلة حتى إتمام المرحلة الثانية' : 'Locked'}>
-                <Lock className="w-3.5 h-3.5 text-[#84715E] shrink-0" />
+                <Lock className="w-3.5 h-3.5 text-[#6A766E] shrink-0" />
               </span>
             ) : completedStages.has('stage3_recitation') ? (
-              <CheckCircle2 className="w-4 h-4 text-[#4A6144] shrink-0" />
+              <CheckCircle2 className="w-4 h-4 text-[#0E6340] shrink-0" />
             ) : (
               <span className="text-[10px] font-mono-tabular shrink-0">
                 {revealedWordIndices.size}/{flatWords.length}
@@ -1402,9 +1402,9 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
 
         {/* Loading / Error States */}
         {loadingVerses && (
-          <div className="py-16 text-center space-y-3 bg-[#FFFDF9] rounded-2xl border border-[#DDD2BE] p-6 shadow-2xs">
-            <div className="w-10 h-10 border-3 border-[#C88A14] border-t-transparent rounded-full animate-spin mx-auto" />
-            <p className="text-xs font-bold text-[#84715E]">
+          <div className="py-16 text-center space-y-3 bg-[#FFFFFF] rounded-2xl border border-[#C5CEBF] p-6 shadow-2xs">
+            <div className="w-10 h-10 border-3 border-[#96701E] border-t-transparent rounded-full animate-spin mx-auto" />
+            <p className="text-xs font-bold text-[#6A766E]">
               {lang === 'ar' ? 'جاري تجهيز الآيات برسم المصحف الشريف...' : 'Loading Mushaf verses...'}
             </p>
           </div>
@@ -1429,19 +1429,19 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
         {!loadingVerses && !loadError && currentStage === 'stage1_listen' && (
           <div className="space-y-4 animate-in fade-in duration-200">
             {/* Reciter & Repetitions Settings Bar */}
-            <div className="p-3.5 rounded-2xl bg-[#FFFDF9] border border-[#DDD2BE] space-y-3 shadow-2xs">
+            <div className="p-3.5 rounded-2xl bg-[#FFFFFF] border border-[#C5CEBF] space-y-3 shadow-2xs">
               {/* Row 1: Reciter Selection & Sheikh Recitation Speed */}
               <div className="flex flex-wrap items-center justify-between gap-2.5">
                 {/* Reciter Choice */}
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="flex items-center gap-1.5 text-xs">
-                    <Headphones className="w-4 h-4 text-[#C88A14]" />
-                    <span className="font-bold text-[#2D2218]">
+                    <Headphones className="w-4 h-4 text-[#96701E]" />
+                    <span className="font-bold text-[#0E5C3E]">
                       {lang === 'ar' ? 'القارئ للتلقين:' : 'Reciter:'}
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-1 p-0.5 rounded-xl bg-[#F7F3EB] border border-[#E5DEC9]">
+                  <div className="grid grid-cols-2 gap-1 p-0.5 rounded-xl bg-[#F4F5EE] border border-[#D3DDD0]">
                     <button
                       type="button"
                       onClick={() => {
@@ -1450,8 +1450,8 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
                       }}
                       className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
                         selectedReciter === 'husary_muallim'
-                          ? 'bg-[#2D2218] text-[#EAB338] shadow-2xs'
-                          : 'text-[#5C4B3B] hover:text-[#261C14]'
+                          ? 'bg-[#0E5C3E] text-[#E6C25A] shadow-2xs'
+                          : 'text-[#4B5650] hover:text-[#161E19]'
                       }`}
                     >
                       <span>{lang === 'ar' ? 'الحصري (المعلم)' : 'Al-Husary'}</span>
@@ -1465,8 +1465,8 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
                       }}
                       className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
                         selectedReciter === 'hudhaify'
-                          ? 'bg-[#2D2218] text-[#EAB338] shadow-2xs'
-                          : 'text-[#5C4B3B] hover:text-[#261C14]'
+                          ? 'bg-[#0E5C3E] text-[#E6C25A] shadow-2xs'
+                          : 'text-[#4B5650] hover:text-[#161E19]'
                       }`}
                     >
                       <span>{lang === 'ar' ? 'علي الحذيفي' : 'Al-Hudhaify'}</span>
@@ -1477,13 +1477,13 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
                 {/* Recitation Speed Selector (خاصية تغيير سرعة تلاوة الشيخ) */}
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="flex items-center gap-1.5 text-xs">
-                    <Gauge className="w-3.5 h-3.5 text-[#C88A14]" />
-                    <span className="font-bold text-[#2D2218]">
+                    <Gauge className="w-3.5 h-3.5 text-[#96701E]" />
+                    <span className="font-bold text-[#0E5C3E]">
                       {lang === 'ar' ? 'سرعة التلاوة:' : 'Speed:'}
                     </span>
                   </div>
 
-                  <div className="flex items-center gap-1 bg-[#F7F3EB] p-0.5 rounded-lg border border-[#E5DEC9]">
+                  <div className="flex items-center gap-1 bg-[#F4F5EE] p-0.5 rounded-lg border border-[#D3DDD0]">
                     {[0.75, 0.85, 1.0, 1.25, 1.5].map((speed) => (
                       <button
                         key={speed}
@@ -1491,8 +1491,8 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
                         onClick={() => handleSetRecitationSpeed(speed)}
                         className={`px-2 py-0.5 rounded-md font-bold text-[11px] font-mono-tabular transition-all cursor-pointer ${
                           recitationSpeed === speed
-                            ? 'bg-[#C88A14] text-white shadow-2xs'
-                            : 'text-[#5C4B3B] hover:bg-[#E5DEC9]'
+                            ? 'bg-[#96701E] text-white shadow-2xs'
+                            : 'text-[#4B5650] hover:bg-[#D3DDD0]'
                         }`}
                         title={
                           speed < 1.0
@@ -1516,14 +1516,14 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
               </div>
 
               {/* Row 2: Repetition Controls (تكرار المقطع وتكرار المقرر كاملاً) */}
-              <div className="pt-2.5 border-t border-[#EFE9DC] flex flex-wrap items-center justify-between gap-3 text-xs">
+              <div className="pt-2.5 border-t border-[#EAF0E7] flex flex-wrap items-center justify-between gap-3 text-xs">
                 {/* Chunk Reps (تكرار المقطع / الآيات المتلوة دفعة واحدة) */}
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-bold text-[#5C4B3B] flex items-center gap-1">
-                    <Repeat className="w-3.5 h-3.5 text-[#C88A14]" />
+                  <span className="font-bold text-[#4B5650] flex items-center gap-1">
+                    <Repeat className="w-3.5 h-3.5 text-[#96701E]" />
                     {lang === 'ar' ? 'تكرار المقطع مع الشيخ:' : 'Segment Reps:'}
                   </span>
-                  <div className="flex items-center gap-1 bg-[#F7F3EB] p-0.5 rounded-lg border border-[#E5DEC9]">
+                  <div className="flex items-center gap-1 bg-[#F4F5EE] p-0.5 rounded-lg border border-[#D3DDD0]">
                     {[1, 2, 3, 5, 7].map((num) => (
                       <button
                         key={num}
@@ -1534,15 +1534,15 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
                         }}
                         className={`px-2 py-0.5 rounded-md font-bold text-[11px] transition-all cursor-pointer ${
                           chunkReps === num
-                            ? 'bg-[#C88A14] text-white shadow-2xs'
-                            : 'text-[#5C4B3B] hover:bg-[#E5DEC9]'
+                            ? 'bg-[#96701E] text-white shadow-2xs'
+                            : 'text-[#4B5650] hover:bg-[#D3DDD0]'
                         }`}
                       >
                         {num}×
                       </button>
                     ))}
                   </div>
-                  <span className="px-2 py-0.5 rounded-md bg-[#C88A14]/15 text-[#9E650C] font-mono-tabular font-bold text-[11px]">
+                  <span className="px-2 py-0.5 rounded-md bg-[#96701E]/15 text-[#8A6518] font-mono-tabular font-bold text-[11px]">
                     {lang === 'ar'
                       ? `التكرار ${currentStepRep + 1} من ${chunkReps}`
                       : `Rep ${currentStepRep + 1} of ${chunkReps}`}
@@ -1551,11 +1551,11 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
 
                 {/* Full Passage Reps (تكرار كامل المقرر) */}
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-bold text-[#5C4B3B] flex items-center gap-1">
-                    <Layers className="w-3.5 h-3.5 text-[#4A6144]" />
+                  <span className="font-bold text-[#4B5650] flex items-center gap-1">
+                    <Layers className="w-3.5 h-3.5 text-[#0E6340]" />
                     {lang === 'ar' ? 'تكرار كامل المقرر:' : 'Passage Reps:'}
                   </span>
-                  <div className="flex items-center gap-1 bg-[#F7F3EB] p-0.5 rounded-lg border border-[#E5DEC9]">
+                  <div className="flex items-center gap-1 bg-[#F4F5EE] p-0.5 rounded-lg border border-[#D3DDD0]">
                     {[1, 2, 3, 5].map((num) => (
                       <button
                         key={num}
@@ -1566,8 +1566,8 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
                         }}
                         className={`px-2 py-0.5 rounded-md font-bold text-[11px] transition-all cursor-pointer ${
                           fullPassageReps === num
-                            ? 'bg-[#4A6144] text-white shadow-2xs'
-                            : 'text-[#5C4B3B] hover:bg-[#E5DEC9]'
+                            ? 'bg-[#0E6340] text-white shadow-2xs'
+                            : 'text-[#4B5650] hover:bg-[#D3DDD0]'
                         }`}
                       >
                         {num}×
@@ -1575,7 +1575,7 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
                     ))}
                   </div>
                   {fullPassageReps > 1 && (
-                    <span className="px-2 py-0.5 rounded-md bg-[#4A6144]/15 text-[#4A6144] font-mono-tabular font-bold text-[11px]">
+                    <span className="px-2 py-0.5 rounded-md bg-[#0E6340]/15 text-[#0E6340] font-mono-tabular font-bold text-[11px]">
                       {lang === 'ar'
                         ? `دورة المقرر ${currentPassageRep + 1} من ${fullPassageReps}`
                         : `Cycle ${currentPassageRep + 1} of ${fullPassageReps}`}
@@ -1585,17 +1585,17 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
               </div>
 
               {/* Row 3: Optional User Repetition after Sheikh (خاصية الترديد مع قراءة الشيخ - معطلة افتراضياً) */}
-              <div className="pt-2.5 border-t border-[#EFE9DC] flex flex-wrap items-center justify-between gap-3 text-xs">
+              <div className="pt-2.5 border-t border-[#EAF0E7] flex flex-wrap items-center justify-between gap-3 text-xs">
                 <div className="flex items-center gap-2">
-                  <span className="font-bold text-[#5C4B3B] flex items-center gap-1.5">
+                  <span className="font-bold text-[#4B5650] flex items-center gap-1.5">
                     {enableUserRepeat ? (
-                      <Mic className="w-3.5 h-3.5 text-[#4A6144]" />
+                      <Mic className="w-3.5 h-3.5 text-[#0E6340]" />
                     ) : (
-                      <MicOff className="w-3.5 h-3.5 text-[#84715E]" />
+                      <MicOff className="w-3.5 h-3.5 text-[#6A766E]" />
                     )}
                     {lang === 'ar' ? 'الترديد الصوتي خلف الشيخ:' : 'Voice repetition after Sheikh:'}
                   </span>
-                  <span className="text-[11px] text-[#84715E] hidden sm:inline">
+                  <span className="text-[11px] text-[#6A766E] hidden sm:inline">
                     {lang === 'ar'
                       ? enableUserRepeat
                         ? '(مفعّل: يطلب الترديد الصوتي بعد كل تلاوة)'
@@ -1611,8 +1611,8 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
                   onClick={handleToggleUserRepeat}
                   className={`px-3 py-1.5 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5 border ${
                     enableUserRepeat
-                      ? 'bg-[#4A6144] text-white border-[#3F543A] shadow-xs'
-                      : 'bg-[#F7F3EB] text-[#5C4B3B] border-[#DDD2BE] hover:bg-[#EFE9DC]'
+                      ? 'bg-[#0E6340] text-white border-[#3F543A] shadow-xs'
+                      : 'bg-[#F4F5EE] text-[#4B5650] border-[#C5CEBF] hover:bg-[#EAF0E7]'
                   }`}
                   title={
                     lang === 'ar'
@@ -1627,7 +1627,7 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
                     </>
                   ) : (
                     <>
-                      <MicOff className="w-3.5 h-3.5 text-[#84715E]" />
+                      <MicOff className="w-3.5 h-3.5 text-[#6A766E]" />
                       <span>{lang === 'ar' ? 'معطّل (افتراضي)' : 'Disabled (Default)'}</span>
                     </>
                   )}
@@ -1642,17 +1642,17 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
                   <span
                     className={`w-7 h-7 rounded-xl flex items-center justify-center font-bold text-xs ${
                       currentStep.type === 'cumulative_link'
-                        ? 'bg-[#C88A14] text-white'
-                        : 'bg-[#4A6144] text-white'
+                        ? 'bg-[#96701E] text-white'
+                        : 'bg-[#0E6340] text-white'
                     }`}
                   >
                     {currentStepIndex + 1}
                   </span>
                   <div>
-                    <h3 className="text-xs sm:text-sm font-bold text-[#2D2218] font-display-islamic">
+                    <h3 className="text-xs sm:text-sm font-bold text-[#0E5C3E] font-display-islamic">
                       {lang === 'ar' ? currentStep.titleAr : currentStep.titleEn}
                     </h3>
-                    <p className="text-[11px] text-[#84715E]">
+                    <p className="text-[11px] text-[#6A766E]">
                       {currentStep.type === 'cumulative_link'
                         ? lang === 'ar'
                           ? 'ربط تراكمي للمقاطع السابقة لترسيخ الاتصال بين الآيات'
@@ -1672,10 +1672,10 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
                   <button
                     type="button"
                     onClick={handleReplayCurrentStep}
-                    className="p-2 rounded-xl bg-[#FFFDF9] hover:bg-[#EFE9DC] border border-[#DDD2BE] text-[#5C4B3B] text-xs font-bold transition-colors cursor-pointer flex items-center gap-1"
+                    className="p-2 rounded-xl bg-[#FFFFFF] hover:bg-[#EAF0E7] border border-[#C5CEBF] text-[#4B5650] text-xs font-bold transition-colors cursor-pointer flex items-center gap-1"
                     title={lang === 'ar' ? 'إعادة استماع المقطع' : 'Replay'}
                   >
-                    <RotateCcw className="w-3.5 h-3.5 text-[#C88A14]" />
+                    <RotateCcw className="w-3.5 h-3.5 text-[#96701E]" />
                     <span className="hidden sm:inline">{lang === 'ar' ? 'إعادة' : 'Replay'}</span>
                   </button>
                 </div>
@@ -1683,11 +1683,11 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
             )}
 
             {/* Mushaf Canvas for Stage 1 with Active Recitation & Live Voice Recognition Feedback */}
-            <div className="p-4 sm:p-6 rounded-2xl bg-[#FFFDF9] border border-[#DDD2BE] shadow-sm space-y-4">
-              <div className="text-center pb-2 border-b border-[#EFE9DC]">
+            <div className="p-4 sm:p-6 rounded-2xl bg-[#FFFFFF] border border-[#C5CEBF] shadow-sm space-y-4">
+              <div className="text-center pb-2 border-b border-[#EAF0E7]">
                 {stage1Phase === 'shaykh_reciting' ? (
-                  <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#C88A14]/15 border border-[#C88A14]/30 text-xs font-bold text-[#9E650C] animate-pulse">
-                    <Volume2 className="w-4 h-4 text-[#C88A14]" />
+                  <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#96701E]/15 border border-[#96701E]/30 text-xs font-bold text-[#8A6518] animate-pulse">
+                    <Volume2 className="w-4 h-4 text-[#96701E]" />
                     <span>
                       {lang === 'ar'
                         ? `الشيخ يتلو الآن (تكرار ${currentStepRep + 1} من ${chunkReps})${!enableUserRepeat ? ' • استماع وتكرار متواصل' : ''}... استمع بإنصات`
@@ -1696,8 +1696,8 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
                   </div>
                 ) : (
                   <div className="inline-flex flex-col items-center gap-1">
-                    <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-[#4A6144]/15 border border-[#4A6144]/30 text-xs font-bold text-[#4A6144]">
-                      <Mic className="w-4 h-4 text-[#4A6144] animate-bounce" />
+                    <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-[#0E6340]/15 border border-[#0E6340]/30 text-xs font-bold text-[#0E6340]">
+                      <Mic className="w-4 h-4 text-[#0E6340] animate-bounce" />
                       <span>
                         {userHasRepeatedRef.current || stage1MatchedWordIndices.size > 0
                           ? lang === 'ar'
@@ -1710,14 +1710,14 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
                     </div>
 
                     {/* Live speech feedback transcript / progress */}
-                    <div className="text-[11px] text-[#5C4B3B] flex items-center gap-2 mt-1">
-                      <span className="font-bold text-[#4A6144]">
+                    <div className="text-[11px] text-[#4B5650] flex items-center gap-2 mt-1">
+                      <span className="font-bold text-[#0E6340]">
                         {lang === 'ar'
                           ? `الكلمات المرددة: ${stage1MatchedWordIndices.size} / ${activeStepWords.length}`
                           : `Spoken words: ${stage1MatchedWordIndices.size} / ${activeStepWords.length}`}
                       </span>
                       {stage1HeardTranscript && (
-                        <span className="text-[#84715E] italic truncate max-w-[250px] sm:max-w-md">
+                        <span className="text-[#6A766E] italic truncate max-w-[250px] sm:max-w-md">
                           «{stage1HeardTranscript}»
                         </span>
                       )}
@@ -1728,25 +1728,25 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
 
               {/* Toast Message when repetition recognized */}
               {stage1ToastMessage && (
-                <div className="p-2.5 rounded-xl bg-[#4A6144]/15 border border-[#4A6144]/30 text-center text-xs font-bold text-[#4A6144] animate-in fade-in zoom-in-95 duration-200">
+                <div className="p-2.5 rounded-xl bg-[#0E6340]/15 border border-[#0E6340]/30 text-center text-xs font-bold text-[#0E6340] animate-in fade-in zoom-in-95 duration-200">
                   {stage1ToastMessage}
                 </div>
               )}
 
               {/* Surah Header & Basmalah at the Top of the Surah */}
-              <div className="text-center pb-3 mb-2 border-b border-[#EFE9DC]/80 space-y-1.5 select-none">
-                <div className="inline-block py-1 px-5 rounded-xl bg-[#F6E9C8]/90 border border-[#C88A14] text-base sm:text-lg font-display-islamic font-bold text-[#2D2218] shadow-2xs">
+              <div className="text-center pb-3 mb-2 border-b border-[#EAF0E7]/80 space-y-1.5 select-none">
+                <div className="inline-block py-1 px-5 rounded-xl bg-[#F5ECD4]/90 border border-[#96701E] text-base sm:text-lg font-display-islamic font-bold text-[#0E5C3E] shadow-2xs">
                   سُورَةُ {surahInfo?.nameAr || ''}
                 </div>
                 {(verses[0]?.surahNumber || plan.ayahSurah || plan.surahStart || 1) !== 9 && (
-                  <div className="font-uthmani text-lg sm:text-2xl text-[#2D2218] font-display-islamic tracking-wide pt-0.5">
+                  <div className="font-uthmani text-lg sm:text-2xl text-[#0E5C3E] font-display-islamic tracking-wide pt-0.5">
                     بِسْمِ ٱللَّهِ ٱلرَّحْمَـٰنِ ٱلرَّحِيمِ
                   </div>
                 )}
               </div>
 
               {/* Verses Layout with Active Step Highlights */}
-              <div className="leading-loose text-lg sm:text-2xl font-serif text-justify font-display-islamic select-none text-[#261C14]">
+              <div className="leading-loose text-lg sm:text-2xl font-serif text-justify font-display-islamic select-none text-[#161E19]">
                 {verses.map((verse, vIdx) => {
                   const isInStep = currentStep?.verseIndices.includes(vIdx);
                   const isActivelyRecited = vIdx === activeRecitingVerseIdx;
@@ -1756,9 +1756,9 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
                       key={verse.ayahNumber}
                       className={`inline transition-all rounded-lg p-1 ${
                         isActivelyRecited && stage1Phase === 'shaykh_reciting'
-                          ? 'bg-[#C88A14]/25 ring-1 ring-[#C88A14]'
+                          ? 'bg-[#96701E]/25 ring-1 ring-[#96701E]'
                           : isInStep
-                          ? 'bg-[#F7F3EB]'
+                          ? 'bg-[#F4F5EE]'
                           : 'opacity-40'
                       }`}
                     >
@@ -1773,7 +1773,7 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
                             <span
                               key={w.globalIndex}
                               className={`inline-block mx-0.5 transition-colors duration-200 ${
-                                isMatched ? 'text-[#4A6144] font-bold bg-[#4A6144]/15 px-0.5 rounded' : ''
+                                isMatched ? 'text-[#0E6340] font-bold bg-[#0E6340]/15 px-0.5 rounded' : ''
                               }`}
                             >
                               {w.raw}
@@ -1783,7 +1783,7 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
                       ) : (
                         verse.textUthmani
                       )}{' '}
-                      <span className="text-[#9E650C] font-mono-tabular text-sm font-bold mx-1">
+                      <span className="text-[#8A6518] font-mono-tabular text-sm font-bold mx-1">
                         ﴿{verse.ayahNumber}﴾
                       </span>{' '}
                     </span>
@@ -1792,8 +1792,8 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
               </div>
 
               {/* Action Buttons for Stage 1 */}
-              <div className="pt-3 border-t border-[#EFE9DC] flex flex-wrap items-center justify-between gap-3">
-                <span className="text-xs text-[#84715E] font-mono-tabular">
+              <div className="pt-3 border-t border-[#EAF0E7] flex flex-wrap items-center justify-between gap-3">
+                <span className="text-xs text-[#6A766E] font-mono-tabular">
                   {lang === 'ar'
                     ? `المقطع ${currentStepIndex + 1} من ${cumulativeSteps.length} · تكرار ${currentStepRep + 1}/${chunkReps}`
                     : `Step ${currentStepIndex + 1} of ${cumulativeSteps.length} · Rep ${currentStepRep + 1}/${chunkReps}`}
@@ -1833,18 +1833,18 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
         {!loadingVerses && !loadError && currentStage === 'stage2_fadeout' && (
           <div className="space-y-4 animate-in fade-in duration-200">
             {/* Status & Mic Live Banner */}
-            <div className="p-3.5 rounded-2xl bg-[#FFFDF9] border border-[#DDD2BE] flex flex-wrap items-center justify-between gap-2.5 shadow-2xs">
+            <div className="p-3.5 rounded-2xl bg-[#FFFFFF] border border-[#C5CEBF] flex flex-wrap items-center justify-between gap-2.5 shadow-2xs">
               <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-[#4A6144]/15 border border-[#4A6144]/30 flex items-center justify-center">
-                  <Mic className="w-4 h-4 text-[#4A6144] animate-pulse" />
+                <div className="w-8 h-8 rounded-xl bg-[#0E6340]/15 border border-[#0E6340]/30 flex items-center justify-center">
+                  <Mic className="w-4 h-4 text-[#0E6340] animate-pulse" />
                 </div>
                 <div>
-                  <h3 className="text-xs sm:text-sm font-bold text-[#2D2218]">
+                  <h3 className="text-xs sm:text-sm font-bold text-[#0E5C3E]">
                     {lang === 'ar'
                       ? 'الميكروفون مفعّل تلقائياً · اقرأ بصوت مسموع'
                       : 'Microphone Active · Recite Aloud'}
                   </h3>
-                  <p className="text-[11px] text-[#5C4B3B]">
+                  <p className="text-[11px] text-[#4B5650]">
                     {lang === 'ar'
                       ? 'الكلمات تتلاشى لحظياً مع تلاوتك؛ وتختفي الكلمات القادمة تدريجياً لتقرأ الأسطر الأخيرة غيباً.'
                       : 'Spoken words vanish, and upcoming lines fade out progressively into pure white.'}
@@ -1853,24 +1853,24 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
               </div>
 
               <div className="flex items-center gap-2">
-                <span className="text-xs font-mono-tabular font-bold px-2.5 py-1 rounded-lg bg-[#F7F3EB] border border-[#DDD2BE] text-[#2D2218]">
+                <span className="text-xs font-mono-tabular font-bold px-2.5 py-1 rounded-lg bg-[#F4F5EE] border border-[#C5CEBF] text-[#0E5C3E]">
                   {stage2WordIndex} / {flatWords.length} {lang === 'ar' ? 'كلمة' : 'Words'}
                 </span>
-                <span className="text-xs font-semibold text-[#C88A14]">
+                <span className="text-xs font-semibold text-[#96701E]">
                   {Math.round((stage2WordIndex / (flatWords.length || 1)) * 100)}%
                 </span>
               </div>
             </div>
 
             {/* Mushaf Canvas with Dynamic Progressive Fade-Out */}
-            <div className="p-4 sm:p-8 rounded-2xl bg-[#FFFDF9] border border-[#DDD2BE] shadow-sm min-h-[300px] flex flex-col justify-between">
+            <div className="p-4 sm:p-8 rounded-2xl bg-[#FFFFFF] border border-[#C5CEBF] shadow-sm min-h-[300px] flex flex-col justify-between">
               {/* Surah Header & Basmalah at the Top of the Surah */}
-              <div className="text-center pb-3 mb-2 border-b border-[#EFE9DC]/80 space-y-1.5 select-none">
-                <div className="inline-block py-1 px-5 rounded-xl bg-[#F6E9C8]/90 border border-[#C88A14] text-base sm:text-lg font-display-islamic font-bold text-[#2D2218] shadow-2xs">
+              <div className="text-center pb-3 mb-2 border-b border-[#EAF0E7]/80 space-y-1.5 select-none">
+                <div className="inline-block py-1 px-5 rounded-xl bg-[#F5ECD4]/90 border border-[#96701E] text-base sm:text-lg font-display-islamic font-bold text-[#0E5C3E] shadow-2xs">
                   سُورَةُ {surahInfo?.nameAr || ''}
                 </div>
                 {(verses[0]?.surahNumber || plan.ayahSurah || plan.surahStart || 1) !== 9 && (
-                  <div className="font-uthmani text-lg sm:text-2xl text-[#2D2218] font-display-islamic tracking-wide pt-0.5">
+                  <div className="font-uthmani text-lg sm:text-2xl text-[#0E5C3E] font-display-islamic tracking-wide pt-0.5">
                     بِسْمِ ٱللَّهِ ٱلرَّحْمَـٰنِ ٱلرَّحِيمِ
                   </div>
                 )}
@@ -1910,8 +1910,8 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
                       }}
                       className={`inline-block mx-1 ${
                         isCurrent
-                          ? 'border-b-2 border-[#C88A14] text-[#9E650C] font-bold'
-                          : 'text-[#261C14]'
+                          ? 'border-b-2 border-[#96701E] text-[#8A6518] font-bold'
+                          : 'text-[#161E19]'
                       }`}
                     >
                       {word.raw}
@@ -1921,10 +1921,10 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
               </div>
 
               {/* Progress Bar & Manual Skip Helpers */}
-              <div className="pt-4 border-t border-[#EFE9DC] flex flex-wrap items-center justify-between gap-3">
-                <div className="flex-1 min-w-[150px] h-2 rounded-full bg-[#EFE9DC] overflow-hidden">
+              <div className="pt-4 border-t border-[#EAF0E7] flex flex-wrap items-center justify-between gap-3">
+                <div className="flex-1 min-w-[150px] h-2 rounded-full bg-[#EAF0E7] overflow-hidden">
                   <div
-                    className="h-full bg-[#C88A14] transition-all duration-300"
+                    className="h-full bg-[#96701E] transition-all duration-300"
                     style={{
                       width: `${Math.min(100, (stage2WordIndex / (flatWords.length || 1)) * 100)}%`,
                     }}
@@ -1932,7 +1932,7 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
                 </div>
 
                 {stage2LastHeard && (
-                  <span className="text-[11px] text-[#84715E] italic truncate max-w-[200px]">
+                  <span className="text-[11px] text-[#6A766E] italic truncate max-w-[200px]">
                     «{stage2LastHeard}»
                   </span>
                 )}
@@ -1943,7 +1943,7 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
                     onClick={() => {
                       setStage2WordIndex((prev) => Math.min(flatWords.length, prev + 1));
                     }}
-                    className="px-2.5 py-1 rounded-lg text-xs font-bold bg-[#EFE9DC] hover:bg-[#DDD2BE] text-[#5C4B3B] cursor-pointer"
+                    className="px-2.5 py-1 rounded-lg text-xs font-bold bg-[#EAF0E7] hover:bg-[#C5CEBF] text-[#4B5650] cursor-pointer"
                     title={lang === 'ar' ? 'تخطي كلمة واحدة' : 'Skip Word'}
                   >
                     {lang === 'ar' ? 'كلمة ➔' : '+1 Word'}
@@ -1967,7 +1967,7 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
                         setStage2WordIndex(flatWords.length);
                       }
                     }}
-                    className="px-3 py-1 rounded-lg text-xs font-bold bg-[#EFE9DC] hover:bg-[#DDD2BE] text-[#5C4B3B] cursor-pointer"
+                    className="px-3 py-1 rounded-lg text-xs font-bold bg-[#EAF0E7] hover:bg-[#C5CEBF] text-[#4B5650] cursor-pointer"
                     title={lang === 'ar' ? 'تخطي آية كاملة' : 'Skip Ayah'}
                   >
                     {lang === 'ar' ? 'آية ➔' : '+1 Ayah'}
@@ -1984,18 +1984,18 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
         {!loadingVerses && !loadError && currentStage === 'stage3_recitation' && (
           <div className="space-y-4 animate-in fade-in duration-200">
             {/* Live Mic & Pure Memory Recitation Banner */}
-            <div className="p-3.5 rounded-2xl bg-[#FFFDF9] border border-[#DDD2BE] flex flex-wrap items-center justify-between gap-2.5 shadow-2xs">
+            <div className="p-3.5 rounded-2xl bg-[#FFFFFF] border border-[#C5CEBF] flex flex-wrap items-center justify-between gap-2.5 shadow-2xs">
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-xl bg-[#A84A32]/15 border border-[#A84A32]/30 flex items-center justify-center">
                   <Brain className="w-4 h-4 text-[#A84A32]" />
                 </div>
                 <div>
-                  <h3 className="text-xs sm:text-sm font-bold text-[#2D2218]">
+                  <h3 className="text-xs sm:text-sm font-bold text-[#0E5C3E]">
                     {lang === 'ar'
                       ? 'التسميع الغيبي الصارم (الظهور المشروط بالتطابق 100%)'
                       : 'Conditional Audio-Text Memory Recitation'}
                   </h3>
-                  <p className="text-[11px] text-[#5C4B3B]">
+                  <p className="text-[11px] text-[#4B5650]">
                     {lang === 'ar'
                       ? 'الشاشة فارغة تماماً؛ لا تظهر الكلمة إلا إذا تطابقت قراءتك الصوتية غيباً مع النص الصحيح.'
                       : 'Canvas is completely blank; words only reveal upon exact correct pronunciation from memory.'}
@@ -2004,24 +2004,24 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
               </div>
 
               <div className="flex items-center gap-2">
-                <span className="text-xs font-mono-tabular font-bold px-2.5 py-1 rounded-lg bg-[#4A6144]/15 border border-[#4A6144]/30 text-[#4A6144]">
+                <span className="text-xs font-mono-tabular font-bold px-2.5 py-1 rounded-lg bg-[#0E6340]/15 border border-[#0E6340]/30 text-[#0E6340]">
                   {revealedWordIndices.size} / {flatWords.length} {lang === 'ar' ? 'متقنة' : 'Matched'}
                 </span>
-                <span className="text-xs font-semibold text-[#84715E]">
+                <span className="text-xs font-semibold text-[#6A766E]">
                   {Math.round((revealedWordIndices.size / (flatWords.length || 1)) * 100)}%
                 </span>
               </div>
             </div>
 
             {/* Blank Canvas with Conditional Reveal on Correct Recitation */}
-            <div className="p-4 sm:p-8 rounded-2xl bg-[#FFFDF9] border border-[#DDD2BE] shadow-sm min-h-[320px] flex flex-col justify-between">
+            <div className="p-4 sm:p-8 rounded-2xl bg-[#FFFFFF] border border-[#C5CEBF] shadow-sm min-h-[320px] flex flex-col justify-between">
               {/* Surah Header & Basmalah at the Top of the Surah */}
-              <div className="text-center pb-3 mb-2 border-b border-[#EFE9DC]/80 space-y-1.5 select-none">
-                <div className="inline-block py-1 px-5 rounded-xl bg-[#F6E9C8]/90 border border-[#C88A14] text-base sm:text-lg font-display-islamic font-bold text-[#2D2218] shadow-2xs">
+              <div className="text-center pb-3 mb-2 border-b border-[#EAF0E7]/80 space-y-1.5 select-none">
+                <div className="inline-block py-1 px-5 rounded-xl bg-[#F5ECD4]/90 border border-[#96701E] text-base sm:text-lg font-display-islamic font-bold text-[#0E5C3E] shadow-2xs">
                   سُورَةُ {surahInfo?.nameAr || ''}
                 </div>
                 {(verses[0]?.surahNumber || plan.ayahSurah || plan.surahStart || 1) !== 9 && (
-                  <div className="font-uthmani text-lg sm:text-2xl text-[#2D2218] font-display-islamic tracking-wide pt-0.5">
+                  <div className="font-uthmani text-lg sm:text-2xl text-[#0E5C3E] font-display-islamic tracking-wide pt-0.5">
                     بِسْمِ ٱللَّهِ ٱلرَّحْمَـٰنِ ٱلرَّحِيمِ
                   </div>
                 )}
@@ -2036,7 +2036,7 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
                     return (
                       <span
                         key={word.globalIndex}
-                        className="inline-block text-[#261C14] bg-[#4A6144]/10 rounded-md px-1 mx-1 font-bold animate-in fade-in zoom-in-90 duration-200"
+                        className="inline-block text-[#161E19] bg-[#0E6340]/10 rounded-md px-1 mx-1 font-bold animate-in fade-in zoom-in-90 duration-200"
                       >
                         {word.raw}
                       </span>
@@ -2049,8 +2049,8 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
                       key={word.globalIndex}
                       className={`inline-block border-b-2 mx-1 px-2.5 py-0.5 rounded-sm transition-all ${
                         isCurrentTarget
-                          ? 'border-[#C88A14] bg-[#C88A14]/10 animate-pulse'
-                          : 'border-[#DDD2BE] bg-[#F7F3EB]/40'
+                          ? 'border-[#96701E] bg-[#96701E]/10 animate-pulse'
+                          : 'border-[#C5CEBF] bg-[#F4F5EE]/40'
                       }`}
                     >
                       <span className="invisible text-base">{word.raw}</span>
@@ -2060,9 +2060,9 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
               </div>
 
               {/* Status footer with manual help button */}
-              <div className="pt-4 border-t border-[#EFE9DC] flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2 text-xs text-[#84715E]">
-                  <Mic className="w-3.5 h-3.5 text-[#4A6144]" />
+              <div className="pt-4 border-t border-[#EAF0E7] flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-xs text-[#6A766E]">
+                  <Mic className="w-3.5 h-3.5 text-[#0E6340]" />
                   <span>
                     {lastMatchedSpokenWord
                       ? lang === 'ar'
@@ -2078,7 +2078,7 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
                   <button
                     type="button"
                     onClick={handleManualRevealNextWord}
-                    className="px-3 py-1 rounded-lg text-xs font-bold bg-[#EFE9DC] hover:bg-[#DDD2BE] text-[#5C4B3B] cursor-pointer"
+                    className="px-3 py-1 rounded-lg text-xs font-bold bg-[#EAF0E7] hover:bg-[#C5CEBF] text-[#4B5650] cursor-pointer"
                     title={lang === 'ar' ? 'إظهار كلمة في حال التعثر' : 'Reveal Word'}
                   >
                     {lang === 'ar' ? 'إظهار كلمة (مساعدة) ➔' : 'Help Reveal ➔'}
@@ -2106,17 +2106,17 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
       {/* =================================================================================== */}
       {showEvaluationModal && (
         <div className="fixed inset-0 z-60 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
-          <div className="w-full max-w-lg rounded-3xl bg-[#FFFDF9] border-2 border-[#C88A14] p-5 sm:p-6 shadow-2xl text-[#261C14] space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="text-center space-y-1.5 pb-3 border-b border-[#EFE9DC]">
-              <div className="w-12 h-12 rounded-2xl bg-[#4A6144]/15 border border-[#4A6144]/30 flex items-center justify-center mx-auto">
-                <Award className="w-6 h-6 text-[#4A6144]" />
+          <div className="w-full max-w-lg rounded-3xl bg-[#FFFFFF] border-2 border-[#96701E] p-5 sm:p-6 shadow-2xl text-[#161E19] space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="text-center space-y-1.5 pb-3 border-b border-[#EAF0E7]">
+              <div className="w-12 h-12 rounded-2xl bg-[#0E6340]/15 border border-[#0E6340]/30 flex items-center justify-center mx-auto">
+                <Award className="w-6 h-6 text-[#0E6340]" />
               </div>
-              <h2 className="text-lg font-bold font-display-islamic text-[#2D2218]">
+              <h2 className="text-lg font-bold font-display-islamic text-[#0E5C3E]">
                 {lang === 'ar'
                   ? 'اكتملت مراحل الحفظ الذكي · التقييم النهائي'
                   : 'Smart Memorization Completed · Final Evaluation'}
               </h2>
-              <p className="text-xs text-[#5C4B3B] leading-relaxed">
+              <p className="text-xs text-[#4B5650] leading-relaxed">
                 {lang === 'ar'
                   ? 'اختر مستوى إتقانك للمقرر لاعتماد الإنجاز أو إعادة التثبيت الصارم وفق القواعد:'
                   : 'Select your mastery level to confirm or repeat per strict system rules:'}
@@ -2129,7 +2129,7 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
               <button
                 type="button"
                 onClick={handleEvaluationMuthabbat}
-                className="w-full p-3.5 rounded-2xl bg-[#4A6144] hover:bg-[#3D5237] text-white text-start transition-all cursor-pointer shadow-xs flex items-center justify-between gap-3 group"
+                className="w-full p-3.5 rounded-2xl bg-[#0E6340] hover:bg-[#3D5237] text-white text-start transition-all cursor-pointer shadow-xs flex items-center justify-between gap-3 group"
               >
                 <div className="space-y-0.5">
                   <div className="flex items-center gap-2">
@@ -2151,7 +2151,7 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
               <button
                 type="button"
                 onClick={handleEvaluationMutaraddid}
-                className="w-full p-3.5 rounded-2xl bg-[#C88A14] hover:bg-[#B3780C] text-white text-start transition-all cursor-pointer shadow-xs flex items-center justify-between gap-3 group"
+                className="w-full p-3.5 rounded-2xl bg-[#96701E] hover:bg-[#B3780C] text-white text-start transition-all cursor-pointer shadow-xs flex items-center justify-between gap-3 group"
               >
                 <div className="space-y-0.5">
                   <div className="flex items-center gap-2">
@@ -2198,19 +2198,19 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
       {/* Confirmation of Spaced Repetition Created */}
       {scheduledReviewsCount !== null && (
         <div className="fixed inset-0 z-70 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="w-full max-w-md rounded-2xl bg-[#FFFDF9] border border-[#4A6144] p-5 shadow-2xl text-center space-y-3">
-            <CheckCircle2 className="w-10 h-10 text-[#4A6144] mx-auto" />
-            <h3 className="text-base font-bold font-display-islamic text-[#2D2218]">
+          <div className="w-full max-w-md rounded-2xl bg-[#FFFFFF] border border-[#0E6340] p-5 shadow-2xl text-center space-y-3">
+            <CheckCircle2 className="w-10 h-10 text-[#0E6340] mx-auto" />
+            <h3 className="text-base font-bold font-display-islamic text-[#0E5C3E]">
               {lang === 'ar' ? 'بارك الله لك في حفظك!' : 'Mubarak! Memorization Confirmed'}
             </h3>
-            <p className="text-xs text-[#5C4B3B] leading-relaxed">
+            <p className="text-xs text-[#4B5650] leading-relaxed">
               {lang === 'ar'
                 ? `تم اعتماد الحفظ وإدراج ${scheduledReviewsCount} مراجعات دورية تلقائية (بعد يوم، 3 أيام، أسبوع، شهر) لتثبيت هذا الوِرد الراسخ.`
                 : `Successfully scheduled ${scheduledReviewsCount} periodic spaced reviews (after 1 day, 3 days, 1 week, 1 month) to solidify your memorization.`}
             </p>
             {/* Auto-transition countdown indicator */}
-            <div className="py-2 px-3 rounded-xl bg-[#4A6144]/10 border border-[#4A6144]/20 text-xs text-[#4A6144] font-bold flex items-center justify-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-[#4A6144] animate-ping" />
+            <div className="py-2 px-3 rounded-xl bg-[#0E6340]/10 border border-[#0E6340]/20 text-xs text-[#0E6340] font-bold flex items-center justify-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-[#0E6340] animate-ping" />
               <span>
                 {lang === 'ar'
                   ? `العودة التلقائية للجدول الرئيسي خلال ${autoCloseCountdown} ثوانٍ...`
@@ -2221,7 +2221,7 @@ export const SmartMemorizationSystem: React.FC<SmartMemorizationSystemProps> = (
             <button
               type="button"
               onClick={onClose}
-              className="w-full py-2.5 rounded-xl bg-[#2D2218] text-white text-xs font-bold hover:bg-[#3D2F22] cursor-pointer"
+              className="w-full py-2.5 rounded-xl bg-[#0E5C3E] text-white text-xs font-bold hover:bg-[#0A4730] cursor-pointer"
             >
               {lang === 'ar' ? 'العودة الفورية الآن' : 'Return Now'}
             </button>

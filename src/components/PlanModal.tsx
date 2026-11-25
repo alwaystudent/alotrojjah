@@ -187,11 +187,11 @@ export const PlanModal: React.FC<PlanModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-[#1E1610]/70 backdrop-blur-xs overflow-y-auto">
       <div
-        className="relative w-full max-w-lg bg-[#FFFDF9] border border-[#D5C7B2] rounded-2xl shadow-xl overflow-hidden my-4"
+        className="relative w-full max-w-lg bg-[#FFFFFF] border border-[#D5C7B2] rounded-2xl shadow-xl overflow-hidden my-4"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Top Header */}
-        <div className="earthy-gradient-banner px-4 py-3 text-[#FDFBF7] flex items-center justify-between border-b border-[#8F681E]/30">
+        <div className="earthy-gradient-banner px-4 py-3 text-[#FDFBF7] flex items-center justify-between border-b border-[#876317]/30">
           <div className="flex items-baseline gap-2">
             <h2 className="text-base sm:text-lg font-bold font-display-islamic">
               {editingPlan ? dict.modalEditTitle : dict.modalAddTitle}
@@ -212,15 +212,15 @@ export const PlanModal: React.FC<PlanModalProps> = ({
           {/* 1. Day Selector with Today Option */}
           <div>
             <div className="flex items-center justify-between gap-2 mb-1.5">
-              <label className="text-xs font-bold text-[#261C14] flex items-center gap-1.5">
-                <Calendar className="w-3.5 h-3.5 text-[#C88A14]" />
+              <label className="text-xs font-bold text-[#161E19] flex items-center gap-1.5">
+                <Calendar className="w-3.5 h-3.5 text-[#96701E]" />
                 <span>{dict.selectDayLabel}</span>
               </label>
               <div className="flex items-center gap-1.5">
                 <button
                   type="button"
                   onClick={() => setSelectedDays([todayId])}
-                  className="px-2 py-0.5 text-[11px] font-semibold rounded-md bg-[#F6E9C8] text-[#7D5306] hover:bg-[#EDD8A1] transition-colors cursor-pointer"
+                  className="px-2 py-0.5 text-[11px] font-semibold rounded-md bg-[#F5ECD4] text-[#7D5306] hover:bg-[#EDD8A1] transition-colors cursor-pointer"
                 >
                   {dict.setTodayShortcut}
                 </button>
@@ -228,7 +228,7 @@ export const PlanModal: React.FC<PlanModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setSelectedDays(WEEK_DAYS.map((d) => d.id))}
-                    className="px-2 py-0.5 text-[11px] font-semibold rounded-md bg-[#EFE9DC] text-[#5C4B3B] hover:bg-[#E2D8C5] transition-colors cursor-pointer"
+                    className="px-2 py-0.5 text-[11px] font-semibold rounded-md bg-[#EAF0E7] text-[#4B5650] hover:bg-[#E2D8C5] transition-colors cursor-pointer"
                   >
                     {dict.selectAllDaysShortcut}
                   </button>
@@ -247,8 +247,8 @@ export const PlanModal: React.FC<PlanModalProps> = ({
                     onClick={() => handleToggleDay(day.id)}
                     className={`py-1.5 px-1 rounded-lg border text-center transition-all cursor-pointer ${
                       isSelected
-                        ? 'bg-[#2D2218] text-[#FFFDF9] border-[#C88A14]'
-                        : 'bg-[#F7F3EB] text-[#5C4B3B] border-[#DDD2BE] hover:border-[#C88A14]/60'
+                        ? 'bg-[#0E5C3E] text-[#FFFFFF] border-[#96701E]'
+                        : 'bg-[#F4F5EE] text-[#4B5650] border-[#C5CEBF] hover:border-[#96701E]/60'
                     }`}
                   >
                     <div className="text-[11px] font-bold truncate">
@@ -257,7 +257,7 @@ export const PlanModal: React.FC<PlanModalProps> = ({
                     {isToday && (
                       <div
                         className={`text-[9px] font-medium leading-tight ${
-                          isSelected ? 'text-[#EAB338]' : 'text-[#B87D10]'
+                          isSelected ? 'text-[#E6C25A]' : 'text-[#876317]'
                         }`}
                       >
                         •
@@ -271,7 +271,7 @@ export const PlanModal: React.FC<PlanModalProps> = ({
 
           {/* 2. Plan Type Selector: حفظ | سرد | مراجعة */}
           <div>
-            <label className="block text-xs font-bold text-[#261C14] mb-1.5">
+            <label className="block text-xs font-bold text-[#161E19] mb-1.5">
               {dict.planTypeLabel}
             </label>
             <div className="grid grid-cols-3 gap-2">
@@ -290,12 +290,12 @@ export const PlanModal: React.FC<PlanModalProps> = ({
                     onClick={() => setPlanType(tItem.id)}
                     className={`py-2 px-3 rounded-xl border text-center transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                       active
-                        ? 'bg-[#FBF5E6] border-[#C88A14] text-[#261C14] shadow-2xs'
-                        : 'bg-[#F7F3EB]/70 border-[#DDD2BE] text-[#5C4B3B] hover:bg-[#EFE9DC]/60'
+                        ? 'bg-[#FBF5E6] border-[#96701E] text-[#161E19] shadow-2xs'
+                        : 'bg-[#F4F5EE]/70 border-[#C5CEBF] text-[#4B5650] hover:bg-[#EAF0E7]/60'
                     }`}
                   >
                     <span className="text-xs font-bold whitespace-nowrap">{tItem.label}</span>
-                    {active && <Check className="w-3.5 h-3.5 text-[#C88A14] shrink-0" />}
+                    {active && <Check className="w-3.5 h-3.5 text-[#96701E] shrink-0" />}
                   </button>
                 );
               })}
@@ -304,7 +304,7 @@ export const PlanModal: React.FC<PlanModalProps> = ({
 
           {/* 2b. Riwayah Selector: حفص | قالون | ورش */}
           <div>
-            <label className="block text-xs font-bold text-[#261C14] mb-1.5">
+            <label className="block text-xs font-bold text-[#161E19] mb-1.5">
               {lang === 'ar' ? 'الرواية القرآنية' : 'Quran Narration (Riwayah)'}
             </label>
             <div className="grid grid-cols-3 gap-2">
@@ -317,8 +317,8 @@ export const PlanModal: React.FC<PlanModalProps> = ({
                     onClick={() => setRiwayah(rw.id)}
                     className={`py-2 px-2.5 rounded-xl border text-center transition-all cursor-pointer flex items-center justify-center gap-1 ${
                       active
-                        ? 'bg-[#2D2218] border-[#C88A14] text-[#EAB338] shadow-2xs'
-                        : 'bg-[#F7F3EB]/80 border-[#DDD2BE] text-[#5C4B3B] hover:bg-[#EFE9DC]/60'
+                        ? 'bg-[#0E5C3E] border-[#96701E] text-[#E6C25A] shadow-2xs'
+                        : 'bg-[#F4F5EE]/80 border-[#C5CEBF] text-[#4B5650] hover:bg-[#EAF0E7]/60'
                     }`}
                   >
                     <span className="text-xs font-bold whitespace-nowrap">
@@ -331,9 +331,9 @@ export const PlanModal: React.FC<PlanModalProps> = ({
           </div>
 
           {/* 3. Curriculum Scope Selector: سور | أجزاء | آيات */}
-          <div className="p-3 rounded-xl bg-[#F7F3EB] border border-[#DDD2BE] space-y-2.5">
+          <div className="p-3 rounded-xl bg-[#F4F5EE] border border-[#C5CEBF] space-y-2.5">
             <div className="flex items-center justify-between gap-2">
-              <label className="text-xs font-bold text-[#261C14]">
+              <label className="text-xs font-bold text-[#161E19]">
                 {dict.curriculumScopeLabel}
               </label>
               <div className="flex items-center gap-1 p-0.5 bg-[#E8DEC8] rounded-lg">
@@ -353,8 +353,8 @@ export const PlanModal: React.FC<PlanModalProps> = ({
                       onClick={() => setScope(sc.id)}
                       className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
                         active
-                          ? 'bg-[#2D2218] text-[#FFFDF9]'
-                          : 'text-[#5C4B3B] hover:text-[#261C14]'
+                          ? 'bg-[#0E5C3E] text-[#FFFFFF]'
+                          : 'text-[#4B5650] hover:text-[#161E19]'
                       }`}
                     >
                       <Icon className="w-3 h-3" />
@@ -368,7 +368,7 @@ export const PlanModal: React.FC<PlanModalProps> = ({
             {/* Scope A: Surahs */}
             {scope === 'surah' && (
               <div className="space-y-2">
-                <label className="inline-flex items-center gap-1.5 text-xs font-medium text-[#5C4B3B] cursor-pointer">
+                <label className="inline-flex items-center gap-1.5 text-xs font-medium text-[#4B5650] cursor-pointer">
                   <input
                     type="checkbox"
                     checked={singleSurah}
@@ -376,14 +376,14 @@ export const PlanModal: React.FC<PlanModalProps> = ({
                       setSingleSurah(e.target.checked);
                       if (e.target.checked) setSurahEnd(surahStart);
                     }}
-                    className="rounded border-[#C88A14] text-[#C88A14] focus:ring-[#C88A14]"
+                    className="rounded border-[#96701E] text-[#96701E] focus:ring-[#96701E]"
                   />
                   <span>{dict.singleSurahToggle}</span>
                 </label>
 
                 <div className={`grid gap-2 ${singleSurah ? 'grid-cols-1' : 'grid-cols-2'}`}>
                   <div>
-                    <label className="block text-[11px] font-medium text-[#5C4B3B] mb-0.5">
+                    <label className="block text-[11px] font-medium text-[#4B5650] mb-0.5">
                       {singleSurah ? dict.selectSurahForAyahs : dict.fromSurahLabel}
                     </label>
                     <select
@@ -393,7 +393,7 @@ export const PlanModal: React.FC<PlanModalProps> = ({
                         setSurahStart(val);
                         if (singleSurah || val > surahEnd) setSurahEnd(val);
                       }}
-                      className="w-full px-2.5 py-1.5 rounded-lg bg-[#FFFDF9] border border-[#D5C7B2] text-xs text-[#261C14] focus:outline-none focus:border-[#C88A14]"
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-[#FFFFFF] border border-[#D5C7B2] text-xs text-[#161E19] focus:outline-none focus:border-[#96701E]"
                     >
                       {SURAH_LIST.map((s) => (
                         <option key={s.number} value={s.number}>
@@ -405,13 +405,13 @@ export const PlanModal: React.FC<PlanModalProps> = ({
 
                   {!singleSurah && (
                     <div>
-                      <label className="block text-[11px] font-medium text-[#5C4B3B] mb-0.5">
+                      <label className="block text-[11px] font-medium text-[#4B5650] mb-0.5">
                         {dict.toSurahLabel}
                       </label>
                       <select
                         value={surahEnd}
                         onChange={(e) => setSurahEnd(Number(e.target.value))}
-                        className="w-full px-2.5 py-1.5 rounded-lg bg-[#FFFDF9] border border-[#D5C7B2] text-xs text-[#261C14] focus:outline-none focus:border-[#C88A14]"
+                        className="w-full px-2.5 py-1.5 rounded-lg bg-[#FFFFFF] border border-[#D5C7B2] text-xs text-[#161E19] focus:outline-none focus:border-[#96701E]"
                       >
                         {SURAH_LIST.map((s) => (
                           <option key={s.number} value={s.number}>
@@ -428,7 +428,7 @@ export const PlanModal: React.FC<PlanModalProps> = ({
             {/* Scope B: Juz */}
             {scope === 'juz' && (
               <div className="space-y-2">
-                <label className="inline-flex items-center gap-1.5 text-xs font-medium text-[#5C4B3B] cursor-pointer">
+                <label className="inline-flex items-center gap-1.5 text-xs font-medium text-[#4B5650] cursor-pointer">
                   <input
                     type="checkbox"
                     checked={singleJuz}
@@ -436,14 +436,14 @@ export const PlanModal: React.FC<PlanModalProps> = ({
                       setSingleJuz(e.target.checked);
                       if (e.target.checked) setJuzEnd(juzStart);
                     }}
-                    className="rounded border-[#C88A14] text-[#C88A14] focus:ring-[#C88A14]"
+                    className="rounded border-[#96701E] text-[#96701E] focus:ring-[#96701E]"
                   />
                   <span>{dict.singleJuzToggle}</span>
                 </label>
 
                 <div className={`grid gap-2 ${singleJuz ? 'grid-cols-1' : 'grid-cols-2'}`}>
                   <div>
-                    <label className="block text-[11px] font-medium text-[#5C4B3B] mb-0.5">
+                    <label className="block text-[11px] font-medium text-[#4B5650] mb-0.5">
                       {dict.fromJuzLabel}
                     </label>
                     <select
@@ -453,7 +453,7 @@ export const PlanModal: React.FC<PlanModalProps> = ({
                         setJuzStart(val);
                         if (singleJuz || val > juzEnd) setJuzEnd(val);
                       }}
-                      className="w-full px-2.5 py-1.5 rounded-lg bg-[#FFFDF9] border border-[#D5C7B2] text-xs text-[#261C14] focus:outline-none focus:border-[#C88A14]"
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-[#FFFFFF] border border-[#D5C7B2] text-xs text-[#161E19] focus:outline-none focus:border-[#96701E]"
                     >
                       {JUZ_LIST.map((j) => (
                         <option key={j.number} value={j.number}>
@@ -465,13 +465,13 @@ export const PlanModal: React.FC<PlanModalProps> = ({
 
                   {!singleJuz && (
                     <div>
-                      <label className="block text-[11px] font-medium text-[#5C4B3B] mb-0.5">
+                      <label className="block text-[11px] font-medium text-[#4B5650] mb-0.5">
                         {dict.toJuzLabel}
                       </label>
                       <select
                         value={juzEnd}
                         onChange={(e) => setJuzEnd(Number(e.target.value))}
-                        className="w-full px-2.5 py-1.5 rounded-lg bg-[#FFFDF9] border border-[#D5C7B2] text-xs text-[#261C14] focus:outline-none focus:border-[#C88A14]"
+                        className="w-full px-2.5 py-1.5 rounded-lg bg-[#FFFFFF] border border-[#D5C7B2] text-xs text-[#161E19] focus:outline-none focus:border-[#96701E]"
                       >
                         {JUZ_LIST.map((j) => (
                           <option key={j.number} value={j.number}>
@@ -490,10 +490,10 @@ export const PlanModal: React.FC<PlanModalProps> = ({
               <div className="space-y-2">
                 <div>
                   <div className="flex items-center justify-between mb-0.5">
-                    <label className="text-[11px] font-medium text-[#5C4B3B]">
+                    <label className="text-[11px] font-medium text-[#4B5650]">
                       {dict.selectSurahForAyahs}
                     </label>
-                    <span className="text-[11px] text-[#84715E] font-mono-tabular">
+                    <span className="text-[11px] text-[#6A766E] font-mono-tabular">
                       {dict.maxAyahHint} {maxAyahs}
                     </span>
                   </div>
@@ -506,7 +506,7 @@ export const PlanModal: React.FC<PlanModalProps> = ({
                       setAyahFrom(1);
                       setAyahTo(Math.min(15, targetS ? targetS.ayahCount : 7));
                     }}
-                    className="w-full px-2.5 py-1.5 rounded-lg bg-[#FFFDF9] border border-[#D5C7B2] text-xs text-[#261C14] focus:outline-none focus:border-[#C88A14]"
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-[#FFFFFF] border border-[#D5C7B2] text-xs text-[#161E19] focus:outline-none focus:border-[#96701E]"
                   >
                     {SURAH_LIST.map((s) => (
                       <option key={s.number} value={s.number}>
@@ -518,7 +518,7 @@ export const PlanModal: React.FC<PlanModalProps> = ({
 
                 <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label className="block text-[11px] font-medium text-[#5C4B3B] mb-0.5">
+                    <label className="block text-[11px] font-medium text-[#4B5650] mb-0.5">
                       {dict.fromAyahLabel}
                     </label>
                     <select
@@ -528,7 +528,7 @@ export const PlanModal: React.FC<PlanModalProps> = ({
                         setAyahFrom(val);
                         if (val > ayahTo) setAyahTo(val);
                       }}
-                      className="w-full px-2.5 py-1.5 rounded-lg bg-[#FFFDF9] border border-[#D5C7B2] text-xs font-mono-tabular text-[#261C14] focus:outline-none focus:border-[#C88A14] cursor-pointer"
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-[#FFFFFF] border border-[#D5C7B2] text-xs font-mono-tabular text-[#161E19] focus:outline-none focus:border-[#96701E] cursor-pointer"
                     >
                       {Array.from({ length: maxAyahs }, (_, i) => i + 1).map((num) => (
                         <option key={num} value={num}>
@@ -538,7 +538,7 @@ export const PlanModal: React.FC<PlanModalProps> = ({
                     </select>
                   </div>
                   <div>
-                    <label className="block text-[11px] font-medium text-[#5C4B3B] mb-0.5">
+                    <label className="block text-[11px] font-medium text-[#4B5650] mb-0.5">
                       {dict.toAyahLabel}
                     </label>
                     <select
@@ -548,7 +548,7 @@ export const PlanModal: React.FC<PlanModalProps> = ({
                         setAyahTo(val);
                         if (val < ayahFrom) setAyahFrom(val);
                       }}
-                      className="w-full px-2.5 py-1.5 rounded-lg bg-[#FFFDF9] border border-[#D5C7B2] text-xs font-mono-tabular text-[#261C14] focus:outline-none focus:border-[#C88A14] cursor-pointer"
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-[#FFFFFF] border border-[#D5C7B2] text-xs font-mono-tabular text-[#161E19] focus:outline-none focus:border-[#96701E] cursor-pointer"
                     >
                       {Array.from({ length: maxAyahs }, (_, i) => i + 1).map((num) => (
                         <option key={num} value={num}>
@@ -562,16 +562,16 @@ export const PlanModal: React.FC<PlanModalProps> = ({
             )}
 
             {/* Calculated Volume Preview */}
-            <div className="pt-1.5 border-t border-[#DDD2BE] flex items-center justify-between text-xs text-[#5C4B3B]">
+            <div className="pt-1.5 border-t border-[#C5CEBF] flex items-center justify-between text-xs text-[#4B5650]">
               <span className="flex items-center gap-1">
-                <Sparkles className="w-3 h-3 text-[#C88A14]" />
+                <Sparkles className="w-3 h-3 text-[#96701E]" />
                 <span>{dict.colMetrics}:</span>
               </span>
-              <div className="font-mono-tabular font-semibold text-[#261C14]">
+              <div className="font-mono-tabular font-semibold text-[#161E19]">
                 <span>
                   {estimatedAyahs} {dict.ayahsUnit}
                 </span>
-                <span className="mx-1 text-[#84715E]">·</span>
+                <span className="mx-1 text-[#6A766E]">·</span>
                 <span>
                   ~{estimatedPages} {dict.pagesUnit}
                 </span>
@@ -581,10 +581,10 @@ export const PlanModal: React.FC<PlanModalProps> = ({
 
           {/* 4. Compact Row: Reminder Time, Mistakes, and Notes */}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-            <div className="p-2.5 rounded-xl bg-[#F7F3EB] border border-[#DDD2BE]">
+            <div className="p-2.5 rounded-xl bg-[#F4F5EE] border border-[#C5CEBF]">
               <div className="flex items-center justify-between mb-1">
-                <label className="text-[11px] font-bold text-[#261C14] flex items-center gap-1">
-                  <Clock className="w-3 h-3 text-[#C88A14]" />
+                <label className="text-[11px] font-bold text-[#161E19] flex items-center gap-1">
+                  <Clock className="w-3 h-3 text-[#96701E]" />
                   <span>{dict.reminderTimeLabel}</span>
                 </label>
                 <input
@@ -592,24 +592,24 @@ export const PlanModal: React.FC<PlanModalProps> = ({
                   checked={reminderEnabled}
                   onChange={(e) => setReminderEnabled(e.target.checked)}
                   title={dict.enableReminderLabel}
-                  className="rounded border-[#C88A14] text-[#C88A14] focus:ring-[#C88A14] cursor-pointer"
+                  className="rounded border-[#96701E] text-[#96701E] focus:ring-[#96701E] cursor-pointer"
                 />
               </div>
               <input
                 type="time"
                 value={reminderTime}
                 onChange={(e) => setReminderTime(e.target.value)}
-                className="w-full px-2 py-1 rounded-lg bg-[#FFFDF9] border border-[#D5C7B2] text-xs font-mono-tabular text-[#261C14] focus:outline-none focus:border-[#C88A14]"
+                className="w-full px-2 py-1 rounded-lg bg-[#FFFFFF] border border-[#D5C7B2] text-xs font-mono-tabular text-[#161E19] focus:outline-none focus:border-[#96701E]"
               />
               {planType === 'new_memorization' && (
-                <span className="text-[10px] text-[#84715E] block mt-1 leading-tight">
+                <span className="text-[10px] text-[#6A766E] block mt-1 leading-tight">
                   {lang === 'ar' ? 'تنبيه بصري هادئ (الصوت ملغى للحفظ)' : 'Silent alert (no chime)'}
                 </span>
               )}
             </div>
 
-            <div className="p-2.5 rounded-xl bg-[#F7F3EB] border border-[#DDD2BE]">
-              <label className="block text-[11px] font-bold text-[#261C14] mb-1">
+            <div className="p-2.5 rounded-xl bg-[#F4F5EE] border border-[#C5CEBF]">
+              <label className="block text-[11px] font-bold text-[#161E19] mb-1">
                 {dict.mistakesLabel}
               </label>
               <input
@@ -618,12 +618,12 @@ export const PlanModal: React.FC<PlanModalProps> = ({
                 max={99}
                 value={mistakesCount}
                 onChange={(e) => setMistakesCount(Math.max(0, Number(e.target.value) || 0))}
-                className="w-full px-2 py-1 rounded-lg bg-[#FFFDF9] border border-[#D5C7B2] text-xs font-mono-tabular text-[#261C14] focus:outline-none focus:border-[#C88A14]"
+                className="w-full px-2 py-1 rounded-lg bg-[#FFFFFF] border border-[#D5C7B2] text-xs font-mono-tabular text-[#161E19] focus:outline-none focus:border-[#96701E]"
               />
             </div>
 
-            <div className="col-span-2 sm:col-span-1 p-2.5 rounded-xl bg-[#F7F3EB] border border-[#DDD2BE]">
-              <label className="block text-[11px] font-bold text-[#261C14] mb-1">
+            <div className="col-span-2 sm:col-span-1 p-2.5 rounded-xl bg-[#F4F5EE] border border-[#C5CEBF]">
+              <label className="block text-[11px] font-bold text-[#161E19] mb-1">
                 {dict.notesLabel}
               </label>
               <input
@@ -631,22 +631,22 @@ export const PlanModal: React.FC<PlanModalProps> = ({
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 placeholder={dict.notesPlaceholder}
-                className="w-full px-2 py-1 rounded-lg bg-[#FFFDF9] border border-[#D5C7B2] text-xs text-[#261C14] placeholder-[#84715E] focus:outline-none focus:border-[#C88A14]"
+                className="w-full px-2 py-1 rounded-lg bg-[#FFFFFF] border border-[#D5C7B2] text-xs text-[#161E19] placeholder-[#6A766E] focus:outline-none focus:border-[#96701E]"
               />
             </div>
           </div>
 
           {/* Weekly Recurrence Option (تكرار الخطة أسبوعياً) */}
-          <label className="flex items-center justify-between p-2.5 rounded-xl bg-[#F7F3EB] border border-[#DDD2BE] hover:border-[#C88A14]/60 transition-colors cursor-pointer select-none">
+          <label className="flex items-center justify-between p-2.5 rounded-xl bg-[#F4F5EE] border border-[#C5CEBF] hover:border-[#96701E]/60 transition-colors cursor-pointer select-none">
             <div className="flex items-center gap-2">
-              <div className="p-1.5 rounded-lg bg-[#C88A14]/15 text-[#C88A14]">
+              <div className="p-1.5 rounded-lg bg-[#96701E]/15 text-[#96701E]">
                 <Repeat className="w-3.5 h-3.5" />
               </div>
               <div>
-                <span className="block text-xs font-bold text-[#2D2218]">
+                <span className="block text-xs font-bold text-[#0E5C3E]">
                   {dict.repeatWeeklyLabel}
                 </span>
-                <span className="block text-[11px] text-[#84715E]">
+                <span className="block text-[11px] text-[#6A766E]">
                   {dict.repeatWeeklyHint}
                 </span>
               </div>
@@ -655,22 +655,22 @@ export const PlanModal: React.FC<PlanModalProps> = ({
               type="checkbox"
               checked={repeatWeekly}
               onChange={(e) => setRepeatWeekly(e.target.checked)}
-              className="w-4 h-4 rounded border-[#C88A14] text-[#C88A14] focus:ring-[#C88A14] cursor-pointer"
+              className="w-4 h-4 rounded border-[#96701E] text-[#96701E] focus:ring-[#96701E] cursor-pointer"
             />
           </label>
 
           {/* Footer Actions */}
-          <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#DDD2BE]">
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#C5CEBF]">
             <button
               type="button"
               onClick={onClose}
-              className="px-3.5 py-1.5 rounded-xl border border-[#D5C7B2] text-xs font-semibold text-[#5C4B3B] hover:bg-[#EFE9DC] transition-colors cursor-pointer"
+              className="px-3.5 py-1.5 rounded-xl border border-[#D5C7B2] text-xs font-semibold text-[#4B5650] hover:bg-[#EAF0E7] transition-colors cursor-pointer"
             >
               {dict.cancelBtn}
             </button>
             <button
               type="submit"
-              className="mustard-gradient-btn px-5 py-1.5 rounded-xl text-xs font-bold text-[#FFFDF9] shadow-2xs transition-all cursor-pointer"
+              className="mustard-gradient-btn px-5 py-1.5 rounded-xl text-xs font-bold text-[#FFFFFF] shadow-2xs transition-all cursor-pointer"
             >
               {editingPlan ? dict.updatePlanBtn : dict.savePlanBtn}
             </button>
