@@ -277,6 +277,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   const [highPrivacyMasking, setHighPrivacyMasking] = useState<boolean>(false);
 
   // Active Session & WebRTC State
+  const [preparingPeerName, setPreparingPeerName] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionMeta, setSessionMeta] = useState<IncomingDuoCall | null>(null);
   const [peerConnState, setPeerConnState] = useState<
@@ -319,7 +320,18 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   const iceRestartAttemptedRef = useRef<boolean>(false);
   const answeringCallIdRef = useRef<string | null>(null);
   const callStartTimestampRef = useRef<number | null>(null);
+  const cancelPreparingRef = useRef<boolean>(false);
+  const friendsRef = useRef<FriendContactDoc[]>([]);
+  const langRef = useRef<Language>(lang);
   const ayahRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  useEffect(() => {
+    friendsRef.current = friends;
+  }, [friends]);
+
+  useEffect(() => {
+    langRef.current = lang;
+  }, [lang]);
 
   useEffect(() => {
     sessionIdRef.current = sessionId;
@@ -851,7 +863,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   // Start Outgoing Call to Approved Friend
   const startFriendAudioCall = async (friend: FriendContactDoc) => {
     if (!user || !user.emailVerified) return;
-    if (sessionId) return;
+    if (sessionId || preparingPeerName) return;
 
     setLobbyNotice(null);
     setPostCallSummary(null);
@@ -866,15 +878,27 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     }
 
     const newSessionId = generateId('call');
-    setSessionId(newSessionId);
+    cancelPreparingRef.current = false;
+    setPreparingPeerName(friend.friendName);
     setPeerConnState('ringing');
 
     try {
       const micStream = await acquireMicrophone();
+      if (cancelPreparingRef.current) {
+        teardownWebRtcResources();
+        setPreparingPeerName(null);
+        return;
+      }
+
       const pc = createAudioPeerConnection(newSessionId, user.uid, friend.friendUid);
       micStream.getTracks().forEach((track) => pc.addTrack(track, micStream));
 
       const localOffer = await gatherInitialOfferSdp(pc);
+      if (cancelPreparingRef.current) {
+        teardownWebRtcResources();
+        setPreparingPeerName(null);
+        return;
+      }
       if (!localOffer.sdp) {
         throw new Error('Failed to create SDP offer');
       }
@@ -930,8 +954,22 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         updatedAt: serverTimestamp(),
       });
 
+      if (cancelPreparingRef.current) {
+        await updateDoc(doc(db, 'duoSessions', newSessionId), {
+          status: 'ended',
+          endedByUid: user.uid,
+          updatedAt: serverTimestamp(),
+        }).catch(() => {});
+        teardownWebRtcResources();
+        setPreparingPeerName(null);
+        return;
+      }
+
+      // CRITICAL: Only set sessionId AFTER setDoc resolves on Firestore so onSnapshot never sees resource == null!
       sessionCreatedRef.current = true;
+      setPreparingPeerName(null);
       setSessionMeta(initialDoc);
+      setSessionId(newSessionId);
 
       // Flush any ICE candidates collected during offer creation
       const queuedLocals = [...pendingLocalCandidatesRef.current];
@@ -968,6 +1006,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       }, 55_000);
     } catch (err) {
       teardownWebRtcResources();
+      setPreparingPeerName(null);
       setSessionId(null);
       setSessionMeta(null);
       const msg = err instanceof Error ? err.message : '';
@@ -1176,18 +1215,23 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
             }
           }
         } else if (data.status === 'declined') {
+          const activeLang = langRef.current;
+          const isArabic = activeLang === 'ar';
+          const peerName =
+            data.hostUid === user.uid
+              ? friendsRef.current.find((f) => f.friendUid === data.calleeUid)?.friendName ||
+                (isArabic ? 'الصديق' : 'Friend')
+              : data.hostName;
           teardownWebRtcResources();
           setSessionId(null);
           setSessionMeta(null);
-          const peerName =
-            data.hostUid === user.uid
-              ? friends.find((f) => f.friendUid === data.calleeUid)?.friendName || (isAr ? 'الصديق' : 'Friend')
-              : data.hostName;
           setLobbyNotice({
             type: 'info',
-            text: isAr ? `رفض «${peerName}» المكالمة.` : `"${peerName}" declined the call.`,
+            text: isArabic ? `رفض «${peerName}» المكالمة.` : `"${peerName}" declined the call.`,
           });
         } else if (data.status === 'ended') {
+          const activeLang = langRef.current;
+          const isArabic = activeLang === 'ar';
           const duration =
             typeof data.callDurationSeconds === 'number'
               ? data.callDurationSeconds
@@ -1201,11 +1245,11 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
               : Math.max(0, Math.min(100, 100 - mistakes * 2));
           const peerName =
             data.hostUid === user.uid
-              ? friends.find((f) => f.friendUid === data.calleeUid)?.friendName ||
+              ? friendsRef.current.find((f) => f.friendUid === data.calleeUid)?.friendName ||
                 data.guestName ||
-                (isAr ? 'صديق' : 'Friend')
+                (isArabic ? 'صديق' : 'Friend')
               : data.hostName;
-          const summaryLabel = buildCurriculumSummary(data, lang);
+          const summaryLabel = buildCurriculumSummary(data, activeLang);
 
           teardownWebRtcResources();
           setSessionId(null);
@@ -1223,7 +1267,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
           } else {
             setLobbyNotice({
               type: 'info',
-              text: isAr ? 'تم إنهاء المكالمة.' : 'Call ended.',
+              text: isArabic ? 'تم إنهاء المكالمة.' : 'Call ended.',
             });
           }
         }
@@ -1274,7 +1318,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       unsubSession();
       unsubCandidates();
     };
-  }, [sessionId, user, isAr, lang, friends, flushPendingRemoteCandidates, teardownWebRtcResources]);
+  }, [sessionId, user, flushPendingRemoteCandidates, teardownWebRtcResources]);
 
   // Call Duration Ticker
   useEffect(() => {
@@ -1898,8 +1942,36 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       {/* Persistent Remote WebRTC Audio Element */}
       <audio ref={remoteAudioRef} autoPlay playsInline className="hidden" />
 
-      {/* 3. ACTIVE CALL OR RINGING VIEW */}
-      {sessionId && sessionMeta ? (
+      {/* 3. PREPARING CALL / ACTIVE CALL OR RINGING VIEW */}
+      {preparingPeerName ? (
+        <div className="rounded-[24px] bg-[#0E5C3E] text-white border-2 border-[#E6C25A]/70 p-6 shadow-lg flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-2xl bg-[#0E6340] border border-[#E6C25A]/60 flex items-center justify-center">
+              <PhoneCall className="w-5 h-5 text-[#E6C25A] animate-pulse" />
+            </div>
+            <div>
+              <h3 className="text-base sm:text-lg font-extrabold font-display-islamic">
+                {preparingPeerName}
+              </h3>
+              <p className="text-xs text-[#E6D7BE]">
+                {isAr ? 'جاري تجهيز الميكروفون وبدء الاتصال...' : 'Preparing microphone & call...'}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              cancelPreparingRef.current = true;
+              setPreparingPeerName(null);
+              teardownWebRtcResources();
+            }}
+            className="px-4 py-2 rounded-xl bg-[#A84A32] hover:bg-[#8E3B26] text-white text-xs sm:text-sm font-bold flex items-center gap-1.5 cursor-pointer"
+          >
+            <PhoneOff className="w-4 h-4" />
+            <span>{isAr ? 'إلغاء' : 'Cancel'}</span>
+          </button>
+        </div>
+      ) : sessionId && sessionMeta ? (
         <div className="space-y-4">
           {/* Call Status Bar */}
           <div className="rounded-[24px] bg-[#0E5C3E] text-white border-2 border-[#E6C25A]/70 p-4 sm:p-5 shadow-lg space-y-4">
