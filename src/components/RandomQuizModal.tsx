@@ -296,25 +296,25 @@ export const RandomQuizModal: React.FC<RandomQuizModalProps> = ({
       dir="rtl"
       className="fixed inset-0 z-60 bg-black/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5"
     >
-      <div className="w-full max-w-xl rounded-3xl bg-[#FFFFFF] border-2 border-[#96701E] shadow-2xl text-[#161E19] overflow-hidden flex flex-col max-h-[92vh]">
+      <div className="w-full max-w-xl rounded-3xl bg-[#FFFDF9] border-2 border-[#C88A14] shadow-2xl text-[#261C14] overflow-hidden flex flex-col max-h-[92vh]">
         {/* Header */}
         <header className="px-5 py-4 bg-[#FBF5E6] border-b border-[#E8D29F] flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-[#96701E]/15 border border-[#96701E]/30 flex items-center justify-center text-[#8A6518]">
-              <Sparkles className="w-5 h-5 text-[#96701E]" />
+            <div className="w-9 h-9 rounded-xl bg-[#C88A14]/15 border border-[#C88A14]/30 flex items-center justify-center text-[#9E650C]">
+              <Sparkles className="w-5 h-5 text-[#C88A14]" />
             </div>
             <div>
-              <h2 className="text-sm sm:text-base font-bold font-display-islamic text-[#0E5C3E]">
+              <h2 className="text-sm sm:text-base font-bold font-display-islamic text-[#2D2218]">
                 {lang === 'ar' ? 'الاختبار العشوائي لتثبيت الحفظ' : 'Random Retention Quiz'}
               </h2>
-              <p className="text-[11px] text-[#6A766E] flex items-center gap-1.5">
+              <p className="text-[11px] text-[#84715E] flex items-center gap-1.5">
                 <span>سورة {quiz.surahNameAr}</span>
                 <span>·</span>
                 <span>
                   الآيات ({quiz.ayahFrom} - {quiz.ayahTo})
                 </span>
                 <span>·</span>
-                <span className="font-semibold text-[#8A6518]">{quiz.frequencyLabelAr}</span>
+                <span className="font-semibold text-[#9E650C]">{quiz.frequencyLabelAr}</span>
               </p>
             </div>
           </div>
@@ -322,7 +322,7 @@ export const RandomQuizModal: React.FC<RandomQuizModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 rounded-lg text-[#6A766E] hover:text-[#0E5C3E] hover:bg-[#EAF0E7] transition-colors cursor-pointer"
+            className="p-1.5 rounded-lg text-[#84715E] hover:text-[#2D2218] hover:bg-[#EFE9DC] transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -332,8 +332,8 @@ export const RandomQuizModal: React.FC<RandomQuizModalProps> = ({
         <div className="p-5 sm:p-6 overflow-y-auto space-y-5 flex-1">
           {loading ? (
             <div className="py-12 text-center space-y-3">
-              <div className="w-8 h-8 border-3 border-[#96701E] border-t-transparent rounded-full animate-spin mx-auto" />
-              <p className="text-xs text-[#6A766E]">
+              <div className="w-8 h-8 border-3 border-[#C88A14] border-t-transparent rounded-full animate-spin mx-auto" />
+              <p className="text-xs text-[#84715E]">
                 {lang === 'ar'
                   ? 'جاري إعداد الأسئلة العشوائية من الآيات المقررة...'
                   : 'Preparing random questions...'}
@@ -342,14 +342,14 @@ export const RandomQuizModal: React.FC<RandomQuizModalProps> = ({
           ) : isQuizCompleted ? (
             /* Quiz Completed Screen */
             <div className="py-6 text-center space-y-4">
-              <div className="w-16 h-16 rounded-3xl bg-[#0E6340]/15 border border-[#0E6340]/30 flex items-center justify-center mx-auto text-[#0E6340]">
+              <div className="w-16 h-16 rounded-3xl bg-[#4A6144]/15 border border-[#4A6144]/30 flex items-center justify-center mx-auto text-[#4A6144]">
                 <Award className="w-8 h-8" />
               </div>
               <div className="space-y-1">
-                <h3 className="text-lg font-bold font-display-islamic text-[#0E5C3E]">
+                <h3 className="text-lg font-bold font-display-islamic text-[#2D2218]">
                   {lang === 'ar' ? 'ما شاء الله! اكتمل الاختبار العشوائي' : 'Quiz Completed!'}
                 </h3>
-                <p className="text-xs text-[#4B5650]">
+                <p className="text-xs text-[#5C4B3B]">
                   {lang === 'ar'
                     ? `تم اجتياز الاختبار بنجاح، وجدولة الموعد القادم وفق تقييم المقرر (${quiz.frequencyLabelAr}).`
                     : `Quiz completed successfully. Next test scheduled based on rating.`}
@@ -359,15 +359,15 @@ export const RandomQuizModal: React.FC<RandomQuizModalProps> = ({
               {/* Score Card */}
               <div className="p-4 rounded-2xl bg-[#FBF5E6] border border-[#E8D29F] flex items-center justify-around gap-4 max-w-sm mx-auto">
                 <div className="text-center">
-                  <span className="text-[11px] text-[#6A766E] block">الإجابات الصحيحة</span>
-                  <span className="text-xl font-bold font-mono-tabular text-[#0E6340]">
+                  <span className="text-[11px] text-[#84715E] block">الإجابات الصحيحة</span>
+                  <span className="text-xl font-bold font-mono-tabular text-[#4A6144]">
                     {correctAnswersCount + (isCorrect ? 1 : 0)} / {questions.length}
                   </span>
                 </div>
                 <div className="w-px h-8 bg-[#E8D29F]" />
                 <div className="text-center">
-                  <span className="text-[11px] text-[#6A766E] block">النتيجة الإجمالية</span>
-                  <span className="text-xl font-bold font-mono-tabular text-[#96701E]">
+                  <span className="text-[11px] text-[#84715E] block">النتيجة الإجمالية</span>
+                  <span className="text-xl font-bold font-mono-tabular text-[#C88A14]">
                     {Math.round(
                       ((correctAnswersCount + (isCorrect ? 1 : 0)) / questions.length) * 100
                     )}
@@ -380,7 +380,7 @@ export const RandomQuizModal: React.FC<RandomQuizModalProps> = ({
                 <button
                   type="button"
                   onClick={onClose}
-                  className="px-6 py-2.5 rounded-xl bg-[#0E6340] hover:bg-[#3D5237] text-white text-xs font-bold transition-all cursor-pointer shadow-xs"
+                  className="px-6 py-2.5 rounded-xl bg-[#4A6144] hover:bg-[#3D5237] text-white text-xs font-bold transition-all cursor-pointer shadow-xs"
                 >
                   {lang === 'ar' ? 'تم واعتماد النتيجة في الإحصائيات' : 'Finish & Save to Stats'}
                 </button>
@@ -389,11 +389,11 @@ export const RandomQuizModal: React.FC<RandomQuizModalProps> = ({
           ) : currentQ ? (
             <div className="space-y-4">
               {/* Progress Indicator */}
-              <div className="flex items-center justify-between text-xs text-[#6A766E]">
+              <div className="flex items-center justify-between text-xs text-[#84715E]">
                 <span>
                   السؤال {currentQuestionIdx + 1} من {questions.length}
                 </span>
-                <span className="px-2 py-0.5 rounded-md bg-[#EAF0E7] text-[#4B5650] font-semibold text-[11px]">
+                <span className="px-2 py-0.5 rounded-md bg-[#EFE9DC] text-[#5C4B3B] font-semibold text-[11px]">
                   {currentQ.type === 'complete_ayah'
                     ? 'أكمل الآية'
                     : currentQ.type === 'next_ayah'
@@ -403,23 +403,23 @@ export const RandomQuizModal: React.FC<RandomQuizModalProps> = ({
               </div>
 
               {/* Question Card */}
-              <div className="p-4 rounded-2xl bg-[#F4F5EE] border border-[#C5CEBF] space-y-2">
-                <span className="text-xs font-bold text-[#6A766E] block">
+              <div className="p-4 rounded-2xl bg-[#F7F3EB] border border-[#DDD2BE] space-y-2">
+                <span className="text-xs font-bold text-[#84715E] block">
                   {currentQ.type === 'complete_ayah'
                     ? 'أكمل قوله تعالى:'
                     : currentQ.type === 'next_ayah'
                     ? 'ما هي الآية التالية لقوله تعالى:'
                     : 'سَمِّع الآية الكريمة التالية بصوتك:'}
                 </span>
-                <p className="font-uthmani text-lg sm:text-xl text-[#161E19] leading-relaxed select-none">
+                <p className="font-uthmani text-lg sm:text-xl text-[#261C14] leading-relaxed select-none">
                   «{currentQ.prompt}»
                 </p>
               </div>
 
               {/* Options or Voice Input */}
               {currentQ.type === 'recite_ayah' ? (
-                <div className="p-4 rounded-2xl bg-[#FFFFFF] border border-[#C5CEBF] text-center space-y-3">
-                  <p className="text-xs text-[#4B5650]">
+                <div className="p-4 rounded-2xl bg-[#FFFDF9] border border-[#DDD2BE] text-center space-y-3">
+                  <p className="text-xs text-[#5C4B3B]">
                     اضغط على الميكروفون واردد الآية بصوت واضح للتحقق التلقائي:
                   </p>
 
@@ -429,20 +429,20 @@ export const RandomQuizModal: React.FC<RandomQuizModalProps> = ({
                     className={`w-14 h-14 rounded-full flex items-center justify-center mx-auto transition-all cursor-pointer shadow-md ${
                       isListening
                         ? 'bg-[#A84A32] text-white animate-pulse'
-                        : 'bg-[#0E6340] text-white hover:bg-[#3D5237]'
+                        : 'bg-[#4A6144] text-white hover:bg-[#3D5237]'
                     }`}
                   >
                     {isListening ? <MicOff className="w-6 h-6" /> : <Mic className="w-6 h-6" />}
                   </button>
 
                   {spokenTranscript && (
-                    <div className="text-xs text-[#6A766E] italic bg-[#F4F5EE] p-2.5 rounded-xl border border-[#C5CEBF]">
+                    <div className="text-xs text-[#84715E] italic bg-[#F7F3EB] p-2.5 rounded-xl border border-[#DDD2BE]">
                       «{spokenTranscript}»
                     </div>
                   )}
 
                   {isAnswerChecked && (
-                    <div className="p-2.5 rounded-xl bg-[#0E6340]/15 border border-[#0E6340]/30 text-xs font-bold text-[#0E6340]">
+                    <div className="p-2.5 rounded-xl bg-[#4A6144]/15 border border-[#4A6144]/30 text-xs font-bold text-[#4A6144]">
                       ✓ ممتاز! تم التحقق من تلاوتك ومطابقتها للآية الكريمة بنجاح
                     </div>
                   )}
@@ -450,14 +450,14 @@ export const RandomQuizModal: React.FC<RandomQuizModalProps> = ({
               ) : (
                 <div className="space-y-2">
                   {currentQ.options?.map((opt, idx) => {
-                    let btnStyle = 'bg-[#FFFFFF] border-[#C5CEBF] text-[#161E19] hover:bg-[#FBF5E6]';
+                    let btnStyle = 'bg-[#FFFDF9] border-[#DDD2BE] text-[#261C14] hover:bg-[#FBF5E6]';
                     if (isAnswerChecked) {
                       if (idx === currentQ.correctOptionIndex) {
-                        btnStyle = 'bg-[#0E6340]/15 border-[#0E6340] text-[#0E6340] font-bold';
+                        btnStyle = 'bg-[#4A6144]/15 border-[#4A6144] text-[#4A6144] font-bold';
                       } else if (idx === selectedOption) {
                         btnStyle = 'bg-[#A84A32]/15 border-[#A84A32] text-[#A84A32]';
                       } else {
-                        btnStyle = 'opacity-50 border-[#C5CEBF] text-[#6A766E]';
+                        btnStyle = 'opacity-50 border-[#DDD2BE] text-[#84715E]';
                       }
                     }
 
@@ -471,7 +471,7 @@ export const RandomQuizModal: React.FC<RandomQuizModalProps> = ({
                       >
                         <span className="leading-relaxed">{opt}</span>
                         {isAnswerChecked && idx === currentQ.correctOptionIndex && (
-                          <CheckCircle2 className="w-4 h-4 text-[#0E6340] shrink-0" />
+                          <CheckCircle2 className="w-4 h-4 text-[#4A6144] shrink-0" />
                         )}
                         {isAnswerChecked &&
                           idx === selectedOption &&
@@ -490,7 +490,7 @@ export const RandomQuizModal: React.FC<RandomQuizModalProps> = ({
                   <button
                     type="button"
                     onClick={handleNextQuestion}
-                    className="px-5 py-2.5 rounded-xl bg-[#0E6340] hover:bg-[#3D5237] text-white text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-xs"
+                    className="px-5 py-2.5 rounded-xl bg-[#4A6144] hover:bg-[#3D5237] text-white text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-xs"
                   >
                     <span>
                       {currentQuestionIdx + 1 < questions.length ? 'السؤال التالي' : 'إنهاء الاختبار'}

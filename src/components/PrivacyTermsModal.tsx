@@ -138,11 +138,11 @@ export const PrivacyTermsModal: React.FC<PrivacyTermsModalProps> = ({
       <div
         dir={isAr ? 'rtl' : 'ltr'}
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-2xl max-h-[88vh] flex flex-col rounded-2xl bg-[#FFFFFF] border border-[#C5CEBF] shadow-2xl overflow-hidden text-[#161E19]"
+        className="w-full max-w-2xl max-h-[88vh] flex flex-col rounded-2xl bg-[#FFFDF9] border border-[#DDD2BE] shadow-2xl overflow-hidden text-[#261C14]"
       >
-        <div className="px-4 sm:px-5 py-3.5 bg-[#0E5C3E] text-[#FFFFFF] flex items-center justify-between gap-3 shrink-0">
+        <div className="px-4 sm:px-5 py-3.5 bg-[#2D2218] text-[#FFFDF9] flex items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-2">
-            <ShieldCheck className="w-5 h-5 text-[#E6C25A]" />
+            <ShieldCheck className="w-5 h-5 text-[#EAB338]" />
             <h2 className="text-sm sm:text-base font-extrabold">
               {isAr ? 'سياسة الخصوصية وشروط الاستخدام' : 'Privacy Policy & Terms of Use'}
             </h2>
@@ -150,22 +150,22 @@ export const PrivacyTermsModal: React.FC<PrivacyTermsModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 rounded-lg bg-[#FFFFFF]/10 hover:bg-[#FFFFFF]/20 text-[#FFFFFF] cursor-pointer"
+            className="p-1.5 rounded-lg bg-[#FFFDF9]/10 hover:bg-[#FFFDF9]/20 text-[#FFFDF9] cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Clean Switch Tabs between Privacy Policy and Terms of Use */}
-        <div className="px-4 pt-3 pb-1 bg-[#FFFFFF] shrink-0">
-          <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-[#F4F5EE] border border-[#D3DDD0]">
+        <div className="px-4 pt-3 pb-1 bg-[#FFFDF9] shrink-0">
+          <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-[#F7F3EB] border border-[#E5DEC9]">
             <button
               type="button"
               onClick={() => setActiveTab('privacy')}
               className={`py-2 px-3 rounded-lg text-xs font-extrabold cursor-pointer transition-colors ${
                 activeTab === 'privacy'
-                  ? 'bg-[#0E5C3E] text-[#E6C25A] shadow-2xs'
-                  : 'text-[#4B5650] hover:text-[#161E19]'
+                  ? 'bg-[#2D2218] text-[#EAB338] shadow-2xs'
+                  : 'text-[#5C4B3B] hover:text-[#261C14]'
               }`}
             >
               {isAr ? 'سياسة الخصوصية' : 'Privacy Policy'}
@@ -175,8 +175,8 @@ export const PrivacyTermsModal: React.FC<PrivacyTermsModalProps> = ({
               onClick={() => setActiveTab('terms')}
               className={`py-2 px-3 rounded-lg text-xs font-extrabold cursor-pointer transition-colors ${
                 activeTab === 'terms'
-                  ? 'bg-[#0E5C3E] text-[#E6C25A] shadow-2xs'
-                  : 'text-[#4B5650] hover:text-[#161E19]'
+                  ? 'bg-[#2D2218] text-[#EAB338] shadow-2xs'
+                  : 'text-[#5C4B3B] hover:text-[#261C14]'
               }`}
             >
               {isAr ? 'شروط الاستخدام' : 'Terms of Use'}
@@ -196,26 +196,26 @@ export const PrivacyTermsModal: React.FC<PrivacyTermsModalProps> = ({
             return (
               <div
                 key={sec.title}
-                className="rounded-xl bg-[#F4F5EE] border border-[#D3DDD0] p-3.5 space-y-1.5"
+                className="rounded-xl bg-[#F7F3EB] border border-[#E5DEC9] p-3.5 space-y-1.5"
               >
-                <h3 className="font-extrabold text-[#0E5C3E] flex items-center gap-2 text-xs sm:text-sm">
-                  <Icon className="w-4 h-4 text-[#96701E] shrink-0" />
+                <h3 className="font-extrabold text-[#2D2218] flex items-center gap-2 text-xs sm:text-sm">
+                  <Icon className="w-4 h-4 text-[#C88A14] shrink-0" />
                   <span>{sec.title}</span>
                 </h3>
-                <p className="text-xs text-[#4B5650] leading-relaxed">{sec.body}</p>
+                <p className="text-xs text-[#5C4B3B] leading-relaxed">{sec.body}</p>
               </div>
             );
           })}
         </div>
 
-        <div className="px-4 sm:px-5 py-3 bg-[#F4F5EE] border-t border-[#C5CEBF] flex items-center justify-between gap-2 shrink-0">
-          <span className="text-[11px] font-semibold text-[#6A766E]">
+        <div className="px-4 sm:px-5 py-3 bg-[#F7F3EB] border-t border-[#DDD2BE] flex items-center justify-between gap-2 shrink-0">
+          <span className="text-[11px] font-semibold text-[#84715E]">
             {isAr ? 'آخر تحديث: ٢٠٢٦ · تحديثات تلقائية نشطة' : 'Updated 2026 · Auto-Updates Active'}
           </span>
           <button
             type="button"
             onClick={onClose}
-            className="mustard-gradient-btn px-5 py-1.5 rounded-xl text-xs font-bold text-[#FFFFFF] cursor-pointer"
+            className="mustard-gradient-btn px-5 py-1.5 rounded-xl text-xs font-bold text-[#FFFDF9] cursor-pointer"
           >
             {isAr ? 'إغلاق وموافقة' : 'Accept & Close'}
           </button>

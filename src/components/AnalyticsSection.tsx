@@ -47,10 +47,10 @@ const CustomChartTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
     return (
       <div
-        className="p-2.5 rounded-xl bg-[#FFFFFF] border border-[#96701E] shadow-md text-xs space-y-1 font-sans text-right z-50"
+        className="p-2.5 rounded-xl bg-[#FFFDF9] border border-[#C88A14] shadow-md text-xs space-y-1 font-sans text-right z-50"
         dir="rtl"
       >
-        <p className="font-bold text-[#0E5C3E] border-b border-[#EAF0E7] pb-1">{label}</p>
+        <p className="font-bold text-[#2D2218] border-b border-[#EFE9DC] pb-1">{label}</p>
         {payload.map((entry: any, index: number) => (
           <div key={`item-${index}`} className="flex items-center justify-between gap-3 text-[11px]">
             <div className="flex items-center gap-1.5">
@@ -58,9 +58,9 @@ const CustomChartTooltip = ({ active, payload, label }: any) => {
                 className="w-2.5 h-2.5 rounded-full shrink-0"
                 style={{ backgroundColor: entry.color || entry.fill }}
               />
-              <span className="text-[#4B5650]">{entry.name}:</span>
+              <span className="text-[#5C4B3B]">{entry.name}:</span>
             </div>
-            <span className="font-bold font-mono-tabular text-[#161E19]">{entry.value}</span>
+            <span className="font-bold font-mono-tabular text-[#261C14]">{entry.value}</span>
           </div>
         ))}
       </div>
@@ -142,13 +142,13 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({
   const typeCategories = [
     {
       type: 'sard' as const,
-      color: '#96701E',
-      bgClass: 'bg-[#96701E]',
+      color: '#C88A14',
+      bgClass: 'bg-[#C88A14]',
     },
     {
       type: 'new_memorization' as const,
-      color: '#0E6340',
-      bgClass: 'bg-[#0E6340]',
+      color: '#4A6144',
+      bgClass: 'bg-[#4A6144]',
     },
     {
       type: 'review' as const,
@@ -246,17 +246,17 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({
   return (
     <section className="space-y-3.5">
       {/* Sub-tab Navigation (Overview vs Memorization Reports & Quizzes) */}
-      <div className="p-1 rounded-xl bg-[#EAF0E7]/70 border border-[#C5CEBF] flex items-center gap-1">
+      <div className="p-1 rounded-xl bg-[#EFE9DC]/70 border border-[#DDD2BE] flex items-center gap-1">
         <button
           type="button"
           onClick={() => setActiveSubTab('overview')}
           className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
             activeSubTab === 'overview'
-              ? 'bg-[#FFFFFF] text-[#161E19] shadow-xs'
-              : 'text-[#4B5650] hover:text-[#161E19]'
+              ? 'bg-[#FFFDF9] text-[#261C14] shadow-xs'
+              : 'text-[#5C4B3B] hover:text-[#261C14]'
           }`}
         >
-          <BarChart3 className="w-3.5 h-3.5 text-[#96701E]" />
+          <BarChart3 className="w-3.5 h-3.5 text-[#C88A14]" />
           <span>{lang === 'ar' ? 'الإحصائيات العامة والرسوم البيانية' : 'General Statistics'}</span>
         </button>
 
@@ -265,14 +265,14 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({
           onClick={() => setActiveSubTab('reports')}
           className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
             activeSubTab === 'reports'
-              ? 'bg-[#FFFFFF] text-[#161E19] shadow-xs'
-              : 'text-[#4B5650] hover:text-[#161E19]'
+              ? 'bg-[#FFFDF9] text-[#261C14] shadow-xs'
+              : 'text-[#5C4B3B] hover:text-[#261C14]'
           }`}
         >
-          <Award className="w-3.5 h-3.5 text-[#0E6340]" />
+          <Award className="w-3.5 h-3.5 text-[#4A6144]" />
           <span>{lang === 'ar' ? 'تقارير إتمام الحفظ والاختبارات العشوائية' : 'Memorization Reports & Quizzes'}</span>
           {reports.length > 0 && (
-            <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono-tabular bg-[#0E6340] text-white">
+            <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono-tabular bg-[#4A6144] text-white">
               {reports.length}
             </span>
           )}
@@ -283,53 +283,53 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({
         <div className="space-y-3.5">
           {/* 4-Column Compact KPI Strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
-        <div className="p-3.5 rounded-xl bg-[#FFFFFF] border border-[#C5CEBF]">
-          <div className="text-xs font-semibold text-[#6A766E]">{dict.kpiCompletionRate}</div>
+        <div className="p-3.5 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE]">
+          <div className="text-xs font-semibold text-[#84715E]">{dict.kpiCompletionRate}</div>
           <div className="mt-1 flex items-baseline justify-between">
-            <span className="text-2xl font-bold font-mono-tabular text-[#161E19]">
+            <span className="text-2xl font-bold font-mono-tabular text-[#261C14]">
               {completionRate}%
             </span>
-            <span className="text-[11px] font-mono-tabular text-[#4B5650]">
+            <span className="text-[11px] font-mono-tabular text-[#5C4B3B]">
               {completedPlans}/{totalPlans}
             </span>
           </div>
-          <div className="mt-2 h-1.5 w-full rounded-full bg-[#EAF0E7] overflow-hidden">
+          <div className="mt-2 h-1.5 w-full rounded-full bg-[#EFE9DC] overflow-hidden">
             <div
-              className="h-full bg-[#96701E] transition-all duration-300"
+              className="h-full bg-[#C88A14] transition-all duration-300"
               style={{ width: `${completionRate}%` }}
             />
           </div>
         </div>
 
-        <div className="p-3.5 rounded-xl bg-[#FFFFFF] border border-[#C5CEBF]">
-          <div className="text-xs font-semibold text-[#6A766E]">{dict.kpiTotalAyahs}</div>
+        <div className="p-3.5 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE]">
+          <div className="text-xs font-semibold text-[#84715E]">{dict.kpiTotalAyahs}</div>
           <div className="mt-1 flex items-baseline justify-between">
-            <span className="text-2xl font-bold font-mono-tabular text-[#161E19]">
+            <span className="text-2xl font-bold font-mono-tabular text-[#261C14]">
               {completedAyahs}
             </span>
-            <span className="text-[11px] font-mono-tabular text-[#4B5650]">
+            <span className="text-[11px] font-mono-tabular text-[#5C4B3B]">
               / {totalPlannedAyahs} {dict.ayahsUnit}
             </span>
           </div>
-          <div className="mt-2 text-[11px] text-[#6A766E] flex items-center gap-1">
+          <div className="mt-2 text-[11px] text-[#84715E] flex items-center gap-1">
             <span>{dict.accuracyRateLabel}:</span>
-            <span className="font-mono-tabular font-semibold text-[#0E6340]">{accuracyRate}%</span>
+            <span className="font-mono-tabular font-semibold text-[#4A6144]">{accuracyRate}%</span>
           </div>
         </div>
 
-        <div className="p-3.5 rounded-xl bg-[#FFFFFF] border border-[#C5CEBF]">
-          <div className="text-xs font-semibold text-[#6A766E]">{dict.kpiTotalPages}</div>
+        <div className="p-3.5 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE]">
+          <div className="text-xs font-semibold text-[#84715E]">{dict.kpiTotalPages}</div>
           <div className="mt-1 flex items-baseline justify-between">
-            <span className="text-2xl font-bold font-mono-tabular text-[#161E19]">
+            <span className="text-2xl font-bold font-mono-tabular text-[#261C14]">
               {completedPages}
             </span>
-            <span className="text-[11px] font-mono-tabular text-[#4B5650]">
+            <span className="text-[11px] font-mono-tabular text-[#5C4B3B]">
               / {totalPlannedPages} {dict.pagesUnit}
             </span>
           </div>
-          <div className="mt-2 h-1.5 w-full rounded-full bg-[#EAF0E7] overflow-hidden">
+          <div className="mt-2 h-1.5 w-full rounded-full bg-[#EFE9DC] overflow-hidden">
             <div
-              className="h-full bg-[#0E6340] transition-all duration-300"
+              className="h-full bg-[#4A6144] transition-all duration-300"
               style={{
                 width: `${
                   totalPlannedPages > 0
@@ -341,13 +341,13 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({
           </div>
         </div>
 
-        <div className="p-3.5 rounded-xl bg-[#FFFFFF] border border-[#C5CEBF]">
-          <div className="text-xs font-semibold text-[#6A766E]">{dict.kpiActiveDays}</div>
+        <div className="p-3.5 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE]">
+          <div className="text-xs font-semibold text-[#84715E]">{dict.kpiActiveDays}</div>
           <div className="mt-1 flex items-baseline justify-between">
-            <span className="text-2xl font-bold font-mono-tabular text-[#161E19]">
+            <span className="text-2xl font-bold font-mono-tabular text-[#261C14]">
               {activeDaysCount}/7
             </span>
-            <span className="text-[11px] text-[#96701E] font-semibold">
+            <span className="text-[11px] text-[#C88A14] font-semibold">
               {Math.round((activeDaysCount / 7) * 100)}%
             </span>
           </div>
@@ -363,10 +363,10 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({
                   title={lang === 'ar' ? d.nameAr : d.nameEn}
                   className={`h-1.5 flex-1 rounded-xs ${
                     allDone
-                      ? 'bg-[#0E6340]'
+                      ? 'bg-[#4A6144]'
                       : hasPlan
-                      ? 'bg-[#96701E]'
-                      : 'bg-[#D3DDD0]'
+                      ? 'bg-[#C88A14]'
+                      : 'bg-[#E5DEC9]'
                   }`}
                 />
               );
@@ -378,19 +378,19 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({
       {/* ========================================================================= */}
       {/* RECHARTS SECTION 1: WEEKLY MEMORIZATION PROGRESS RATE & TRAJECTORY        */}
       {/* ========================================================================= */}
-      <div className="p-4 rounded-xl bg-[#FFFFFF] border border-[#C5CEBF] space-y-3 shadow-2xs">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#EAF0E7] pb-2.5">
+      <div className="p-4 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] space-y-3 shadow-2xs">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#EFE9DC] pb-2.5">
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-[#0E6340]/15 border border-[#0E6340]/30 flex items-center justify-center text-[#0E6340]">
-              <TrendingUp className="w-4 h-4 text-[#0E6340]" />
+            <div className="w-7 h-7 rounded-lg bg-[#4A6144]/15 border border-[#4A6144]/30 flex items-center justify-center text-[#4A6144]">
+              <TrendingUp className="w-4 h-4 text-[#4A6144]" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-[#161E19] font-display-islamic">
+              <h3 className="text-sm font-bold text-[#261C14] font-display-islamic">
                 {lang === 'ar'
                   ? 'معدل تقدم الحفظ الأسبوعي والمسار التراكمي'
                   : 'Weekly Memorization Progress & Trajectory'}
               </h3>
-              <p className="text-[11px] text-[#6A766E]">
+              <p className="text-[11px] text-[#84715E]">
                 {lang === 'ar'
                   ? `متابعة وتيرة الإنجاز الفعلي للآيات المحفوظة (${completedAyahs} آية منجزة من إجمالي ${totalPlannedAyahs})`
                   : `Actual vs target verse memorization pace (${completedAyahs} of ${totalPlannedAyahs})`}
@@ -399,14 +399,14 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({
           </div>
 
           {/* Mode Switcher: Cumulative vs Daily */}
-          <div className="flex items-center gap-1.5 p-1 rounded-lg bg-[#F4F5EE] border border-[#C5CEBF]">
+          <div className="flex items-center gap-1.5 p-1 rounded-lg bg-[#F7F3EB] border border-[#DDD2BE]">
             <button
               type="button"
               onClick={() => setProgressChartMode('cumulative')}
               className={`px-2.5 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${
                 progressChartMode === 'cumulative'
-                  ? 'bg-[#0E6340] text-white shadow-xs'
-                  : 'text-[#4B5650] hover:text-[#161E19]'
+                  ? 'bg-[#4A6144] text-white shadow-xs'
+                  : 'text-[#5C4B3B] hover:text-[#261C14]'
               }`}
             >
               {lang === 'ar' ? 'المسار التراكمي' : 'Cumulative'}
@@ -416,8 +416,8 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({
               onClick={() => setProgressChartMode('daily')}
               className={`px-2.5 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${
                 progressChartMode === 'daily'
-                  ? 'bg-[#96701E] text-white shadow-xs'
-                  : 'text-[#4B5650] hover:text-[#161E19]'
+                  ? 'bg-[#C88A14] text-white shadow-xs'
+                  : 'text-[#5C4B3B] hover:text-[#261C14]'
               }`}
             >
               {lang === 'ar' ? 'الوتيرة اليومية' : 'Daily'}
@@ -431,17 +431,17 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({
             <AreaChart data={rechartsWeeklyProgressData} margin={{ top: 10, right: 10, left: -15, bottom: 0 }}>
               <defs>
                 <linearGradient id="progressDoneColor" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#0E6340" stopOpacity={0.45} />
-                  <stop offset="95%" stopColor="#0E6340" stopOpacity={0.02} />
+                  <stop offset="5%" stopColor="#4A6144" stopOpacity={0.45} />
+                  <stop offset="95%" stopColor="#4A6144" stopOpacity={0.02} />
                 </linearGradient>
                 <linearGradient id="progressTargetColor" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#96701E" stopOpacity={0.25} />
-                  <stop offset="95%" stopColor="#96701E" stopOpacity={0.01} />
+                  <stop offset="5%" stopColor="#C88A14" stopOpacity={0.25} />
+                  <stop offset="95%" stopColor="#C88A14" stopOpacity={0.01} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#EAF0E7" vertical={false} />
-              <XAxis dataKey="short" tick={{ fill: '#4B5650', fontSize: 11 }} />
-              <YAxis tick={{ fill: '#6A766E', fontSize: 10 }} />
+              <CartesianGrid strokeDasharray="3 3" stroke="#EFE9DC" vertical={false} />
+              <XAxis dataKey="short" tick={{ fill: '#5C4B3B', fontSize: 11 }} />
+              <YAxis tick={{ fill: '#84715E', fontSize: 10 }} />
               <Tooltip content={<CustomChartTooltip />} />
               <Legend
                 verticalAlign="top"
@@ -453,15 +453,15 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({
                   <Area
                     type="monotone"
                     dataKey="التراكمي المنجز"
-                    stroke="#0E6340"
+                    stroke="#4A6144"
                     strokeWidth={2.5}
                     fill="url(#progressDoneColor)"
-                    activeDot={{ r: 5, fill: '#0E6340' }}
+                    activeDot={{ r: 5, fill: '#4A6144' }}
                   />
                   <Area
                     type="monotone"
                     dataKey="المستهدف الأسبوعي"
-                    stroke="#96701E"
+                    stroke="#C88A14"
                     strokeWidth={1.8}
                     strokeDasharray="4 4"
                     fill="url(#progressTargetColor)"
@@ -472,15 +472,15 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({
                   <Area
                     type="monotone"
                     dataKey="الآيات المنجزة"
-                    stroke="#0E6340"
+                    stroke="#4A6144"
                     strokeWidth={2.5}
                     fill="url(#progressDoneColor)"
-                    activeDot={{ r: 5, fill: '#0E6340' }}
+                    activeDot={{ r: 5, fill: '#4A6144' }}
                   />
                   <Area
                     type="monotone"
                     dataKey="الآيات المخططة"
-                    stroke="#96701E"
+                    stroke="#C88A14"
                     strokeWidth={1.5}
                     fill="url(#progressTargetColor)"
                   />
@@ -496,15 +496,15 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({
       {/* ========================================================================= */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5">
         {/* Daily Distribution Bar Chart (7 Columns) */}
-        <div className="lg:col-span-7 p-4 rounded-xl bg-[#FFFFFF] border border-[#C5CEBF] flex flex-col justify-between space-y-3 shadow-2xs">
+        <div className="lg:col-span-7 p-4 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] flex flex-col justify-between space-y-3 shadow-2xs">
           <div>
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#EAF0E7] pb-2">
-              <h3 className="text-sm font-bold text-[#161E19] font-display-islamic">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#EFE9DC] pb-2">
+              <h3 className="text-sm font-bold text-[#261C14] font-display-islamic">
                 {lang === 'ar'
                   ? 'توزيع الحفظ حسب أيام الأسبوع'
                   : 'Daily Memorization Distribution'}
               </h3>
-              <span className="text-[11px] text-[#6A766E]">
+              <span className="text-[11px] text-[#84715E]">
                 {lang === 'ar' ? 'مقارنة المخطط والمنجز لكل يوم' : 'Planned vs completed per day'}
               </span>
             </div>
@@ -513,9 +513,9 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({
             <div className="w-full h-60 pt-2" dir="ltr">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={rechartsDailyData} margin={{ top: 10, right: 10, left: -15, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#EAF0E7" vertical={false} />
-                  <XAxis dataKey="short" tick={{ fill: '#4B5650', fontSize: 11 }} />
-                  <YAxis tick={{ fill: '#6A766E', fontSize: 10 }} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#EFE9DC" vertical={false} />
+                  <XAxis dataKey="short" tick={{ fill: '#5C4B3B', fontSize: 11 }} />
+                  <YAxis tick={{ fill: '#84715E', fontSize: 10 }} />
                   <Tooltip content={<CustomChartTooltip />} />
                   <Legend
                     verticalAlign="top"
@@ -524,13 +524,13 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({
                   />
                   <Bar
                     dataKey="الآيات المخططة"
-                    fill="#C5CEBF"
+                    fill="#DDD2BE"
                     radius={[4, 4, 0, 0]}
                     maxBarSize={28}
                   />
                   <Bar
                     dataKey="المحفوظ المنجز"
-                    fill="#96701E"
+                    fill="#C88A14"
                     radius={[4, 4, 0, 0]}
                     maxBarSize={28}
                   />
@@ -540,10 +540,10 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({
           </div>
 
           {/* Today Indicator Strip */}
-          <div className="pt-2 border-t border-[#EAF0E7] flex items-center justify-between text-[11px] text-[#6A766E]">
+          <div className="pt-2 border-t border-[#EFE9DC] flex items-center justify-between text-[11px] text-[#84715E]">
             <span className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#96701E]" />
-              <strong className="text-[#0E5C3E]">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#C88A14]" />
+              <strong className="text-[#2D2218]">
                 {WEEK_DAYS.find((d) => d.id === todayId)?.nameAr || 'اليوم'}:
               </strong>
               <span>
@@ -558,12 +558,12 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({
         </div>
 
         {/* Completion Rate & Type Distribution Pie Chart (5 Columns) */}
-        <div className="lg:col-span-5 p-4 rounded-xl bg-[#FFFFFF] border border-[#C5CEBF] space-y-3.5 shadow-2xs">
-          <div className="flex items-center justify-between border-b border-[#EAF0E7] pb-2">
-            <h3 className="text-sm font-bold text-[#161E19] font-display-islamic">
+        <div className="lg:col-span-5 p-4 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] space-y-3.5 shadow-2xs">
+          <div className="flex items-center justify-between border-b border-[#EFE9DC] pb-2">
+            <h3 className="text-sm font-bold text-[#261C14] font-display-islamic">
               {lang === 'ar' ? 'نسبة الإنجاز وتوزيع الأنواع' : 'Completion Rate & Plan Types'}
             </h3>
-            <span className="px-2 py-0.5 rounded-md bg-[#0E6340]/15 text-[#0E6340] font-bold text-xs font-mono-tabular">
+            <span className="px-2 py-0.5 rounded-md bg-[#4A6144]/15 text-[#4A6144] font-bold text-xs font-mono-tabular">
               {completionRate}% {lang === 'ar' ? 'مكتمل' : 'Done'}
             </span>
           </div>
@@ -574,7 +574,7 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
-                    data={rechartsPieData.length > 0 ? rechartsPieData : [{ name: 'خطة', value: 1, color: '#C5CEBF' }]}
+                    data={rechartsPieData.length > 0 ? rechartsPieData : [{ name: 'خطة', value: 1, color: '#DDD2BE' }]}
                     innerRadius={44}
                     outerRadius={68}
                     paddingAngle={3}
@@ -590,10 +590,10 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({
 
               {/* Center Metrics */}
               <div className="absolute inset-0 flex flex-col items-center justify-center text-center pointer-events-none">
-                <span className="text-xl font-bold font-mono-tabular text-[#161E19]">
+                <span className="text-xl font-bold font-mono-tabular text-[#261C14]">
                   {completionRate}%
                 </span>
-                <span className="text-[10px] text-[#6A766E]">
+                <span className="text-[10px] text-[#84715E]">
                   {completedPlans}/{totalPlans}
                 </span>
               </div>
@@ -604,17 +604,17 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({
               {typeCategories.map((cat) => (
                 <div
                   key={cat.type}
-                  className="flex items-center justify-between text-xs border-b border-[#EAF0E7] pb-1.5 last:border-none"
+                  className="flex items-center justify-between text-xs border-b border-[#EFE9DC] pb-1.5 last:border-none"
                 >
                   <div className="flex items-center gap-1.5">
                     <span className={`w-2.5 h-2.5 rounded-xs shrink-0 ${cat.bgClass}`} />
-                    <span className="font-semibold text-[#161E19]">{cat.label}</span>
+                    <span className="font-semibold text-[#261C14]">{cat.label}</span>
                   </div>
-                  <div className="font-mono-tabular text-[#4B5650] text-[11px]">
+                  <div className="font-mono-tabular text-[#5C4B3B] text-[11px]">
                     <span>
                       {cat.doneCount}/{cat.count}
                     </span>
-                    <span className="mx-1 text-[#6A766E]">·</span>
+                    <span className="mx-1 text-[#84715E]">·</span>
                     <span>
                       {cat.ayahs} {dict.ayahsUnit}
                     </span>
@@ -625,19 +625,19 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({
           </div>
 
           {/* Scope Completion Bars */}
-          <div className="pt-2 border-t border-[#C5CEBF] space-y-2">
-            <h4 className="text-xs font-bold text-[#4B5650]">{dict.chartScopeTitle}</h4>
+          <div className="pt-2 border-t border-[#DDD2BE] space-y-2">
+            <h4 className="text-xs font-bold text-[#5C4B3B]">{dict.chartScopeTitle}</h4>
             {scopeStats.map((sc) => (
               <div key={sc.scope} className="space-y-1">
                 <div className="flex items-center justify-between text-[11px]">
-                  <span className="font-medium text-[#161E19]">{sc.label}</span>
-                  <span className="font-mono-tabular text-[#4B5650]">
+                  <span className="font-medium text-[#261C14]">{sc.label}</span>
+                  <span className="font-mono-tabular text-[#5C4B3B]">
                     {sc.done}/{sc.total} ({sc.pct}%)
                   </span>
                 </div>
-                <div className="h-1.5 w-full rounded-full bg-[#EAF0E7] overflow-hidden">
+                <div className="h-1.5 w-full rounded-full bg-[#EFE9DC] overflow-hidden">
                   <div
-                    className="h-full bg-[#0E5C3E] transition-all duration-300"
+                    className="h-full bg-[#2D2218] transition-all duration-300"
                     style={{ width: `${sc.pct}%` }}
                   />
                 </div>
@@ -654,71 +654,71 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({
         <div className="space-y-3.5">
           {/* 4 KPI Cards for Memorization & Quizzes */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
-            <div className="p-3.5 rounded-xl bg-[#FFFFFF] border border-[#C5CEBF]">
-              <div className="text-xs font-semibold text-[#6A766E]">إجمالي التقارير المعتمدة</div>
+            <div className="p-3.5 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE]">
+              <div className="text-xs font-semibold text-[#84715E]">إجمالي التقارير المعتمدة</div>
               <div className="mt-1 flex items-baseline justify-between">
-                <span className="text-2xl font-bold font-mono-tabular text-[#161E19]">
+                <span className="text-2xl font-bold font-mono-tabular text-[#261C14]">
                   {reports.length}
                 </span>
-                <span className="text-[11px] text-[#4B5650]">مقرر تم إنجازه</span>
+                <span className="text-[11px] text-[#5C4B3B]">مقرر تم إنجازه</span>
               </div>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-[#FFFFFF] border border-[#0E6340]/30">
-              <div className="text-xs font-semibold text-[#0E6340]">🟩 متقن (اختبار أسبوعي)</div>
+            <div className="p-3.5 rounded-xl bg-[#FFFDF9] border border-[#4A6144]/30">
+              <div className="text-xs font-semibold text-[#4A6144]">🟩 متقن (اختبار أسبوعي)</div>
               <div className="mt-1 flex items-baseline justify-between">
-                <span className="text-2xl font-bold font-mono-tabular text-[#0E6340]">
+                <span className="text-2xl font-bold font-mono-tabular text-[#4A6144]">
                   {reports.filter((r) => r.evaluation === 'muthabbat').length}
                 </span>
-                <span className="text-[11px] text-[#4B5650]">كل 7 أيام</span>
+                <span className="text-[11px] text-[#5C4B3B]">كل 7 أيام</span>
               </div>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-[#FFFFFF] border border-[#96701E]/30">
-              <div className="text-xs font-semibold text-[#8A6518]">🟨 متردد (كل 3 أيام)</div>
+            <div className="p-3.5 rounded-xl bg-[#FFFDF9] border border-[#C88A14]/30">
+              <div className="text-xs font-semibold text-[#9E650C]">🟨 متردد (كل 3 أيام)</div>
               <div className="mt-1 flex items-baseline justify-between">
-                <span className="text-2xl font-bold font-mono-tabular text-[#8A6518]">
+                <span className="text-2xl font-bold font-mono-tabular text-[#9E650C]">
                   {reports.filter((r) => r.evaluation === 'mutaraddid').length}
                 </span>
-                <span className="text-[11px] text-[#4B5650]">كل 3 أيام</span>
+                <span className="text-[11px] text-[#5C4B3B]">كل 3 أيام</span>
               </div>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-[#FFFFFF] border border-[#A84A32]/30">
+            <div className="p-3.5 rounded-xl bg-[#FFFDF9] border border-[#A84A32]/30">
               <div className="text-xs font-semibold text-[#A84A32]">🟥 متفلت (اليوم الموالي)</div>
               <div className="mt-1 flex items-baseline justify-between">
                 <span className="text-2xl font-bold font-mono-tabular text-[#A84A32]">
                   {reports.filter((r) => r.evaluation === 'mutafallit').length}
                 </span>
-                <span className="text-[11px] text-[#4B5650]">مكثف غداً</span>
+                <span className="text-[11px] text-[#5C4B3B]">مكثف غداً</span>
               </div>
             </div>
           </div>
 
           {/* Upcoming Scheduled Random Tests Card */}
-          <div className="rounded-xl bg-[#FFFFFF] border border-[#C5CEBF] overflow-hidden">
+          <div className="rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] overflow-hidden">
             <div className="px-4 py-2.5 bg-[#FBF5E6] border-b border-[#E8D29F] flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-[#96701E]" />
-                <h3 className="text-xs font-bold text-[#161E19]">
+                <Sparkles className="w-4 h-4 text-[#C88A14]" />
+                <h3 className="text-xs font-bold text-[#261C14]">
                   {lang === 'ar'
                     ? 'الاختبارات العشوائية المجدولة لتثبيت الحفظ (مع التذكير)'
                     : 'Scheduled Random Retention Tests'}
                 </h3>
               </div>
-              <span className="text-xs text-[#6A766E] font-mono-tabular">
+              <span className="text-xs text-[#84715E] font-mono-tabular">
                 {quizzes.length} اختبار
               </span>
             </div>
 
             {quizzes.length === 0 ? (
-              <div className="p-6 text-center text-xs text-[#6A766E]">
+              <div className="p-6 text-center text-xs text-[#84715E]">
                 {lang === 'ar'
                   ? 'لا توجد اختبارات عشوائية مجدولة حالياً. عند إتمام مراحل الحفظ واعتماد التقييم يتم توليد الاختبار وجدولته تلقائياً.'
                   : 'No scheduled random tests. They are automatically scheduled upon completing a memorization plan.'}
               </div>
             ) : (
-              <div className="divide-y divide-[#EAF0E7]">
+              <div className="divide-y divide-[#EFE9DC]">
                 {quizzes.map((quiz) => {
                   const isDueToday =
                     new Date(quiz.dueDateTimestamp).toDateString() === new Date().toDateString();
@@ -727,39 +727,39 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({
                     <div
                       key={quiz.id}
                       className={`px-4 py-3 flex flex-wrap items-center justify-between gap-2 transition-colors ${
-                        isDueToday ? 'bg-[#FBF5E6]/70' : 'hover:bg-[#F4F5EE]/60'
+                        isDueToday ? 'bg-[#FBF5E6]/70' : 'hover:bg-[#F7F3EB]/60'
                       }`}
                     >
                       <div className="flex flex-wrap items-center gap-2 text-xs">
                         <span
                           className={`w-2.5 h-2.5 rounded-full shrink-0 ${
                             quiz.evaluation === 'muthabbat'
-                              ? 'bg-[#0E6340]'
+                              ? 'bg-[#4A6144]'
                               : quiz.evaluation === 'mutaraddid'
-                              ? 'bg-[#96701E]'
+                              ? 'bg-[#C88A14]'
                               : 'bg-[#A84A32]'
                           }`}
                         />
-                        <span className="font-bold text-[#161E19]">
+                        <span className="font-bold text-[#261C14]">
                           سورة {quiz.surahNameAr} ({quiz.ayahFrom} - {quiz.ayahTo})
                         </span>
-                        <span className="px-2 py-0.5 rounded-md bg-[#EAF0E7] text-[#4B5650] text-[10.5px] font-semibold">
+                        <span className="px-2 py-0.5 rounded-md bg-[#EFE9DC] text-[#5C4B3B] text-[10.5px] font-semibold">
                           {quiz.frequencyLabelAr}
                         </span>
-                        <span className="text-[#6A766E] text-[11px] flex items-center gap-1">
-                          <Calendar className="w-3 h-3 text-[#96701E]" />
+                        <span className="text-[#84715E] text-[11px] flex items-center gap-1">
+                          <Calendar className="w-3 h-3 text-[#C88A14]" />
                           <span>الموعد: {quiz.scheduledDateFormatted}</span>
                           <span className="mx-1">·</span>
-                          <Clock className="w-3 h-3 text-[#96701E]" />
+                          <Clock className="w-3 h-3 text-[#C88A14]" />
                           <span>الساعة {quiz.reminderTime}</span>
                         </span>
                         {isDueToday && (
-                          <span className="text-[10px] font-bold text-[#0E6340] px-1.5 py-0.5 rounded-sm bg-[#0E6340]/15">
+                          <span className="text-[10px] font-bold text-[#4A6144] px-1.5 py-0.5 rounded-sm bg-[#4A6144]/15">
                             حان اليوم!
                           </span>
                         )}
                         {quiz.score !== undefined && (
-                          <span className="text-[10px] font-bold text-[#96701E] font-mono-tabular">
+                          <span className="text-[10px] font-bold text-[#C88A14] font-mono-tabular">
                             النتيجة السابقة: {quiz.score}%
                           </span>
                         )}
@@ -769,7 +769,7 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({
                         <button
                           type="button"
                           onClick={() => onStartQuiz && onStartQuiz(quiz)}
-                          className="px-3.5 py-1.5 rounded-xl bg-[#96701E] hover:bg-[#B3780C] text-white text-xs font-bold transition-all cursor-pointer shadow-2xs flex items-center gap-1.5"
+                          className="px-3.5 py-1.5 rounded-xl bg-[#C88A14] hover:bg-[#B3780C] text-white text-xs font-bold transition-all cursor-pointer shadow-2xs flex items-center gap-1.5"
                         >
                           <Play className="w-3 h-3 fill-current" />
                           <span>{lang === 'ar' ? 'بدء الاختبار الآن' : 'Start Quiz'}</span>
@@ -783,24 +783,24 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({
           </div>
 
           {/* Certified Memorization Reports List */}
-          <div className="rounded-xl bg-[#FFFFFF] border border-[#C5CEBF] overflow-hidden">
-            <div className="px-4 py-2.5 bg-[#F4F5EE] border-b border-[#C5CEBF] flex items-center justify-between">
+          <div className="rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] overflow-hidden">
+            <div className="px-4 py-2.5 bg-[#F7F3EB] border-b border-[#DDD2BE] flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <FileText className="w-4 h-4 text-[#0E6340]" />
-                <h3 className="text-xs font-bold text-[#161E19]">
+                <FileText className="w-4 h-4 text-[#4A6144]" />
+                <h3 className="text-xs font-bold text-[#261C14]">
                   {lang === 'ar'
                     ? 'سجل تقارير إتمام الحفظ الثلاثية المعتمدة'
                     : 'Certified Memorization Reports History'}
                 </h3>
               </div>
-              <span className="text-xs text-[#6A766E] font-mono-tabular">
+              <span className="text-xs text-[#84715E] font-mono-tabular">
                 {reports.length} تقرير
               </span>
             </div>
 
             {reports.length === 0 ? (
-              <div className="p-8 text-center text-xs text-[#6A766E] space-y-2">
-                <Award className="w-8 h-8 text-[#C5CEBF] mx-auto" />
+              <div className="p-8 text-center text-xs text-[#84715E] space-y-2">
+                <Award className="w-8 h-8 text-[#DDD2BE] mx-auto" />
                 <p>
                   {lang === 'ar'
                     ? 'لم يتم تسجيل أي تقارير حفظ بعد. ستظهر التقارير هنا تلقائياً عند إتمام مراحل الحفظ الثلاث واعتماد التقييم.'
@@ -808,7 +808,7 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({
                 </p>
               </div>
             ) : (
-              <div className="divide-y divide-[#EAF0E7]">
+              <div className="divide-y divide-[#EFE9DC]">
                 {reports.map((report) => (
                   <div
                     key={report.id}
@@ -819,9 +819,9 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({
                         <span
                           className={`px-2 py-0.5 rounded-md text-[10.5px] font-bold ${
                             report.evaluation === 'muthabbat'
-                              ? 'bg-[#0E6340] text-white'
+                              ? 'bg-[#4A6144] text-white'
                               : report.evaluation === 'mutaraddid'
-                              ? 'bg-[#96701E] text-white'
+                              ? 'bg-[#C88A14] text-white'
                               : 'bg-[#A84A32] text-white'
                           }`}
                         >
@@ -831,20 +831,20 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({
                             ? '🟨 مُتردِّد'
                             : '🟥 مُتفلِّت'}
                         </span>
-                        <h4 className="text-xs sm:text-sm font-bold text-[#0E5C3E] font-display-islamic">
+                        <h4 className="text-xs sm:text-sm font-bold text-[#2D2218] font-display-islamic">
                           سورة {report.surahNameAr} (الآيات {report.ayahFrom} - {report.ayahTo})
                         </h4>
-                        <span className="text-[#6A766E] text-[11px]">
+                        <span className="text-[#84715E] text-[11px]">
                           ({report.ayahCount} آية · {report.pagesCount} صفحة)
                         </span>
                       </div>
 
-                      <div className="text-[11px] text-[#4B5650] flex flex-wrap items-center gap-2">
+                      <div className="text-[11px] text-[#5C4B3B] flex flex-wrap items-center gap-2">
                         <span>القارئ: {report.reciterName}</span>
                         <span>·</span>
                         <span>تاريخ الإتمام: {report.formattedDate}</span>
                         <span>·</span>
-                        <span className="text-[#96701E] font-semibold">
+                        <span className="text-[#C88A14] font-semibold">
                           الاختبار المجدول: {report.randomQuizSchedule.frequencyLabelAr}
                         </span>
                       </div>
@@ -854,9 +854,9 @@ export const AnalyticsSection: React.FC<AnalyticsSectionProps> = ({
                       <button
                         type="button"
                         onClick={() => onViewReport && onViewReport(report)}
-                        className="px-3 py-1.5 rounded-xl border border-[#C5CEBF] bg-[#FFFFFF] hover:bg-[#EAF0E7] text-xs font-bold text-[#161E19] transition-colors cursor-pointer flex items-center gap-1.5"
+                        className="px-3 py-1.5 rounded-xl border border-[#DDD2BE] bg-[#FFFDF9] hover:bg-[#EFE9DC] text-xs font-bold text-[#261C14] transition-colors cursor-pointer flex items-center gap-1.5"
                       >
-                        <ExternalLink className="w-3.5 h-3.5 text-[#96701E]" />
+                        <ExternalLink className="w-3.5 h-3.5 text-[#C88A14]" />
                         <span>عرض التقرير</span>
                       </button>
                     </div>

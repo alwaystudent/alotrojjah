@@ -27,7 +27,6 @@
 
   body {
     background-color: var(--bg-canvas);
-    background-image: linear-gradient(170deg, #FAF6EE 0%, #F6F0E3 52%, #EFE6D5 100%);
     color: var(--text-umber);
     font-family: 'Cairo', 'Plus Jakarta Sans', sans-serif;
     -webkit-font-smoothing: antialiased;
@@ -67,18 +66,10 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Subtle Islamic 8-point star geometric background pattern + Soft Harmonious Ambient Gradient */
+/* Subtle Islamic 8-point star geometric background pattern (Original App Theme) */
 .islamic-pattern-subtle {
   background-color: #F7F3EB;
-  background-image:
-    url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' stroke='%23C88A14' stroke-width='0.6' stroke-opacity='0.11'%3E%3Cpath d='M30 0L37.5 15L52.5 7.5L45 22.5L60 30L45 37.5L52.5 52.5L37.5 45L30 60L22.5 45L7.5 52.5L15 37.5L0 30L15 22.5L7.5 7.5L22.5 15Z'/%3E%3Ccircle cx='30' cy='30' r='8'/%3E%3C/g%3E%3C/svg%3E"),
-    radial-gradient(ellipse 72% 48% at 86% 6%, rgba(200, 138, 20, 0.095) 0%, rgba(200, 138, 20, 0) 70%),
-    radial-gradient(ellipse 68% 52% at 14% 82%, rgba(74, 97, 68, 0.075) 0%, rgba(74, 97, 68, 0) 72%),
-    radial-gradient(ellipse 90% 45% at 50% 0%, rgba(255, 253, 249, 0.85) 0%, rgba(255, 253, 249, 0) 72%),
-    linear-gradient(170deg, rgba(255, 253, 249, 0.55) 0%, rgba(247, 243, 235, 0.12) 48%, rgba(226, 212, 187, 0.36) 100%);
-  background-repeat: repeat, no-repeat, no-repeat, no-repeat, no-repeat;
-  background-size: 60px 60px, 100% 100%, 100% 100%, 100% 100%, 100% 100%;
-  background-position: 0 0, center center, center center, center center, center center;
+  background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' stroke='%23C88A14' stroke-width='0.6' stroke-opacity='0.14'%3E%3Cpath d='M30 0L37.5 15L52.5 7.5L45 22.5L60 30L45 37.5L52.5 52.5L37.5 45L30 60L22.5 45L7.5 52.5L15 37.5L0 30L15 22.5L7.5 7.5L22.5 15Z'/%3E%3Ccircle cx='30' cy='30' r='8'/%3E%3C/g%3E%3C/svg%3E");
 }
 
 /* Warm earthy gradient with mustard undertones (Original App Theme) */
@@ -87,174 +78,123 @@
 }
 
 .earthy-card-gradient {
-  background-color: #FAF6EE;
+  background: linear-gradient(180deg, #FFFDF9 0%, #F6EFE2 100%);
 }
 
 .olive-card-surface {
-  background-color: #FAF6EE;
+  background: linear-gradient(180deg, #FFFDF9 0%, #EFF4EC 100%);
 }
 
 .gold-card-surface {
-  background-color: #FAF6EE;
+  background: linear-gradient(180deg, #FFFDF9 0%, #FBF3DF 100%);
 }
 
 .umber-card-surface {
-  background-color: #FAF6EE;
+  background: linear-gradient(180deg, #FFFDF9 0%, #F4EDE0 100%);
 }
 
 .soft-earth-card-surface {
-  background-color: #F6EFE2;
+  background: linear-gradient(180deg, #FFFDF9 0%, #EFE6D6 100%);
 }
 
 .mustard-gradient-btn {
   background: linear-gradient(135deg, #D49B1A 0%, #B87D10 100%);
-  box-shadow: 0 2px 5px -1px rgba(158, 106, 12, 0.25);
+  box-shadow: 0 2px 6px -1px rgba(158, 106, 12, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25);
 }
 
 .mustard-gradient-btn:hover {
   background: linear-gradient(135deg, #C28B14 0%, #9E6A0C 100%);
-  box-shadow: 0 3px 8px -2px rgba(158, 106, 12, 0.32);
+  box-shadow: 0 4px 10px -2px rgba(158, 106, 12, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.3);
 }
 
-/* Subtle Yet Noticeable Card Borders with Blended Multi-Tone Top Edge & Soft Elevation */
+/* Prominent Card & Pill Borders with Subtle Elevation & Tactile Hover Harmony */
+.frame-pill-edge {
+  border: 1.5px solid #C6B28D;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 2px 7px -2px rgba(45, 34, 24, 0.12);
+}
+
 .frame-card-gold,
 .frame-card-olive,
 .frame-card-umber,
 .frame-card-ivory {
-  position: relative;
-  overflow: hidden;
   transition:
     transform 180ms cubic-bezier(0.16, 1, 0.3, 1),
     box-shadow 180ms cubic-bezier(0.16, 1, 0.3, 1),
     border-color 180ms ease;
 }
 
-.frame-card-gold::before,
-.frame-card-olive::before,
-.frame-card-umber::before,
-.frame-card-ivory::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3.5px;
-  pointer-events: none;
-  z-index: 2;
-  opacity: 0.92;
-  transition: opacity 180ms ease;
-}
-
 .frame-card-gold {
-  border: 1px solid #DEC078;
+  border: 1.5px solid #CFA856;
+  border-top: 3px solid #B87D10;
   box-shadow:
-    0 2px 8px -3px rgba(158, 106, 12, 0.11),
-    0 1px 2px rgba(45, 34, 24, 0.05);
-}
-
-.frame-card-gold::before {
-  background: linear-gradient(
-    90deg,
-    #8F681E 0%,
-    #C88A14 28%,
-    #EAB338 52%,
-    #5A7553 78%,
-    #C88A14 100%
-  );
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 5px 14px -4px rgba(158, 106, 12, 0.16),
+    0 2px 5px -1px rgba(45, 34, 24, 0.08);
 }
 
 .frame-card-olive {
-  border: 1px solid #AEBFAA;
+  border: 1.5px solid #8DA684;
+  border-top: 3px solid #42593C;
   box-shadow:
-    0 2px 8px -3px rgba(74, 97, 68, 0.11),
-    0 1px 2px rgba(45, 34, 24, 0.05);
-}
-
-.frame-card-olive::before {
-  background: linear-gradient(
-    90deg,
-    #3B4F36 0%,
-    #4A6144 34%,
-    #C88A14 66%,
-    #6B8963 88%,
-    #4A6144 100%
-  );
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 5px 14px -4px rgba(74, 97, 68, 0.16),
+    0 2px 5px -1px rgba(45, 34, 24, 0.08);
 }
 
 .frame-card-umber {
-  border: 1px solid #CBBBA2;
+  border: 1.5px solid #B5A287;
+  border-top: 3px solid #2D2218;
   box-shadow:
-    0 2px 8px -3px rgba(45, 34, 24, 0.10),
-    0 1px 2px rgba(45, 34, 24, 0.05);
-}
-
-.frame-card-umber::before {
-  background: linear-gradient(
-    90deg,
-    #2D2218 0%,
-    #5B442D 32%,
-    #C88A14 58%,
-    #7B5C3B 84%,
-    #2D2218 100%
-  );
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 5px 14px -4px rgba(45, 34, 24, 0.15),
+    0 2px 5px -1px rgba(45, 34, 24, 0.08);
 }
 
 .frame-card-ivory {
-  border: 1px solid #D3C5AF;
+  border: 1.5px solid #C5B397;
   box-shadow:
-    0 2px 8px -3px rgba(45, 34, 24, 0.08),
-    0 1px 2px rgba(45, 34, 24, 0.04);
-}
-
-.frame-card-ivory::before {
-  background: linear-gradient(
-    90deg,
-    #4A6144 0%,
-    #C88A14 36%,
-    #EAB338 56%,
-    #6B4F28 84%,
-    #4A6144 100%
-  );
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    0 5px 14px -4px rgba(45, 34, 24, 0.12),
+    0 2px 5px -1px rgba(45, 34, 24, 0.07);
 }
 
 @media (hover: hover) {
-  .frame-card-gold:hover::before,
-  .frame-card-olive:hover::before,
-  .frame-card-umber:hover::before,
-  .frame-card-ivory:hover::before {
-    opacity: 1;
-  }
-
   .frame-card-gold:hover {
-    transform: translateY(-1.5px);
-    border-color: #CE9E3F;
+    transform: translateY(-2px);
+    border-color: #B87D10;
     box-shadow:
-      0 6px 14px -5px rgba(184, 125, 16, 0.16),
-      0 2px 5px -1px rgba(45, 34, 24, 0.06);
+      inset 0 1px 0 rgba(255, 255, 255, 0.95),
+      0 10px 22px -6px rgba(184, 125, 16, 0.24),
+      0 3px 8px -2px rgba(45, 34, 24, 0.1);
   }
 
   .frame-card-olive:hover {
-    transform: translateY(-1.5px);
-    border-color: #7D9A75;
+    transform: translateY(-2px);
+    border-color: #4A6144;
     box-shadow:
-      0 6px 14px -5px rgba(74, 97, 68, 0.16),
-      0 2px 5px -1px rgba(45, 34, 24, 0.06);
+      inset 0 1px 0 rgba(255, 255, 255, 0.95),
+      0 10px 22px -6px rgba(74, 97, 68, 0.24),
+      0 3px 8px -2px rgba(45, 34, 24, 0.1);
   }
 
   .frame-card-umber:hover {
-    transform: translateY(-1.5px);
-    border-color: #AC9675;
+    transform: translateY(-2px);
+    border-color: #7C5C38;
     box-shadow:
-      0 6px 14px -5px rgba(45, 34, 24, 0.15),
-      0 2px 5px -1px rgba(45, 34, 24, 0.06);
+      inset 0 1px 0 rgba(255, 255, 255, 0.95),
+      0 10px 22px -6px rgba(45, 34, 24, 0.22),
+      0 3px 8px -2px rgba(45, 34, 24, 0.1);
   }
 
   .frame-card-ivory:hover {
-    transform: translateY(-1.5px);
-    border-color: #BCA98C;
+    transform: translateY(-2px);
+    border-color: #A58D65;
     box-shadow:
-      0 6px 14px -5px rgba(45, 34, 24, 0.12),
-      0 2px 5px -1px rgba(45, 34, 24, 0.05);
+      inset 0 1px 0 rgba(255, 255, 255, 0.98),
+      0 10px 22px -6px rgba(45, 34, 24, 0.17),
+      0 3px 8px -2px rgba(45, 34, 24, 0.09);
   }
 }
 
@@ -262,7 +202,7 @@
 .frame-card-olive:active,
 .frame-card-umber:active,
 .frame-card-ivory:active {
-  transform: scale(0.997);
+  transform: scale(0.996);
 }
 
 @media (prefers-reduced-motion: reduce) {

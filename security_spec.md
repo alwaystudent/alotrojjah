@@ -21,10 +21,3 @@
 10. State shortcutting: creating a call directly with `status: 'active'` or `'ended'`.
 11. Resource poisoning: sending a 1MB string in `offerSdp`, `friendName`, or `displayName`.
 12. Post-terminal mutation: updating a call/session after `status == 'ended'` or `'declined'`.
-13. Non-admin read/list/delete of `/deviceTelemetry/{deviceId}` or email-spoofed access (`email_verified == false`).
-14. Self-assigning admin status via `/admins/{uid}` or injecting shadow fields / negative counters into `/deviceTelemetry/{deviceId}`.
-
-## 3. Owner Telemetry Invariants
-1. **Admin-Only Read & List**: Only the verified app owner (`email == 'informastvces@gmail.com' && email_verified == true`) or a document in `/admins/{uid}` can `get`, `list`, or `delete` `/deviceTelemetry/{deviceId}`.
-2. **Zero-PII Write-Only Telemetry**: `/deviceTelemetry/{deviceId}` contains strictly non-PII device type, OS, browser, country code/name, install status, and bounded session counters validated via `isValidDeviceTelemetry(incoming())`, server timestamps (`request.time`), and monotonic counters on update.
-
