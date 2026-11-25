@@ -186,6 +186,7 @@ export default function App() {
   const [authUser, setAuthUser] = useState<User | null>(auth.currentUser);
   const [incomingCall, setIncomingCall] = useState<IncomingDuoCall | null>(null);
   const lastRingingCallIdRef = useRef<string | null>(null);
+  const handledIncomingCallIdsRef = useRef<Set<string>>(new Set());
   const handleAcceptCallRef = useRef<(sessionId: string) => void>(() => {});
   const handleDeclineCallRef = useRef<(sessionId: string) => Promise<void> | void>(() => {});
   const [isPrivacyTermsOpen, setIsPrivacyTermsOpen] = useState<boolean>(false);
@@ -695,24 +696,43 @@ export default function App() {
     }
   };
 
+  const markIncomingCallHandled = (targetSessionId: string) => {
+    const cleanId = targetSessionId.trim();
+    if (!cleanId) return;
+    handledIncomingCallIdsRef.current.add(cleanId);
+    if (handledIncomingCallIdsRef.current.size > 30) {
+      const oldest = handledIncomingCallIdsRef.current.values().next().value;
+      if (oldest) handledIncomingCallIdsRef.current.delete(oldest);
+    }
+  };
+
   const handleDeclineIncomingCall = async (targetSessionId: string) => {
+    markIncomingCallHandled(targetSessionId);
     callRingtone.stop();
     dismissBackgroundCallNotification(targetSessionId);
     setIncomingCall(null);
     lastRingingCallIdRef.current = null;
     if (!isDuoEligibleUser(auth.currentUser)) return;
     const callPath = `duoSessions/${targetSessionId}`;
-    try {
-      await updateDoc(doc(db, 'duoSessions', targetSessionId), {
-        status: 'declined',
-        updatedAt: serverTimestamp(),
-      });
-    } catch (err) {
-      console.warn('Decline call notice:', err, callPath);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        await updateDoc(doc(db, 'duoSessions', targetSessionId), {
+          status: 'declined',
+          updatedAt: serverTimestamp(),
+        });
+        return;
+      } catch (err) {
+        if (attempt === 1) {
+          console.warn('Decline call notice:', err, callPath);
+        } else {
+          await new Promise((r) => window.setTimeout(r, 350));
+        }
+      }
     }
   };
 
   const handleAcceptIncomingCall = (targetSessionId: string) => {
+    markIncomingCallHandled(targetSessionId);
     callRingtone.stop();
     callRingtone.unlockAudio();
     dismissBackgroundCallNotification(targetSessionId);
@@ -756,8 +776,12 @@ export default function App() {
                 : now;
             return { raw, createdMs };
           })
-          // Ignore orphaned ringing sessions older than 5 minutes
-          .filter((item) => now - item.createdMs <= 300_000)
+          // Ignore orphaned ringing sessions (> 5m) and sessions already accepted/declined locally
+          .filter(
+            (item) =>
+              now - item.createdMs <= 300_000 &&
+              !handledIncomingCallIdsRef.current.has(item.raw.sessionId)
+          )
           .sort((a, b) => b.createdMs - a.createdMs);
 
         if (freshDocs.length === 0) {
