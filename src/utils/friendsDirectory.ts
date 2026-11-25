@@ -186,43 +186,55 @@ export function subscribeFriendPresence(
   );
 }
 
+const inflightInviteByUid = new Map<string, Promise<FriendInviteDoc | null>>();
+
 export async function getOrCreateMyFriendInvite(user: User): Promise<FriendInviteDoc | null> {
   if (!user?.uid) return null;
-  const invitesCol = collection(db, 'friendInvites');
-  const q = query(invitesCol, where('ownerUid', '==', user.uid));
+  const existing = inflightInviteByUid.get(user.uid);
+  if (existing) return existing;
 
-  try {
-    const snap = await getDocs(q);
-    const openDoc = snap.docs.find((d) => (d.data() as FriendInviteDoc).status === 'open');
-    if (openDoc) {
-      return openDoc.data() as FriendInviteDoc;
+  const task = (async (): Promise<FriendInviteDoc | null> => {
+    const invitesCol = collection(db, 'friendInvites');
+    const q = query(invitesCol, where('ownerUid', '==', user.uid));
+
+    try {
+      const snap = await getDocs(q);
+      const openDoc = snap.docs.find((d) => (d.data() as FriendInviteDoc).status === 'open');
+      if (openDoc) {
+        return openDoc.data() as FriendInviteDoc;
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.LIST, 'friendInvites');
     }
-  } catch (err) {
-    handleFirestoreError(err, OperationType.LIST, 'friendInvites');
-  }
 
-  const newToken = generateCryptoToken('INV', 10);
-  const ownerName = getDisplayNameForUser(user);
-  const invitePath = `friendInvites/${newToken}`;
-  try {
-    await setDoc(doc(db, 'friendInvites', newToken), {
-      inviteToken: newToken,
-      ownerUid: user.uid,
-      ownerName,
-      status: 'open',
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-    return {
-      inviteToken: newToken,
-      ownerUid: user.uid,
-      ownerName,
-      status: 'open',
-    };
-  } catch (err) {
-    handleFirestoreError(err, OperationType.CREATE, invitePath);
-    return null;
-  }
+    const newToken = generateCryptoToken('INV', 10);
+    const ownerName = getDisplayNameForUser(user);
+    const invitePath = `friendInvites/${newToken}`;
+    try {
+      await setDoc(doc(db, 'friendInvites', newToken), {
+        inviteToken: newToken,
+        ownerUid: user.uid,
+        ownerName,
+        status: 'open',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      return {
+        inviteToken: newToken,
+        ownerUid: user.uid,
+        ownerName,
+        status: 'open',
+      };
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, invitePath);
+      return null;
+    }
+  })().finally(() => {
+    inflightInviteByUid.delete(user.uid);
+  });
+
+  inflightInviteByUid.set(user.uid, task);
+  return task;
 }
 
 export async function regenerateMyFriendInvite(user: User): Promise<FriendInviteDoc | null> {

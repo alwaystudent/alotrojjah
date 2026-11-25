@@ -32,6 +32,18 @@ service cloud.firestore {
       return isVerifiedUser() && request.auth.uid == userId;
     }
 
+    function isAdmin() {
+      return isVerifiedUser() && (
+        (
+          'email_verified' in request.auth.token
+          && request.auth.token.email_verified == true
+          && 'email' in request.auth.token
+          && request.auth.token.email == 'informastvces@gmail.com'
+        )
+        || exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
     // Validation Blueprints
     function isValidUserPrivateProfile(data) {
       return data.keys().hasAll(['uid', 'email', 'displayName', 'updatedAt'])
@@ -121,7 +133,8 @@ service cloud.firestore {
           'hideVersesForReciter', 'hideVersesForListener',
           'hostRole', 'guestRole',
           'activeAyah', 'reciterSide', 'mistakesCount', 'markedErrors',
-          'boardHintText', 'boardHintKind', 'boardHintSenderName', 'boardHintSeq', 'iceEpoch',
+          'boardHintText', 'boardHintKind', 'boardHintSenderName', 'boardHintSeq',
+          'iceEpoch', 'answerIceEpoch', 'iceRestartNonce', 'hostCandidates', 'guestCandidates',
           'endedByUid', 'sessionEvaluation', 'callDurationSeconds', 'accuracyPct',
           'surahNumber', 'surahEnd', 'ayahFrom', 'ayahTo', 'pageFrom', 'pageTo',
           'offerType', 'offerSdp', 'answerType', 'answerSdp',
@@ -155,6 +168,18 @@ service cloud.firestore {
         && (!('boardHintSenderName' in data) || data.boardHintSenderName == null || (data.boardHintSenderName is string && data.boardHintSenderName.size() <= 80))
         && (!('boardHintSeq' in data) || (data.boardHintSeq is number && data.boardHintSeq >= 0 && data.boardHintSeq <= 10000))
         && (!('iceEpoch' in data) || (data.iceEpoch is number && data.iceEpoch >= 0 && data.iceEpoch <= 100))
+        && (!('answerIceEpoch' in data) || (data.answerIceEpoch is number && data.answerIceEpoch >= 0 && data.answerIceEpoch <= 100))
+        && (!('iceRestartNonce' in data) || (data.iceRestartNonce is number && data.iceRestartNonce >= 0 && data.iceRestartNonce <= 1000))
+        && (!('hostCandidates' in data) || (
+          data.hostCandidates is list
+          && data.hostCandidates.size() <= 40
+          && (data.hostCandidates.size() == 0 || (data.hostCandidates[0] is string && data.hostCandidates[0].size() >= 1 && data.hostCandidates[0].size() <= 512))
+        ))
+        && (!('guestCandidates' in data) || (
+          data.guestCandidates is list
+          && data.guestCandidates.size() <= 40
+          && (data.guestCandidates.size() == 0 || (data.guestCandidates[0] is string && data.guestCandidates[0].size() >= 1 && data.guestCandidates[0].size() <= 512))
+        ))
         && (!('endedByUid' in data) || data.endedByUid == null || isValidId(data.endedByUid))
         && (!('sessionEvaluation' in data) || data.sessionEvaluation == null || data.sessionEvaluation in ['excellent', 'very_good', 'good_practice', 'needs_review'])
         && (!('callDurationSeconds' in data) || data.callDurationSeconds == null || (data.callDurationSeconds is number && data.callDurationSeconds >= 0 && data.callDurationSeconds <= 86400))
@@ -180,6 +205,48 @@ service cloud.firestore {
         && (!('answerType' in data) || data.answerType == null || (data.answerType is string && data.answerType.size() <= 20))
         && (!('answerSdp' in data) || data.answerSdp == null || (data.answerSdp is string && data.answerSdp.size() <= 65536))
         && data.status in ['ringing', 'active', 'declined', 'ended']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidDeviceTelemetry(data) {
+      return data.keys().hasAll([
+          'deviceId', 'installed', 'installSource', 'deviceType', 'osName', 'browserName',
+          'countryCode', 'countryNameAr', 'countryNameEn',
+          'totalSessions', 'totalSessionSeconds', 'lastSessionSeconds',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'deviceId', 'installed', 'installSource', 'deviceType', 'osName', 'browserName',
+          'countryCode', 'countryNameAr', 'countryNameEn',
+          'totalSessions', 'totalSessionSeconds', 'lastSessionSeconds',
+          'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.deviceId)
+        && data.deviceId.size() <= 64
+        && data.installed is bool
+        && data.installSource in ['standalone', 'pwa_prompt', 'web']
+        && data.deviceType in ['mobile', 'tablet', 'desktop']
+        && data.osName in ['Android', 'iOS', 'Windows', 'macOS', 'Linux', 'Other']
+        && data.browserName in ['Chrome', 'Safari', 'Edge', 'Firefox', 'Samsung', 'Other']
+        && data.countryCode is string
+        && data.countryCode.size() == 2
+        && data.countryCode.matches('^[A-Z]{2}$')
+        && data.countryNameAr is string
+        && data.countryNameAr.size() >= 1
+        && data.countryNameAr.size() <= 64
+        && data.countryNameEn is string
+        && data.countryNameEn.size() >= 1
+        && data.countryNameEn.size() <= 64
+        && data.totalSessions is number
+        && data.totalSessions >= 1
+        && data.totalSessions <= 100000
+        && data.totalSessionSeconds is number
+        && data.totalSessionSeconds >= 0
+        && data.totalSessionSeconds <= 100000000
+        && data.lastSessionSeconds is number
+        && data.lastSessionSeconds >= 0
+        && data.lastSessionSeconds <= 86400
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -299,7 +366,6 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && (
-          // Action 1: Recipient explicitly accepts or declines pending request (can also update syncedBySender)
           (
             existing().status == 'pending'
             && existing().toUid == request.auth.uid
@@ -308,7 +374,6 @@ service cloud.firestore {
             && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'syncedBySender', 'updatedAt'])
           )
           ||
-          // Action 2: Sender marks accepted request as synced after writing own friend record
           (
             existing().status == 'accepted'
             && existing().fromUid == request.auth.uid
@@ -382,7 +447,6 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && (
-          // Action 1: Approved friend callee answers the ringing call
           (
             existing().status == 'ringing'
             && existing().calleeUid == request.auth.uid
@@ -392,10 +456,18 @@ service cloud.firestore {
             && incoming().status == 'active'
             && incoming().answerType is string
             && incoming().answerSdp is string
-            && incoming().diff(existing()).affectedKeys().hasOnly(['guestUid', 'guestName', 'answerType', 'answerSdp', 'status', 'updatedAt'])
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'guestUid', 'guestName', 'answerType', 'answerSdp', 'answerIceEpoch', 'guestCandidates', 'status', 'updatedAt'
+            ])
           )
           ||
-          // Action 2: Callee declines an incoming ringing call (Terminal State)
+          (
+            existing().status == 'ringing'
+            && incoming().status == 'ringing'
+            && existing().hostUid == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly(['hostCandidates', 'updatedAt'])
+          )
+          ||
           (
             existing().status == 'ringing'
             && existing().calleeUid == request.auth.uid
@@ -403,7 +475,6 @@ service cloud.firestore {
             && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
           )
           ||
-          // Action 3: Caller, Guest, or Callee ends call with optional evaluation summary (Terminal State)
           (
             (
               existing().hostUid == request.auth.uid
@@ -417,7 +488,6 @@ service cloud.firestore {
             ])
           )
           ||
-          // Action 4: Active call participants sync bounded recitation metadata, visual board hints, ICE restart SDP & live curriculum (NO RTCDataChannel)
           (
             existing().status == 'active'
             && incoming().status == 'active'
@@ -428,7 +498,8 @@ service cloud.firestore {
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'activeAyah', 'reciterSide', 'mistakesCount', 'markedErrors',
               'boardHintText', 'boardHintKind', 'boardHintSenderName', 'boardHintSeq',
-              'iceEpoch', 'offerType', 'offerSdp', 'answerType', 'answerSdp',
+              'iceEpoch', 'answerIceEpoch', 'iceRestartNonce', 'hostCandidates', 'guestCandidates',
+              'offerType', 'offerSdp', 'answerType', 'answerSdp',
               'hideVersesForReciter', 'hideVersesForListener',
               'hostRole', 'guestRole',
               'riwayah', 'curriculumMode', 'surahNumber', 'surahEnd', 'ayahFrom', 'ayahTo', 'pageFrom', 'pageTo',
@@ -440,6 +511,41 @@ service cloud.firestore {
       allow delete: if isVerifiedUser()
         && isValidId(sessionId)
         && existing().hostUid == request.auth.uid;
+    }
+
+    // 7. Read-Only Admin Marker Collection
+    match /admins/{uid} {
+      allow get: if isValidId(uid) && isOwner(uid);
+      allow list, create, update, delete: if false;
+    }
+
+    // 8. App Owner Device Installation & Session Telemetry (Zero-PII Write, Owner-Only Read)
+    match /deviceTelemetry/{deviceId} {
+      allow get: if isValidId(deviceId) && isAdmin();
+      allow list: if isAdmin();
+      allow create: if isValidId(deviceId)
+        && isValidDeviceTelemetry(incoming())
+        && incoming().deviceId == deviceId
+        && incoming().totalSessions >= 1
+        && incoming().totalSessions <= 10
+        && incoming().totalSessionSeconds >= 0
+        && incoming().totalSessionSeconds <= 86400
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(deviceId)
+        && isValidDeviceTelemetry(incoming())
+        && incoming().deviceId == existing().deviceId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (existing().installed == false || incoming().installed == true)
+        && incoming().totalSessions >= existing().totalSessions
+        && incoming().totalSessionSeconds >= existing().totalSessionSeconds
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'installed', 'installSource', 'deviceType', 'osName', 'browserName',
+          'countryCode', 'countryNameAr', 'countryNameEn',
+          'totalSessions', 'totalSessionSeconds', 'lastSessionSeconds', 'updatedAt'
+        ]);
+      allow delete: if isValidId(deviceId) && isAdmin();
     }
   }
 }

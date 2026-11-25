@@ -947,7 +947,7 @@ export default function App() {
               !dismissedCallIdsRef.current.has(data.sessionId) &&
               data.sessionId !== activeCallIdRef.current &&
               data.sessionId !== pendingAcceptCallIdRef.current &&
-              nowMs - createdMs <= 10 * 60 * 1000
+              nowMs - createdMs <= 2 * 60 * 1000
           )
           .sort((a, b) => b.createdMs - a.createdMs);
 

@@ -268,6 +268,18 @@
         "iceEpoch": {
           "type": "number"
         },
+        "answerIceEpoch": {
+          "type": "number"
+        },
+        "iceRestartNonce": {
+          "type": "number"
+        },
+        "hostCandidates": {
+          "type": "array"
+        },
+        "guestCandidates": {
+          "type": "array"
+        },
         "endedByUid": {
           "type": "string",
           "maxLength": 128
@@ -344,6 +356,100 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "AdminRole": {
+      "title": "AdminRole",
+      "description": "Server-provisioned owner/admin marker document keyed by UID.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["owner"]
+        }
+      },
+      "required": ["uid", "role"]
+    },
+    "DeviceTelemetry": {
+      "title": "DeviceTelemetry",
+      "description": "Zero-PII device installation, country, device type, and session duration telemetry for the app owner dashboard.",
+      "type": "object",
+      "properties": {
+        "deviceId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "installed": {
+          "type": "boolean"
+        },
+        "installSource": {
+          "type": "string",
+          "enum": ["standalone", "pwa_prompt", "web"]
+        },
+        "deviceType": {
+          "type": "string",
+          "enum": ["mobile", "tablet", "desktop"]
+        },
+        "osName": {
+          "type": "string",
+          "enum": ["Android", "iOS", "Windows", "macOS", "Linux", "Other"]
+        },
+        "browserName": {
+          "type": "string",
+          "enum": ["Chrome", "Safari", "Edge", "Firefox", "Samsung", "Other"]
+        },
+        "countryCode": {
+          "type": "string",
+          "maxLength": 4,
+          "pattern": "^[A-Z]{2}$"
+        },
+        "countryNameAr": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "countryNameEn": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "totalSessions": {
+          "type": "number"
+        },
+        "totalSessionSeconds": {
+          "type": "number"
+        },
+        "lastSessionSeconds": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "deviceId",
+        "installed",
+        "installSource",
+        "deviceType",
+        "osName",
+        "browserName",
+        "countryCode",
+        "countryNameAr",
+        "countryNameEn",
+        "totalSessions",
+        "totalSessionSeconds",
+        "lastSessionSeconds",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -370,6 +476,14 @@
     "/duoSessions/{sessionId}": {
       "schema": { "$ref": "#/entities/DuoSession" },
       "description": "Direct friend-to-friend audio-only WebRTC call signaling."
+    },
+    "/admins/{uid}": {
+      "schema": { "$ref": "#/entities/AdminRole" },
+      "description": "Read-only admin marker documents."
+    },
+    "/deviceTelemetry/{deviceId}": {
+      "schema": { "$ref": "#/entities/DeviceTelemetry" },
+      "description": "Zero-PII device installation, country, device type, and session duration telemetry."
     }
   }
 }

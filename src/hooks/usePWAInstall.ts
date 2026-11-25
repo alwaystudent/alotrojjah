@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { markTelemetryInstalled } from '../utils/deviceTelemetry';
 
 export interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -9,6 +10,38 @@ export type BrowserType = 'ios' | 'samsung' | 'firefox' | 'mac_safari' | 'chromi
 
 const STORAGE_KEY_PWA_INSTALLED = 'alutrujjah_pwa_installed_v1';
 const STORAGE_KEY_PWA_ALERT_DISMISSED = 'alutrujjah_pwa_single_alert_dismissed_v1';
+
+interface PWAWindow extends Window {
+  __alutrujjahDeferredInstallPrompt?: BeforeInstallPromptEvent | null;
+  __alutrujjahCheckSilentUpdate?: () => void;
+}
+
+let sharedDeferredPrompt: BeforeInstallPromptEvent | null =
+  typeof window !== 'undefined'
+    ? ((window as PWAWindow).__alutrujjahDeferredInstallPrompt ?? null)
+    : null;
+
+const promptListeners = new Set<(prompt: BeforeInstallPromptEvent | null) => void>();
+
+function setSharedPrompt(prompt: BeforeInstallPromptEvent | null) {
+  sharedDeferredPrompt = prompt;
+  if (typeof window !== 'undefined') {
+    (window as PWAWindow).__alutrujjahDeferredInstallPrompt = prompt;
+  }
+  promptListeners.forEach((listener) => listener(prompt));
+}
+
+function getLatestDeferredPrompt(): BeforeInstallPromptEvent | null {
+  if (sharedDeferredPrompt) return sharedDeferredPrompt;
+  if (typeof window !== 'undefined') {
+    const winPrompt = (window as PWAWindow).__alutrujjahDeferredInstallPrompt;
+    if (winPrompt) {
+      sharedDeferredPrompt = winPrompt;
+      return winPrompt;
+    }
+  }
+  return null;
+}
 
 function detectStandaloneDisplay(): boolean {
   if (typeof window === 'undefined') return false;
@@ -24,10 +57,14 @@ function detectStandaloneDisplay(): boolean {
 }
 
 export function usePWAInstall() {
-  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(() =>
+    getLatestDeferredPrompt()
+  );
   const [isInstalled, setIsInstalled] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     if (detectStandaloneDisplay()) return true;
+    // If browser already fired beforeinstallprompt before mount, it's definitely not installed
+    if (getLatestDeferredPrompt()) return false;
     try {
       return localStorage.getItem(STORAGE_KEY_PWA_INSTALLED) === 'true';
     } catch {
@@ -48,20 +85,36 @@ export function usePWAInstall() {
   useEffect(() => {
     let cancelled = false;
 
-    const markInstalled = () => {
+    const markInstalled = (source: 'standalone' | 'pwa_prompt' = 'pwa_prompt') => {
       if (cancelled) return;
       setIsInstalled(true);
-      setDeferredPrompt(null);
-      try {
-        localStorage.setItem(STORAGE_KEY_PWA_INSTALLED, 'true');
-      } catch {
-        // ignore
-      }
+      setSharedPrompt(null);
+      markTelemetryInstalled(source);
     };
 
+    const syncPromptListener = (prompt: BeforeInstallPromptEvent | null) => {
+      if (cancelled) return;
+      setDeferredPrompt(prompt);
+      if (prompt && !detectStandaloneDisplay()) {
+        setIsInstalled(false);
+        try {
+          localStorage.removeItem(STORAGE_KEY_PWA_INSTALLED);
+        } catch {
+          // ignore
+        }
+      }
+    };
+    promptListeners.add(syncPromptListener);
+
+    // Sync immediately in case head script captured beforeinstallprompt before mount
+    const existingPrompt = getLatestDeferredPrompt();
+    if (existingPrompt) {
+      syncPromptListener(existingPrompt);
+    }
+
     if (detectStandaloneDisplay()) {
-      markInstalled();
-    } else if (typeof navigator !== 'undefined') {
+      markInstalled('standalone');
+    } else if (typeof navigator !== 'undefined' && !existingPrompt) {
       // Smart check via Web App Installed Related Apps API when available
       const navWithRelated = navigator as unknown as {
         getInstalledRelatedApps?: () => Promise<Array<{ platform?: string }>>;
@@ -79,7 +132,7 @@ export function usePWAInstall() {
     }
 
     // Trigger silent SW update check when checking installation state
-    const win = window as unknown as { __alutrujjahCheckSilentUpdate?: () => void };
+    const win = window as PWAWindow;
     if (typeof win.__alutrujjahCheckSilentUpdate === 'function') {
       win.__alutrujjahCheckSilentUpdate();
     }
@@ -103,22 +156,20 @@ export function usePWAInstall() {
 
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
-      setDeferredPrompt(e as BeforeInstallPromptEvent);
-      // If browser explicitly offers beforeinstallprompt, app is not currently installed
-      if (!detectStandaloneDisplay()) {
-        setIsInstalled(false);
-        try {
-          localStorage.removeItem(STORAGE_KEY_PWA_INSTALLED);
-        } catch {
-          // ignore
-        }
+      setSharedPrompt(e as BeforeInstallPromptEvent);
+    };
+
+    const handleHeadPromptReady = () => {
+      const latest = getLatestDeferredPrompt();
+      if (latest) {
+        syncPromptListener(latest);
       }
     };
 
     const handleAppInstalled = () => {
       markInstalled();
       // Sync silent SW update immediately upon installation
-      const w = window as unknown as { __alutrujjahCheckSilentUpdate?: () => void };
+      const w = window as PWAWindow;
       if (typeof w.__alutrujjahCheckSilentUpdate === 'function') {
         w.__alutrujjahCheckSilentUpdate();
       }
@@ -132,15 +183,20 @@ export function usePWAInstall() {
     };
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    window.addEventListener('alutrujjah:pwa-prompt-ready', handleHeadPromptReady);
     window.addEventListener('appinstalled', handleAppInstalled);
+    window.addEventListener('alutrujjah:pwa-installed', handleAppInstalled);
     if (typeof standaloneMq.addEventListener === 'function') {
       standaloneMq.addEventListener('change', handleDisplayChange);
     }
 
     return () => {
       cancelled = true;
+      promptListeners.delete(syncPromptListener);
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.removeEventListener('alutrujjah:pwa-prompt-ready', handleHeadPromptReady);
       window.removeEventListener('appinstalled', handleAppInstalled);
+      window.removeEventListener('alutrujjah:pwa-installed', handleAppInstalled);
       if (typeof standaloneMq.removeEventListener === 'function') {
         standaloneMq.removeEventListener('change', handleDisplayChange);
       }
@@ -156,29 +212,26 @@ export function usePWAInstall() {
     }
   }, []);
 
-  const install = async (): Promise<boolean> => {
-    if (!deferredPrompt) return false;
+  const install = useCallback(async (): Promise<'accepted' | 'dismissed' | 'unavailable'> => {
+    const promptEvent = deferredPrompt ?? getLatestDeferredPrompt();
+    if (!promptEvent) return 'unavailable';
     try {
-      await deferredPrompt.prompt();
-      const { outcome } = await deferredPrompt.userChoice;
+      await promptEvent.prompt();
+      const { outcome } = await promptEvent.userChoice;
+      setSharedPrompt(null);
       if (outcome === 'accepted') {
         setIsInstalled(true);
-        setDeferredPrompt(null);
-        try {
-          localStorage.setItem(STORAGE_KEY_PWA_INSTALLED, 'true');
-        } catch {
-          // ignore
-        }
-        return true;
+        markTelemetryInstalled('pwa_prompt');
+        return 'accepted';
       }
+      return 'dismissed';
     } catch {
-      // Ignored
+      return 'unavailable';
     }
-    return false;
-  };
+  }, [deferredPrompt]);
 
   return {
-    isInstallable: !!deferredPrompt,
+    isInstallable: Boolean(deferredPrompt || getLatestDeferredPrompt()),
     isInstalled,
     shouldShowSingleAlert: !isInstalled && !alertDismissed,
     dismissSingleAlert,
