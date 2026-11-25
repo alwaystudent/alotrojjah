@@ -61,10 +61,6 @@ export interface IncomingDuoCall {
   hostRole?: 'student' | 'teacher';
   guestRole?: 'student' | 'teacher';
   iceEpoch?: number;
-  answerIceEpoch?: number;
-  iceRestartNonce?: number;
-  hostCandidates?: string[];
-  guestCandidates?: string[];
   activeAyah?: number;
   reciterSide?: 'host' | 'guest';
   status: 'ringing' | 'active' | 'declined' | 'ended';
@@ -459,15 +455,10 @@ export async function declineIncomingFriendRequest(req: FriendRequestDoc): Promi
   }
 }
 
-const inflightOutgoingFriendSyncIds = new Set<string>();
-
 export async function syncAcceptedOutgoingRequest(
   currentUser: User,
   req: FriendRequestDoc
 ): Promise<void> {
-  if (inflightOutgoingFriendSyncIds.has(req.requestId)) return;
-  inflightOutgoingFriendSyncIds.add(req.requestId);
-
   const friendRef = doc(db, 'users', currentUser.uid, 'friends', req.toUid);
   const reqRef = doc(db, 'friendRequests', req.requestId);
   const safeToName = req.toName?.trim().slice(0, 80) || 'صديق';
@@ -506,7 +497,5 @@ export async function syncAcceptedOutgoingRequest(
     await batch.commit();
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, `users/${currentUser.uid}/friends/${req.toUid}`);
-  } finally {
-    inflightOutgoingFriendSyncIds.delete(req.requestId);
   }
 }

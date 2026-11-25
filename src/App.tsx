@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useReducer, useCallback } from 'react';
 import {
   Plus,
   Check,
@@ -62,7 +62,7 @@ import {
   updateDoc,
   where,
 } from 'firebase/firestore';
-import { auth, db, googleProvider, OperationType, handleFirestoreError } from './firebase';
+import { auth, db, googleProvider, OperationType, logFirestoreListenerError } from './firebase';
 import {
   Language,
   PlanType,
@@ -90,17 +90,15 @@ import { PlanModal } from './components/PlanModal';
 import { AnalyticsSection } from './components/AnalyticsSection';
 import { RemindersSection } from './components/RemindersSection';
 import { MutunAdhkarSection } from './components/MutunAdhkarSection';
-import { DuoRecitationSection, ActiveDuoCallInfo } from './components/DuoRecitationSection';
+import { ActiveDuoCallInfo, DuoRecitationSection } from './components/DuoRecitationSection';
 import { SardMushafView } from './components/SardMushafView';
 import { SmartMemorizationSystem } from './components/SmartMemorizationSystem';
 import { RandomQuizModal } from './components/RandomQuizModal';
 import { MemorizationReportModal } from './components/MemorizationReportModal';
 import { SmartPWAInstallAlert } from './components/PWAInstallButton';
 import { PrivacyTermsModal } from './components/PrivacyTermsModal';
-import { OwnerDashboardSection } from './components/OwnerDashboardSection';
 import { getDualDate, getCompactDualDate } from './utils/calendar';
 import { memoryManager } from './utils/memoryCleanup';
-import { isAppOwnerUser, startDeviceTelemetryTracker } from './utils/deviceTelemetry';
 import {
   FriendInviteDoc,
   FriendRequestDoc,
@@ -130,7 +128,7 @@ const STORAGE_KEY_LANG = 'mishkat_sard_lang_v1';
 const STORAGE_KEY_FOCUS_MODE = 'alutrujjah_focus_mode';
 const STORAGE_KEY_ACTIVE_SECTION = 'alutrujjah_active_section_v1';
 
-type AppSection = 'home' | 'schedule' | 'today' | 'analytics' | 'reminders' | 'mutun' | 'duo' | 'owner';
+type AppSection = 'home' | 'schedule' | 'today' | 'analytics' | 'reminders' | 'mutun' | 'duo';
 const VALID_SECTIONS: ReadonlyArray<AppSection> = [
   'home',
   'schedule',
@@ -139,8 +137,108 @@ const VALID_SECTIONS: ReadonlyArray<AppSection> = [
   'reminders',
   'mutun',
   'duo',
-  'owner',
 ];
+
+interface IncomingCallState {
+  ringingCall: IncomingDuoCall | null;
+  pendingAcceptCallId: string | null;
+  pendingAcceptCallData: IncomingDuoCall | null;
+  dismissedCallIds: Record<string, true>;
+}
+
+type IncomingCallAction =
+  | { type: 'SET_INCOMING_CALL'; call: IncomingDuoCall | null }
+  | { type: 'ACCEPT_CALL'; sessionId: string; callData?: IncomingDuoCall | null }
+  | { type: 'DECLINE_CALL'; sessionId: string }
+  | { type: 'MARK_CALL_ACTIVE'; sessionId: string }
+  | { type: 'CLEAR_PENDING_CALL' }
+  | { type: 'RESET_ON_SIGN_OUT' };
+
+function incomingCallReducer(
+  state: IncomingCallState,
+  action: IncomingCallAction
+): IncomingCallState {
+  switch (action.type) {
+    case 'SET_INCOMING_CALL': {
+      if (action.call === null) {
+        if (state.ringingCall === null) return state;
+        return { ...state, ringingCall: null };
+      }
+      const nextId = action.call.sessionId;
+      if (state.dismissedCallIds[nextId] || state.pendingAcceptCallId === nextId) {
+        return state;
+      }
+      return { ...state, ringingCall: action.call };
+    }
+    case 'ACCEPT_CALL': {
+      const resolvedData =
+        action.callData && action.callData.sessionId === action.sessionId
+          ? action.callData
+          : state.ringingCall && state.ringingCall.sessionId === action.sessionId
+          ? state.ringingCall
+          : null;
+      return {
+        ringingCall: null,
+        pendingAcceptCallId: action.sessionId,
+        pendingAcceptCallData: resolvedData,
+        dismissedCallIds: { ...state.dismissedCallIds, [action.sessionId]: true },
+      };
+    }
+    case 'DECLINE_CALL': {
+      return {
+        ringingCall: null,
+        pendingAcceptCallId:
+          state.pendingAcceptCallId === action.sessionId ? null : state.pendingAcceptCallId,
+        pendingAcceptCallData:
+          state.pendingAcceptCallId === action.sessionId ? null : state.pendingAcceptCallData,
+        dismissedCallIds: { ...state.dismissedCallIds, [action.sessionId]: true },
+      };
+    }
+    case 'MARK_CALL_ACTIVE': {
+      const alreadyDismissed = Boolean(state.dismissedCallIds[action.sessionId]);
+      if (state.ringingCall === null && alreadyDismissed) return state;
+      return {
+        ...state,
+        ringingCall: null,
+        dismissedCallIds: alreadyDismissed
+          ? state.dismissedCallIds
+          : { ...state.dismissedCallIds, [action.sessionId]: true },
+      };
+    }
+    case 'CLEAR_PENDING_CALL': {
+      if (state.pendingAcceptCallId === null && state.pendingAcceptCallData === null) return state;
+      return { ...state, pendingAcceptCallId: null, pendingAcceptCallData: null };
+    }
+    case 'RESET_ON_SIGN_OUT': {
+      if (
+        state.ringingCall === null &&
+        state.pendingAcceptCallId === null &&
+        state.pendingAcceptCallData === null
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        ringingCall: null,
+        pendingAcceptCallId: null,
+        pendingAcceptCallData: null,
+      };
+    }
+    default:
+      return state;
+  }
+}
+
+function getInitialPendingCallId(): string | null {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('duo');
+    const action = params.get('callAction');
+    return code && action === 'answer' ? code.trim().toUpperCase() : null;
+  } catch {
+    return null;
+  }
+}
 
 export default function App() {
   const [lang, setLang] = useState<Language>(() => {
@@ -171,24 +269,31 @@ export default function App() {
     }
   });
 
-  const [pendingAcceptCallId, setPendingAcceptCallId] = useState<string | null>(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const code = params.get('duo');
-      const action = params.get('callAction');
-      return code && action === 'answer' ? code.trim().toUpperCase() : null;
-    } catch {
-      return null;
+  const [callState, dispatchCallState] = useReducer(
+    incomingCallReducer,
+    undefined,
+    (): IncomingCallState => {
+      const initialPendingId = getInitialPendingCallId();
+      return {
+        ringingCall: null,
+        pendingAcceptCallId: initialPendingId,
+        pendingAcceptCallData: null,
+        dismissedCallIds: initialPendingId ? { [initialPendingId]: true } : {},
+      };
     }
-  });
-  const [pendingAcceptCallData, setPendingAcceptCallData] = useState<IncomingDuoCall | null>(null);
-  const [activeDuoCallInfo, setActiveDuoCallInfo] = useState<ActiveDuoCallInfo | null>(null);
+  );
+  const incomingCall = callState.ringingCall;
+  const pendingAcceptCallId = callState.pendingAcceptCallId;
+  const pendingAcceptCallData = callState.pendingAcceptCallData;
+
   const [authUser, setAuthUser] = useState<User | null>(auth.currentUser);
-  const [incomingCall, setIncomingCall] = useState<IncomingDuoCall | null>(null);
+  const [authRefreshTick, setAuthRefreshTick] = useState<number>(0);
   const lastRingingCallIdRef = useRef<string | null>(null);
-  const handledIncomingCallIdsRef = useRef<Set<string>>(new Set());
-  const handleAcceptCallRef = useRef<(sessionId: string) => void>(() => {});
-  const handleDeclineCallRef = useRef<(sessionId: string) => Promise<void> | void>(() => {});
+  const dismissedCallIdsRef = useRef<Set<string>>(
+    new Set(pendingAcceptCallId ? [pendingAcceptCallId] : [])
+  );
+  const pendingAcceptCallIdRef = useRef<string | null>(pendingAcceptCallId);
+  const activeCallIdRef = useRef<string | null>(null);
   const [isPrivacyTermsOpen, setIsPrivacyTermsOpen] = useState<boolean>(false);
   const [privacyTermsTab, setPrivacyTermsTab] = useState<'privacy' | 'terms'>('privacy');
   const [isSideMenuOpen, setIsSideMenuOpen] = useState<boolean>(false);
@@ -222,6 +327,46 @@ export default function App() {
   });
   const [expandedSardPlanId, setExpandedSardPlanId] = useState<string | null>(null);
   const [smartMemorizationPlan, setSmartMemorizationPlan] = useState<QuranPlanItem | null>(null);
+  const [activeDuoCallInfo, setActiveDuoCallInfo] = useState<ActiveDuoCallInfo | null>(null);
+
+  // Synchronous helper to update or clear the incoming ringing modal & ringtone atomically
+  const setIncomingCall = useCallback((nextCall: IncomingDuoCall | null) => {
+    if (nextCall === null && lastRingingCallIdRef.current) {
+      dismissBackgroundCallNotification(lastRingingCallIdRef.current);
+      lastRingingCallIdRef.current = null;
+      callRingtone.stop();
+    }
+    dispatchCallState({ type: 'SET_INCOMING_CALL', call: nextCall });
+  }, []);
+
+  // Centralized navigation helper: synchronously dismisses any ringing modal before switching views
+  const navigateToSection = useCallback(
+    (nextSection: AppSection | ((prev: AppSection) => AppSection)) => {
+      setIncomingCall(null);
+      setActiveSection(nextSection);
+    },
+    [setIncomingCall]
+  );
+
+  // Centralized active-call callback: synchronously dismisses any ringing modal on call start
+  const handleActiveDuoCallChange = useCallback(
+    (info: ActiveDuoCallInfo | null) => {
+      activeCallIdRef.current = info?.sessionId ?? null;
+      if (info) {
+        dismissedCallIdsRef.current.add(info.sessionId);
+        setIncomingCall(null);
+        dismissBackgroundCallNotification(info.sessionId);
+        dispatchCallState({ type: 'MARK_CALL_ACTIVE', sessionId: info.sessionId });
+      }
+      setActiveDuoCallInfo(info);
+    },
+    [setIncomingCall]
+  );
+
+  const handleClearPendingCall = useCallback(() => {
+    pendingAcceptCallIdRef.current = null;
+    dispatchCallState({ type: 'CLEAR_PENDING_CALL' });
+  }, []);
 
   // Immediately strip transient URL invite/call query params after capturing them
   // so pulling down to refresh Home never redirects back to Duo Recitation!
@@ -243,7 +388,7 @@ export default function App() {
     }
   }, []);
 
-  // Persist current section across pull-to-refresh reloads & clear only call-answer trigger when leaving Duo
+  // Persist current section across pull-to-refresh reloads & clear call-answer trigger when leaving Duo
   useEffect(() => {
     try {
       sessionStorage.setItem(STORAGE_KEY_ACTIVE_SECTION, activeSection);
@@ -251,9 +396,10 @@ export default function App() {
       // ignore
     }
     if (activeSection !== 'duo' && pendingAcceptCallId) {
-      setPendingAcceptCallId(null);
+      setIncomingCall(null);
+      handleClearPendingCall();
     }
-  }, [activeSection, pendingAcceptCallId]);
+  }, [activeSection, pendingAcceptCallId, setIncomingCall, handleClearPendingCall]);
 
   // Smoothly dismiss the bilingual splash screen after initial render
   useEffect(() => {
@@ -279,11 +425,6 @@ export default function App() {
       window.clearTimeout(hideTimer);
       window.clearTimeout(removeTimer);
     };
-  }, []);
-
-  // Track zero-PII device installation, country, device type, and session duration for Owner Dashboard
-  useEffect(() => {
-    return startDeviceTelemetryTracker();
   }, []);
 
   // Prevent silent SW reload from interrupting active Quran recitation sessions
@@ -400,17 +541,18 @@ export default function App() {
   const [confirmDeleteAll, setConfirmDeleteAll] = useState<boolean>(false);
   const [ramCleanupMessage, setRamCleanupMessage] = useState<string | null>(null);
   const [noPlansAlertOpen, setNoPlansAlertOpen] = useState<boolean>(false);
+  const [isSelfSardPickerOpen, setIsSelfSardPickerOpen] = useState<boolean>(false);
+  const [selfSardPickerDay, setSelfSardPickerDay] = useState<DayId | 'all'>('all');
 
   const dict = t(lang);
   const todayId = getTodayDayId();
-
-  const isDuoEligibleUser = (u: User | null): u is User => Boolean(u && !u.isAnonymous);
 
   // Global Firebase Auth + Incoming Friend Call & Friend Request Listeners (active on all screens)
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, async (nextUser) => {
       setAuthUser(nextUser);
-      if (isDuoEligibleUser(nextUser)) {
+      setAuthRefreshTick((n) => n + 1);
+      if (nextUser) {
         try {
           await syncVerifiedUserProfileAndDirectory(nextUser);
         } catch (err) {
@@ -418,12 +560,30 @@ export default function App() {
         }
       }
     });
-    return () => unsubAuth();
+
+    const handleAuthRefreshed = async () => {
+      const current = auth.currentUser;
+      setAuthUser(current);
+      setAuthRefreshTick((n) => n + 1);
+      if (current) {
+        try {
+          await syncVerifiedUserProfileAndDirectory(current);
+        } catch (err) {
+          console.warn('Directory sync deferred:', err);
+        }
+      }
+    };
+
+    window.addEventListener('alutrujjah:auth-refreshed', handleAuthRefreshed);
+    return () => {
+      unsubAuth();
+      window.removeEventListener('alutrujjah:auth-refreshed', handleAuthRefreshed);
+    };
   }, []);
 
   // Global listener for incoming pending friend requests & reliable one-time accepted outgoing sync
   useEffect(() => {
-    if (!isDuoEligibleUser(authUser)) {
+    if (!authUser) {
       setPendingIncomingFriendReqs([]);
       return;
     }
@@ -506,7 +666,7 @@ export default function App() {
         void processAcceptedOutgoing();
       },
       (err) => {
-        handleFirestoreError(err, OperationType.LIST, `users/${authUser.uid}/friends`);
+        logFirestoreListenerError(err, OperationType.LIST, `users/${authUser.uid}/friends`);
       }
     );
 
@@ -528,7 +688,7 @@ export default function App() {
         setPendingIncomingFriendReqs(filtered);
       },
       (err) => {
-        handleFirestoreError(err, OperationType.LIST, 'friendRequests');
+        logFirestoreListenerError(err, OperationType.LIST, 'friendRequests');
       }
     );
 
@@ -544,7 +704,7 @@ export default function App() {
         void processAcceptedOutgoing();
       },
       (err) => {
-        handleFirestoreError(err, OperationType.LIST, 'friendRequests');
+        logFirestoreListenerError(err, OperationType.LIST, 'friendRequests');
       }
     );
 
@@ -553,9 +713,9 @@ export default function App() {
       unsubIncomingReqs();
       unsubOutgoingReqs();
     };
-  }, [authUser]);
+  }, [authUser?.uid, authRefreshTick]);
 
-  // Automatically resolve shared invite link when signed in -> show instant alert modal
+  // Automatically resolve shared invite link when signed in & verified -> show instant alert modal
   useEffect(() => {
     if (!initialFriendInviteToken) {
       setInviteModalDoc(null);
@@ -563,7 +723,7 @@ export default function App() {
       setInviteSignInDeferred(false);
       return;
     }
-    if (!isDuoEligibleUser(authUser)) {
+    if (!authUser) {
       setInviteModalDoc(null);
       return;
     }
@@ -614,7 +774,7 @@ export default function App() {
   }, [initialFriendInviteToken, authUser, lang]);
 
   const handleConfirmGlobalInvite = async () => {
-    if (!isDuoEligibleUser(authUser) || !inviteModalDoc) return;
+    if (!authUser || !inviteModalDoc) return;
     setFriendAlertBusy(true);
     setInviteModalError(null);
     try {
@@ -622,7 +782,7 @@ export default function App() {
       const ownerName = inviteModalDoc.ownerName;
       setInviteModalDoc(null);
       setInitialFriendInviteToken('');
-      setActiveSection('duo');
+      navigateToSection('duo');
       if (outcome === 'already_accepted') {
         setActiveToast({
           title: lang === 'ar' ? 'تمت الإضافة في السرد الثنائي' : 'Added to Duo Sard',
@@ -652,13 +812,13 @@ export default function App() {
   };
 
   const handleApproveGlobalFriendRequest = async (req: FriendRequestDoc) => {
-    if (!isDuoEligibleUser(authUser)) return;
+    if (!authUser) return;
     handledIncomingReqIdsRef.current.add(req.requestId);
     setPendingIncomingFriendReqs((prev) => prev.filter((item) => item.requestId !== req.requestId));
     setFriendAlertBusy(true);
     try {
       await approveIncomingFriendRequest(authUser, req);
-      setActiveSection('duo');
+      navigateToSection('duo');
       setActiveToast({
         title: lang === 'ar' ? 'تمت إضافة الصديق' : 'Friend Added',
         body:
@@ -696,62 +856,62 @@ export default function App() {
     }
   };
 
-  const markIncomingCallHandled = (targetSessionId: string) => {
-    const cleanId = targetSessionId.trim();
-    if (!cleanId) return;
-    handledIncomingCallIdsRef.current.add(cleanId);
-    if (handledIncomingCallIdsRef.current.size > 30) {
-      const oldest = handledIncomingCallIdsRef.current.values().next().value;
-      if (oldest) handledIncomingCallIdsRef.current.delete(oldest);
-    }
-  };
+  const handleDeclineIncomingCall = useCallback(
+    async (targetSessionId: string) => {
+      dismissedCallIdsRef.current.add(targetSessionId);
+      if (pendingAcceptCallIdRef.current === targetSessionId) {
+        pendingAcceptCallIdRef.current = null;
+      }
+      setIncomingCall(null);
+      callRingtone.stop();
+      dismissBackgroundCallNotification(targetSessionId);
+      dispatchCallState({ type: 'DECLINE_CALL', sessionId: targetSessionId });
 
-  const handleDeclineIncomingCall = async (targetSessionId: string) => {
-    markIncomingCallHandled(targetSessionId);
-    callRingtone.stop();
-    dismissBackgroundCallNotification(targetSessionId);
-    setIncomingCall(null);
-    lastRingingCallIdRef.current = null;
-    if (!isDuoEligibleUser(auth.currentUser)) return;
-    const callPath = `duoSessions/${targetSessionId}`;
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (!auth.currentUser) return;
+      const callPath = `duoSessions/${targetSessionId}`;
       try {
         await updateDoc(doc(db, 'duoSessions', targetSessionId), {
           status: 'declined',
           updatedAt: serverTimestamp(),
         });
-        return;
       } catch (err) {
-        if (attempt === 1) {
-          console.warn('Decline call notice:', err, callPath);
-        } else {
-          await new Promise((r) => window.setTimeout(r, 350));
-        }
+        console.warn('Decline call notice:', err, callPath);
       }
-    }
-  };
+    },
+    [setIncomingCall]
+  );
 
-  const handleAcceptIncomingCall = (targetSessionId: string) => {
-    markIncomingCallHandled(targetSessionId);
-    callRingtone.stop();
-    callRingtone.unlockAudio();
-    dismissBackgroundCallNotification(targetSessionId);
-    const matchingCall =
-      incomingCall && incomingCall.sessionId === targetSessionId ? incomingCall : null;
-    setIncomingCall(null);
-    lastRingingCallIdRef.current = null;
-    setPendingAcceptCallData(matchingCall);
-    setPendingAcceptCallId(targetSessionId);
-    setActiveSection('duo');
-  };
-
-  handleAcceptCallRef.current = handleAcceptIncomingCall;
-  handleDeclineCallRef.current = handleDeclineIncomingCall;
-
-  useEffect(() => {
-    if (!isDuoEligibleUser(authUser)) {
+  const handleAcceptIncomingCall = useCallback(
+    (targetSessionId: string, callData?: IncomingDuoCall | null) => {
+      dismissedCallIdsRef.current.add(targetSessionId);
+      pendingAcceptCallIdRef.current = targetSessionId;
       setIncomingCall(null);
       callRingtone.stop();
+      callRingtone.unlockAudio();
+      dismissBackgroundCallNotification(targetSessionId);
+      dispatchCallState({ type: 'ACCEPT_CALL', sessionId: targetSessionId, callData });
+      navigateToSection('duo');
+    },
+    [setIncomingCall, navigateToSection]
+  );
+
+  const callActionHandlersRef = useRef({
+    accept: handleAcceptIncomingCall,
+    decline: handleDeclineIncomingCall,
+  });
+  useEffect(() => {
+    callActionHandlersRef.current = {
+      accept: handleAcceptIncomingCall,
+      decline: handleDeclineIncomingCall,
+    };
+  }, [handleAcceptIncomingCall, handleDeclineIncomingCall]);
+
+  useEffect(() => {
+    if (!authUser) {
+      pendingAcceptCallIdRef.current = null;
+      activeCallIdRef.current = null;
+      setIncomingCall(null);
+      dispatchCallState({ type: 'RESET_ON_SIGN_OUT' });
       return;
     }
 
@@ -764,8 +924,13 @@ export default function App() {
     const unsubCalls = onSnapshot(
       incomingQuery,
       (snap) => {
-        const now = Date.now();
-        const freshDocs = snap.docs
+        if (activeCallIdRef.current || pendingAcceptCallIdRef.current) {
+          setIncomingCall(null);
+          return;
+        }
+
+        const nowMs = Date.now();
+        const candidateDocs = snap.docs
           .map((d) => {
             const raw = d.data() as IncomingDuoCall & {
               createdAt?: { toMillis?: () => number } | null;
@@ -773,28 +938,25 @@ export default function App() {
             const createdMs =
               raw.createdAt && typeof raw.createdAt.toMillis === 'function'
                 ? raw.createdAt.toMillis()
-                : now;
-            return { raw, createdMs };
+                : nowMs;
+            return { data: raw, createdMs };
           })
-          // Ignore orphaned ringing sessions (> 5m) and sessions already accepted/declined locally
           .filter(
-            (item) =>
-              now - item.createdMs <= 300_000 &&
-              !handledIncomingCallIdsRef.current.has(item.raw.sessionId)
+            ({ data, createdMs }) =>
+              data?.sessionId &&
+              !dismissedCallIdsRef.current.has(data.sessionId) &&
+              data.sessionId !== activeCallIdRef.current &&
+              data.sessionId !== pendingAcceptCallIdRef.current &&
+              nowMs - createdMs <= 10 * 60 * 1000
           )
           .sort((a, b) => b.createdMs - a.createdMs);
 
-        if (freshDocs.length === 0) {
-          if (lastRingingCallIdRef.current) {
-            dismissBackgroundCallNotification(lastRingingCallIdRef.current);
-            lastRingingCallIdRef.current = null;
-          }
-          callRingtone.stop();
+        if (candidateDocs.length === 0) {
           setIncomingCall(null);
           return;
         }
 
-        const callData = freshDocs[0].raw;
+        const callData = candidateDocs[0].data;
         setIncomingCall(callData);
 
         if (lastRingingCallIdRef.current !== callData.sessionId) {
@@ -823,14 +985,14 @@ export default function App() {
         }
       },
       (err) => {
-        handleFirestoreError(err, OperationType.LIST, 'duoSessions');
+        logFirestoreListenerError(err, OperationType.LIST, 'duoSessions');
       }
     );
 
     return () => {
       unsubCalls();
     };
-  }, [authUser, lang]);
+  }, [authUser?.uid, authRefreshTick, lang, setIncomingCall]);
 
   // Listen to Service Worker Notification Click actions (Answer / Decline from background notification)
   useEffect(() => {
@@ -839,9 +1001,9 @@ export default function App() {
       const msg = event.data;
       if (!msg || msg.type !== 'CALL_NOTIFICATION_ACTION' || !msg.sessionId) return;
       if (msg.action === 'decline') {
-        handleDeclineCallRef.current(msg.sessionId);
+        void callActionHandlersRef.current.decline(msg.sessionId);
       } else {
-        handleAcceptCallRef.current(msg.sessionId);
+        callActionHandlersRef.current.accept(msg.sessionId);
       }
     };
     navigator.serviceWorker.addEventListener('message', onSwMessage);
@@ -863,8 +1025,13 @@ export default function App() {
   }, [plans]);
 
   const chimeAudioCtxRef = useRef<AudioContext | null>(null);
+  const chimeCloseTimerRef = useRef<number | null>(null);
 
   const stopChimeAudio = () => {
+    if (chimeCloseTimerRef.current !== null) {
+      window.clearTimeout(chimeCloseTimerRef.current);
+      chimeCloseTimerRef.current = null;
+    }
     if (chimeAudioCtxRef.current) {
       try {
         chimeAudioCtxRef.current.close();
@@ -875,9 +1042,18 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    return () => {
+      stopChimeAudio();
+    };
+  }, []);
+
   const playGentleChime = () => {
-    // Never play reminder sound if muted, during active Sard / Smart Memorization session
-    if (!soundEnabled || expandedSardPlanId || smartMemorizationPlan) return;
+    // Never play reminder sound if muted, during active Sard / Smart Memorization, or live Duo voice call
+    const isVoiceCallActive = Boolean(
+      (window as unknown as { __alutrujjahActiveVoiceCall?: boolean }).__alutrujjahActiveVoiceCall
+    );
+    if (!soundEnabled || expandedSardPlanId || smartMemorizationPlan || isVoiceCallActive) return;
     try {
       stopChimeAudio();
       const AudioCtx =
@@ -901,6 +1077,12 @@ export default function App() {
         osc.start(now + idx * 0.14);
         osc.stop(now + idx * 0.14 + 1.15);
       });
+
+      chimeCloseTimerRef.current = window.setTimeout(() => {
+        if (chimeAudioCtxRef.current === ctx) {
+          stopChimeAudio();
+        }
+      }, 1500);
     } catch {
       // AudioContext blocked or unsupported
     }
@@ -1473,9 +1655,9 @@ export default function App() {
 
             <a
               href="#home"
-              onClick={(e) => {
+                onClick={(e) => {
                 e.preventDefault();
-                setActiveSection('home');
+                navigateToSection('home');
               }}
               className="flex items-center gap-2.5 shrink-0 group cursor-pointer focus:outline-none"
               title={dict.brandTitle}
@@ -1522,7 +1704,7 @@ export default function App() {
             {/* Analytics Icon directly on the right of Reminders (first in RTL order) */}
             <button
               type="button"
-              onClick={() => setActiveSection('analytics')}
+              onClick={() => navigateToSection('analytics')}
               title={dict.navAnalytics}
               className={`p-2 sm:p-2.5 rounded-xl border transition-all cursor-pointer flex items-center justify-center shadow-2xs shrink-0 ${
                 activeSection === 'analytics'
@@ -1536,7 +1718,7 @@ export default function App() {
             {/* Reminders Icon directly on the right of Language Toggle (in RTL) */}
             <button
               type="button"
-              onClick={() => setActiveSection('reminders')}
+              onClick={() => navigateToSection('reminders')}
               title={dict.navReminders}
               className={`p-2 sm:p-2.5 rounded-xl border transition-all cursor-pointer flex items-center justify-center shadow-2xs shrink-0 ${
                 activeSection === 'reminders'
@@ -1625,6 +1807,36 @@ export default function App() {
 
       {/* Main Content Container */}
       <main className="flex-1 w-full px-3 sm:px-6 lg:px-10 pt-3 sm:pt-4 pb-1.5 sm:pb-2 space-y-4">
+        {/* Compact Persistent Active-Call Bar When Navigating Away From Duo Screen */}
+        {activeDuoCallInfo && activeSection !== 'duo' && (
+          <div className="max-w-5xl mx-auto">
+            <button
+              type="button"
+              onClick={() => navigateToSection('duo')}
+              className="w-full rounded-2xl bg-[#2D2218] hover:bg-[#3A2C20] border border-[#C88A14] px-3.5 py-2.5 text-[#FFFDF9] flex items-center justify-between gap-3 shadow-sm cursor-pointer transition-colors"
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className="w-2.5 h-2.5 rounded-full bg-[#22C55E] animate-pulse shrink-0" />
+                <PhoneCall className="w-4 h-4 text-[#EAB338] shrink-0" />
+                <span className="text-xs sm:text-sm font-extrabold truncate">
+                  {lang === 'ar'
+                    ? `مكالمة السرد الثنائي نشطة مع ${activeDuoCallInfo.partnerName}`
+                    : `Live Duo Call with ${activeDuoCallInfo.partnerName}`}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-xs font-mono-tabular text-[#EAB338] font-bold">
+                  {String(Math.floor(activeDuoCallInfo.elapsedSeconds / 60)).padStart(2, '0')}:
+                  {String(activeDuoCallInfo.elapsedSeconds % 60).padStart(2, '0')}
+                </span>
+                <span className="px-2.5 py-1 rounded-lg bg-[#EAB338] text-[#2D2218] text-[11px] font-extrabold">
+                  {lang === 'ar' ? 'العودة للشاشة' : 'Return'}
+                </span>
+              </div>
+            </button>
+          </div>
+        )}
+
         {/* HOME VIEW — Original Warm Umber, Parchment, Mustard Gold & Olive Theme (NO Tables Shown on Home!) */}
         {activeSection === 'home' && (
           <section className="max-w-5xl mx-auto space-y-4">
@@ -1740,12 +1952,10 @@ export default function App() {
                     onClick={() => {
                       if (plans.length === 0) {
                         setNoPlansAlertOpen(true);
-                      } else if (nextTodayPlan) {
-                        handleOpenPlanScreen(nextTodayPlan.id);
-                      } else if (todayPlansCount > 0) {
-                        setActiveSection('today');
                       } else {
-                        setActiveSection('schedule');
+                        setIncomingCall(null);
+                        setSelfSardPickerDay('all');
+                        setIsSelfSardPickerOpen(true);
                       }
                     }}
                     className="rounded-full bg-[#4A6144] hover:bg-[#3B4F36] text-[#FFFDF9] px-4 py-2 text-xs sm:text-sm font-bold inline-flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer whitespace-nowrap"
@@ -1796,7 +2006,7 @@ export default function App() {
                 <div className="flex items-center justify-between gap-2 pt-0.5 relative z-10">
                   <button
                     type="button"
-                    onClick={() => setActiveSection('duo')}
+                    onClick={() => navigateToSection('duo')}
                     className="mustard-gradient-btn rounded-full text-[#FFFDF9] px-4 py-2 text-xs sm:text-sm font-bold inline-flex items-center gap-1.5 shadow-xs transition-all cursor-pointer whitespace-nowrap"
                   >
                     <span>{dict.homeCardDuoCta}</span>
@@ -1841,7 +2051,7 @@ export default function App() {
                 <div className="flex items-center justify-between gap-2 pt-0.5 relative z-10">
                   <button
                     type="button"
-                    onClick={() => setActiveSection('schedule')}
+                    onClick={() => navigateToSection('schedule')}
                     className="rounded-full bg-[#2D2218] hover:bg-[#3D2F22] text-[#EAB338] px-4 py-2 text-xs sm:text-sm font-bold inline-flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer whitespace-nowrap"
                   >
                     <span>{dict.homeCardScheduleCta}</span>
@@ -1886,7 +2096,7 @@ export default function App() {
                 <div className="flex items-center justify-between gap-2 pt-0.5 relative z-10">
                   <button
                     type="button"
-                    onClick={() => setActiveSection('mutun')}
+                    onClick={() => navigateToSection('mutun')}
                     className="rounded-full bg-[#4A6144] hover:bg-[#3B4F36] text-[#FFFDF9] px-4 py-2 text-xs sm:text-sm font-bold inline-flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer whitespace-nowrap"
                   >
                     <span>{dict.homeCardMutunCta}</span>
@@ -1955,7 +2165,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() =>
-                  setActiveSection(activeSection === 'today' ? 'schedule' : 'today')
+                  navigateToSection(activeSection === 'today' ? 'schedule' : 'today')
                 }
                 className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 border border-[#EAB338]/35 text-xs sm:text-sm font-bold text-[#FDE68A] transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5"
               >
@@ -2392,51 +2602,27 @@ export default function App() {
         {/* MUTUN & ADHKAR DEDICATED VIEW */}
         {activeSection === 'mutun' && <MutunAdhkarSection lang={lang} />}
 
-        {/* Active Duo Call Return Banner when navigating to other tabs */}
-        {activeDuoCallInfo && activeSection !== 'duo' && (
-          <button
-            type="button"
-            onClick={() => setActiveSection('duo')}
-            className="w-full rounded-2xl bg-[#166534] hover:bg-[#14532D] text-[#FFFDF9] px-4 py-2.5 flex items-center justify-between gap-2 shadow-sm cursor-pointer transition-colors"
-          >
-            <div className="flex items-center gap-2 text-xs sm:text-sm font-extrabold">
-              <PhoneCall className="w-4 h-4 text-[#EAB338] animate-pulse shrink-0" />
-              <span>
-                {lang === 'ar'
-                  ? `مكالمة السرد الثنائي جارية مع ${activeDuoCallInfo.partnerName}`
-                  : `Active Duo Call with ${activeDuoCallInfo.partnerName}`}
-              </span>
-            </div>
-            <span className="px-2.5 py-1 rounded-lg bg-[#FFFDF9]/15 text-[11px] font-bold">
-              {lang === 'ar' ? 'العودة للمكالمة' : 'Return to Call'}
-            </span>
-          </button>
-        )}
-
-        {/* BROWSER P2P DUO RECITATION DEDICATED VIEW (Kept mounted during active call across tab switches) */}
-        {(activeSection === 'duo' || Boolean(activeDuoCallInfo) || Boolean(pendingAcceptCallId)) && (
-          <div className={activeSection === 'duo' ? '' : 'hidden'}>
-            <DuoRecitationSection
-              lang={lang}
-              defaultRiwayah={defaultRiwayah}
-              initialFriendInviteToken={initialFriendInviteToken}
-              onClearFriendInvite={() => setInitialFriendInviteToken('')}
-              pendingAcceptCallId={pendingAcceptCallId}
-              pendingAcceptCallData={pendingAcceptCallData}
-              onClearPendingCall={() => {
-                setPendingAcceptCallId(null);
-                setPendingAcceptCallData(null);
-              }}
-              onOpenPrivacyTerms={() => setIsPrivacyTermsOpen(true)}
-              onActiveCallChange={setActiveDuoCallInfo}
-            />
-          </div>
-        )}
-
-        {/* APP OWNER DASHBOARD VIEW (Strictly Owner-Verified) */}
-        {activeSection === 'owner' && (
-          <OwnerDashboardSection lang={lang} authUser={authUser} />
-        )}
+        {/* BROWSER P2P DUO RECITATION DEDICATED VIEW — Always mounted cleanly offscreen when browsing other sections so live WebRTC voice never disconnects */}
+        <div
+          className={
+            activeSection === 'duo'
+              ? 'block'
+              : 'fixed -left-[9999px] top-0 w-px h-px opacity-0 pointer-events-none overflow-hidden'
+          }
+          aria-hidden={activeSection !== 'duo'}
+        >
+          <DuoRecitationSection
+            lang={lang}
+            defaultRiwayah={defaultRiwayah}
+            initialFriendInviteToken={initialFriendInviteToken}
+            onClearFriendInvite={() => setInitialFriendInviteToken('')}
+            pendingAcceptCallId={pendingAcceptCallId}
+            pendingAcceptCallData={pendingAcceptCallData}
+            onClearPendingCall={handleClearPendingCall}
+            onOpenPrivacyTerms={() => setIsPrivacyTermsOpen(true)}
+            onActiveCallChange={handleActiveDuoCallChange}
+          />
+        </div>
       </main>
 
       {/* Fixed Bottom Navigation Bar (5 Clean Tabs: الرئيسية، اليوم، الثنائي، الأسبوعي، المكتبة) */}
@@ -2448,7 +2634,7 @@ export default function App() {
           {/* 1. Home (الرئيسية) */}
           <button
             type="button"
-            onClick={() => setActiveSection('home')}
+            onClick={() => navigateToSection('home')}
             className={`flex flex-col items-center justify-center gap-0.5 py-1.5 px-1 rounded-xl text-[10.5px] sm:text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
               activeSection === 'home'
                 ? 'bg-[#2D2218] text-[#EAB338] shadow-xs'
@@ -2462,7 +2648,7 @@ export default function App() {
           {/* 2. Today / Self (اليوم) */}
           <button
             type="button"
-            onClick={() => setActiveSection('today')}
+            onClick={() => navigateToSection('today')}
             className={`flex flex-col items-center justify-center gap-0.5 py-1.5 px-1 rounded-xl text-[10.5px] sm:text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
               activeSection === 'today'
                 ? 'bg-[#2D2218] text-[#EAB338] shadow-xs'
@@ -2476,13 +2662,16 @@ export default function App() {
           {/* 3. Browser P2P Duo Sard (الثنائي) */}
           <button
             type="button"
-            onClick={() => setActiveSection('duo')}
-            className={`flex flex-col items-center justify-center gap-0.5 py-1.5 px-1 rounded-xl text-[10.5px] sm:text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+            onClick={() => navigateToSection('duo')}
+            className={`relative flex flex-col items-center justify-center gap-0.5 py-1.5 px-1 rounded-xl text-[10.5px] sm:text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
               activeSection === 'duo'
                 ? 'bg-[#2D2218] text-[#EAB338] shadow-xs'
                 : 'text-[#5C4B3B] hover:text-[#261C14] hover:bg-[#EFE9DC]'
             }`}
           >
+            {activeDuoCallInfo && activeSection !== 'duo' && (
+              <span className="absolute top-1 end-2 w-2 h-2 rounded-full bg-[#22C55E] animate-pulse" />
+            )}
             <Users className={`w-4 h-4 sm:w-4.5 sm:h-4.5 shrink-0 ${activeSection === 'duo' ? 'text-[#EAB338]' : 'text-[#C88A14]'}`} />
             <span className="leading-none truncate max-w-full">{dict.navDuo}</span>
           </button>
@@ -2490,7 +2679,7 @@ export default function App() {
           {/* 4. Weekly Schedule (الأسبوعي) */}
           <button
             type="button"
-            onClick={() => setActiveSection('schedule')}
+            onClick={() => navigateToSection('schedule')}
             className={`flex flex-col items-center justify-center gap-0.5 py-1.5 px-1 rounded-xl text-[10.5px] sm:text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
               activeSection === 'schedule'
                 ? 'bg-[#2D2218] text-[#EAB338] shadow-xs'
@@ -2504,7 +2693,7 @@ export default function App() {
           {/* 5. Library (المكتبة) */}
           <button
             type="button"
-            onClick={() => setActiveSection('mutun')}
+            onClick={() => navigateToSection('mutun')}
             className={`flex flex-col items-center justify-center gap-0.5 py-1.5 px-1 rounded-xl text-[10.5px] sm:text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
               activeSection === 'mutun'
                 ? 'bg-[#2D2218] text-[#EAB338] shadow-xs'
@@ -2559,7 +2748,7 @@ export default function App() {
                           await signInWithPopup(auth, googleProvider);
                         } catch {
                           setInviteSignInDeferred(true);
-                          setActiveSection('duo');
+                          navigateToSection('duo');
                         }
                       }}
                       className="w-full py-2.5 px-4 rounded-xl bg-[#166534] hover:bg-[#14532D] text-[#FFFDF9] text-xs sm:text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
@@ -2571,7 +2760,7 @@ export default function App() {
                       type="button"
                       onClick={() => {
                         setInviteSignInDeferred(true);
-                        setActiveSection('duo');
+                        navigateToSection('duo');
                       }}
                       className="w-full py-2 px-4 rounded-xl bg-[#FFFDF9] border border-[#DDD2BE] text-[#2D2218] text-xs font-bold cursor-pointer hover:bg-[#F7F3EB]"
                     >
@@ -2741,7 +2930,7 @@ export default function App() {
                     type="button"
                     onClick={() => {
                       setNewlyAcceptedFriendPopup(null);
-                      setActiveSection('duo');
+                      navigateToSection('duo');
                     }}
                     className="px-4 py-2 rounded-xl bg-[#166534] hover:bg-[#14532D] text-[#FFFDF9] text-xs font-bold flex items-center gap-1.5 cursor-pointer"
                   >
@@ -2755,7 +2944,7 @@ export default function App() {
         )}
 
       {/* Global Incoming Friend Call Ringing Window (Both Sides Call Modal Experience) */}
-      {incomingCall && (
+      {incomingCall && !activeDuoCallInfo && !pendingAcceptCallId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/65 backdrop-blur-sm">
           <div className="w-full max-w-sm rounded-[28px] bg-[#2D2218] text-[#FFFDF9] border-2 border-[#EAB338] p-6 text-center space-y-5 shadow-2xl">
             <div className="relative w-20 h-20 mx-auto flex items-center justify-center">
@@ -2803,7 +2992,7 @@ export default function App() {
               </button>
               <button
                 type="button"
-                onClick={() => handleAcceptIncomingCall(incomingCall.sessionId)}
+                onClick={() => handleAcceptIncomingCall(incomingCall.sessionId, incomingCall)}
                 className="py-3 px-4 rounded-2xl bg-[#4A6144] hover:bg-[#3B4F36] border border-[#82A879]/50 text-[#FFFDF9] text-sm font-bold flex items-center justify-center gap-2 cursor-pointer shadow-xs"
               >
                 <PhoneCall className="w-4 h-4" />
@@ -2857,6 +3046,213 @@ export default function App() {
                   <span>{dict.noPlansAlertAddBtn}</span>
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Self-Paced Sard Plan Picker Modal (Choose Plan by Schedule Days) */}
+      {isSelfSardPickerOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/55 backdrop-blur-xs"
+          onClick={() => setIsSelfSardPickerOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-lg rounded-2xl bg-[#FFFDF9] border-2 border-[#4A6144]/70 shadow-2xl overflow-hidden flex flex-col max-h-[86vh] animate-in fade-in zoom-in-95 duration-150"
+          >
+            {/* Modal Header */}
+            <div className="px-4 py-3.5 bg-[#4A6144] text-[#FFFDF9] flex items-center justify-between gap-2 border-b border-[#82A879]/35 shrink-0">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-9 h-9 rounded-xl bg-white/15 border border-white/25 flex items-center justify-center shrink-0">
+                  <BookOpen className="w-4.5 h-4.5 text-[#FDE68A]" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-sm sm:text-base font-extrabold font-display-islamic leading-tight truncate">
+                    {lang === 'ar'
+                      ? 'اختر الخطة للسرد الذاتي'
+                      : 'Choose Plan for Self-Paced Sard'}
+                  </h3>
+                  <p className="text-[11px] text-[#ECFDF3]/90 truncate">
+                    {lang === 'ar'
+                      ? `مرتّبة حسب أيام الجدول (${plans.length} خطة)`
+                      : `Organized by schedule days (${plans.length} plans)`}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsSelfSardPickerOpen(false)}
+                aria-label={lang === 'ar' ? 'إغلاق' : 'Close'}
+                className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-[#FFFDF9] cursor-pointer shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Day Filter Tabs */}
+            <div className="px-3.5 py-2.5 bg-[#F7F3EB] border-b border-[#DDD2BE] flex items-center gap-1.5 overflow-x-auto shrink-0">
+              <button
+                type="button"
+                onClick={() => setSelfSardPickerDay('all')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-colors cursor-pointer border ${
+                  selfSardPickerDay === 'all'
+                    ? 'bg-[#2D2218] border-[#2D2218] text-[#EAB338]'
+                    : 'bg-[#FFFDF9] border-[#DDD2BE] text-[#5C4B3B] hover:border-[#C88A14] hover:text-[#261C14]'
+                }`}
+              >
+                {lang === 'ar' ? `كل الأيام (${plans.length})` : `All Days (${plans.length})`}
+              </button>
+              {WEEK_DAYS.map((day) => {
+                const count = plans.filter((p) => p.day === day.id).length;
+                if (count === 0) return null;
+                const isToday = day.id === todayId;
+                const isSelected = selfSardPickerDay === day.id;
+                return (
+                  <button
+                    key={day.id}
+                    type="button"
+                    onClick={() => setSelfSardPickerDay(day.id)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-colors cursor-pointer border flex items-center gap-1.5 ${
+                      isSelected
+                        ? 'bg-[#4A6144] border-[#4A6144] text-[#FFFDF9]'
+                        : isToday
+                        ? 'bg-[#FBF3DF] border-[#C88A14]/70 text-[#9E650C] hover:bg-[#F6E9C8]'
+                        : 'bg-[#FFFDF9] border-[#DDD2BE] text-[#5C4B3B] hover:border-[#C88A14] hover:text-[#261C14]'
+                    }`}
+                  >
+                    <span>{lang === 'ar' ? day.nameAr : day.shortEn}</span>
+                    {isToday && (
+                      <span
+                        className={`text-[10px] font-extrabold ${
+                          isSelected ? 'text-[#FDE68A]' : 'text-[#9E650C]'
+                        }`}
+                      >
+                        {lang === 'ar' ? '· اليوم' : '· Today'}
+                      </span>
+                    )}
+                    <span
+                      className={`text-[10px] font-mono-tabular ${
+                        isSelected ? 'text-[#ECFDF3]' : 'text-[#84715E]'
+                      }`}
+                    >
+                      ({count})
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Schedule Days & Plans List */}
+            <div className="p-3.5 sm:p-4 overflow-y-auto space-y-4 flex-1">
+              {WEEK_DAYS.filter(
+                (day) => selfSardPickerDay === 'all' || day.id === selfSardPickerDay
+              ).map((day) => {
+                const dayPlans = plans.filter((p) => p.day === day.id);
+                if (dayPlans.length === 0) return null;
+                const isToday = day.id === todayId;
+                return (
+                  <div key={day.id} className="space-y-2">
+                    <div className="flex items-center justify-between px-1">
+                      <div className="flex items-center gap-2">
+                        <CalendarDays className="w-4 h-4 text-[#C88A14] shrink-0" />
+                        <h4 className="text-xs sm:text-sm font-extrabold text-[#2D2218]">
+                          {lang === 'ar' ? day.nameAr : day.nameEn}
+                        </h4>
+                        {isToday && (
+                          <span className="px-2 py-0.5 rounded-md bg-[#ECFDF3] border border-[#86EFAC] text-[#15803D] text-[10px] font-extrabold">
+                            {dict.todayBadge}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[11px] font-bold text-[#84715E] font-mono-tabular">
+                        {dayPlans.length} {lang === 'ar' ? 'خطة' : dayPlans.length === 1 ? 'plan' : 'plans'}
+                      </span>
+                    </div>
+
+                    <div className="space-y-2">
+                      {dayPlans.map((plan) => {
+                        const { label: practiceLabel, Icon: PracticeIcon } =
+                          getPlanPracticeButtonMeta(plan.planType);
+                        const isCompleted = plan.status === 'completed';
+                        return (
+                          <div
+                            key={plan.id}
+                            className={`rounded-xl border p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 transition-colors ${
+                              isCompleted
+                                ? 'bg-[#F7F3EB]/75 border-[#DDD2BE]'
+                                : 'bg-[#FFFDF9] border-[#C9BA9F] hover:border-[#4A6144]'
+                            }`}
+                          >
+                            <div className="min-w-0 space-y-1">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="text-xs sm:text-sm font-extrabold text-[#261C14]">
+                                  {formatCurriculumTitle(plan, lang)}
+                                </span>
+                                {isCompleted && (
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[#ECFDF3] border border-[#BBF7D0] text-[#15803D] text-[10px] font-bold">
+                                    <Check className="w-3 h-3" />
+                                    <span>{dict.markCompleted}</span>
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-[#5C4B3B]">
+                                <span className="font-bold text-[#9E650C]">
+                                  {getPlanTypeLabel(plan.planType, lang)}
+                                </span>
+                                <span>·</span>
+                                <span>{getRiwayahLabel(plan.riwayah || defaultRiwayah, lang)}</span>
+                                {plan.notes?.trim() && (
+                                  <>
+                                    <span>·</span>
+                                    <span className="truncate max-w-[200px] text-[#84715E]">
+                                      {plan.notes}
+                                    </span>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsSelfSardPickerOpen(false);
+                                handleOpenPlanScreen(plan.id);
+                              }}
+                              className="px-3.5 py-2 rounded-xl bg-[#4A6144] hover:bg-[#3B4F36] text-[#FFFDF9] text-xs font-bold inline-flex items-center justify-center gap-1.5 cursor-pointer shrink-0 shadow-2xs transition-colors"
+                            >
+                              <PracticeIcon className="w-3.5 h-3.5 shrink-0" />
+                              <span>{practiceLabel}</span>
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Footer */}
+            <div className="px-4 py-2.5 bg-[#F7F3EB] border-t border-[#DDD2BE] flex items-center justify-between gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsSelfSardPickerOpen(false);
+                  navigateToSection('schedule');
+                }}
+                className="text-xs font-bold text-[#4A6144] hover:text-[#3B4F36] hover:underline flex items-center gap-1 cursor-pointer"
+              >
+                <CalendarDays className="w-3.5 h-3.5" />
+                <span>{lang === 'ar' ? 'عرض الجدول الأسبوعي' : 'View Weekly Schedule'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsSelfSardPickerOpen(false)}
+                className="px-3.5 py-1.5 rounded-xl bg-[#EFE9DC] hover:bg-[#DDD2BE] text-[#5C4B3B] text-xs font-bold cursor-pointer transition-colors"
+              >
+                {lang === 'ar' ? 'إغلاق' : 'Close'}
+              </button>
             </div>
           </div>
         </div>
@@ -3435,7 +3831,7 @@ export default function App() {
           }}
           onViewInAnalytics={() => {
             setActiveViewingReport(null);
-            setActiveSection('analytics');
+            navigateToSection('analytics');
           }}
         />
       )}
@@ -3507,7 +3903,7 @@ export default function App() {
                       key={item.id}
                       type="button"
                       onClick={() => {
-                        setActiveSection(item.id);
+                        navigateToSection(item.id);
                         setIsSideMenuOpen(false);
                       }}
                       className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-colors cursor-pointer ${
@@ -3580,43 +3976,6 @@ export default function App() {
                       {lang === 'ar' ? 'الخصوصية وشروط الاستخدام' : 'Privacy & Terms'}
                     </span>
                   </button>
-
-                  {isAppOwnerUser(authUser) ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsSideMenuOpen(false);
-                        setActiveSection('owner');
-                      }}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-colors cursor-pointer ${
-                        activeSection === 'owner'
-                          ? 'bg-[#2D2218] text-[#EAB338] shadow-xs'
-                          : 'text-[#2D2218] bg-[#EFE9DC] hover:bg-[#E5DEC9] border border-[#C88A14]/40'
-                      }`}
-                    >
-                      <BarChart3 className="w-4 h-4 shrink-0 text-[#C88A14]" />
-                      <span className="truncate">
-                        {lang === 'ar' ? 'لوحة تحكم صاحب التطبيق' : 'App Owner Dashboard'}
-                      </span>
-                    </button>
-                  ) : !authUser ? (
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        try {
-                          await signInWithPopup(auth, googleProvider);
-                        } catch {
-                          // ignore popup close
-                        }
-                      }}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs sm:text-sm font-bold text-[#2D2218] hover:bg-[#F7F3EB] transition-colors cursor-pointer"
-                    >
-                      <LogIn className="w-4 h-4 shrink-0 text-[#C88A14]" />
-                      <span className="truncate">
-                        {lang === 'ar' ? 'تسجيل الدخول (Google)' : 'Sign in with Google'}
-                      </span>
-                    </button>
-                  ) : null}
                 </div>
               </div>
             </div>
@@ -3635,8 +3994,8 @@ export default function App() {
                 </div>
                 <p className="text-[11px] text-[#5C4B3B] leading-relaxed">
                   {lang === 'ar'
-                    ? 'منصة الأترجة لتنظيم الورد اليومي والمراجعة والاختبارات بالروايات المعتمدة، مع سرد ثنائي صوتي مشفّر.'
-                    : 'Al-Utrujjah for daily Quran review, smart quizzes across narrations, and encrypted Duo recitation.'}
+                    ? 'مشكاة السرد لتنظيم الورد اليومي والمراجعة والاختبارات بالروايات المعتمدة، مع سرد ثنائي صوتي مشفّر.'
+                    : 'Mishkat Al-Sard for daily Quran review, smart quizzes across narrations, and encrypted Duo recitation.'}
                 </p>
               </div>
               <div className="flex items-center justify-between text-[11px] font-bold text-[#84715E] px-1">
@@ -3663,7 +4022,7 @@ export default function App() {
               <div className="flex items-center gap-2">
                 <Info className="w-5 h-5 text-[#EAB338]" />
                 <h2 className="text-sm sm:text-base font-extrabold">
-                  {lang === 'ar' ? 'حول التطبيق' : 'About Al-Utrujjah'}
+                  {lang === 'ar' ? 'حول التطبيق' : 'About Mishkat Al-Sard'}
                 </h2>
               </div>
               <button

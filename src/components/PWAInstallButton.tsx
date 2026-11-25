@@ -181,10 +181,12 @@ export const SmartPWAInstallAlert: React.FC<{ lang: Language }> = ({ lang }) => 
   }
 
   const handleAction = async () => {
-    const result = await install();
-    if (result === 'accepted') {
-      dismissSingleAlert();
-    } else if (result === 'unavailable') {
+    if (isInstallable) {
+      const accepted = await install();
+      if (accepted) {
+        dismissSingleAlert();
+      }
+    } else {
       setShowGuideModal(true);
       dismissSingleAlert();
     }
@@ -210,11 +212,7 @@ export const SmartPWAInstallAlert: React.FC<{ lang: Language }> = ({ lang }) => 
             <p className="text-[10.5px] text-[#E6D7BE] flex items-center gap-1 truncate">
               <RefreshCw className="w-2.5 h-2.5 text-[#86EFAC] shrink-0" />
               <span>
-                {isInstallable
-                  ? isAr
-                    ? 'تثبيت مباشر بضغطة واحدة · تحديثات صامتة'
-                    : 'One-tap direct install · Silent auto-updates'
-                  : isAr
+                {isAr
                   ? 'حفظ مساحة · تحديثات صامتة'
                   : 'Saves space · Silent auto-updates'}
               </span>
@@ -256,16 +254,18 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
   lang,
   variant = 'header',
 }) => {
-  const { isInstalled, browserType, install } = usePWAInstall();
+  const { isInstallable, isInstalled, browserType, install } = usePWAInstall();
   const [showGuideModal, setShowGuideModal] = useState<boolean>(false);
   const [installSuccess, setInstallSuccess] = useState<boolean>(false);
 
   const handleInstallClick = async () => {
-    const result = await install();
-    if (result === 'accepted') {
-      setInstallSuccess(true);
-      setTimeout(() => setInstallSuccess(false), 3000);
-    } else if (result === 'unavailable') {
+    if (isInstallable) {
+      const ok = await install();
+      if (ok) {
+        setInstallSuccess(true);
+        setTimeout(() => setInstallSuccess(false), 3000);
+      }
+    } else {
       setShowGuideModal(true);
     }
   };
