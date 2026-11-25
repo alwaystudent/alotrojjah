@@ -8,6 +8,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  ExternalLink,
   Eye,
   EyeOff,
   Link2,
@@ -63,7 +64,12 @@ import {
   SURAH_LIST,
   getRiwayahLabel,
 } from '../data/quranData';
-import { TrustedVerseItem, fetchTrustedCurriculumVerses } from '../utils/trustedQuranApi';
+import {
+  TRUSTED_QURAN_SOURCES,
+  TrustedQuranSourceId,
+  TrustedVerseItem,
+  fetchTrustedCurriculumVerses,
+} from '../utils/trustedQuranApi';
 import { memoryManager } from '../utils/memoryCleanup';
 import { callRingtone, dismissBackgroundCallNotification } from '../utils/ringtone';
 import {
@@ -274,6 +280,8 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   const [ayahTo, setAyahTo] = useState<number>(7);
   const [pageFrom, setPageFrom] = useState<number>(1);
   const [pageTo, setPageTo] = useState<number>(1);
+  const [preferredSource, setPreferredSource] = useState<TrustedQuranSourceId>('kfgqpc_hafs');
+  const [usedSource, setUsedSource] = useState<TrustedQuranSourceId>('kfgqpc_hafs');
   const [highPrivacyMasking, setHighPrivacyMasking] = useState<boolean>(false);
 
   // Active Session & WebRTC State
@@ -294,11 +302,12 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   const [verses, setVerses] = useState<TrustedVerseItem[]>([]);
   const [versesLoading, setVersesLoading] = useState<boolean>(false);
   const [versesError, setVersesError] = useState<string | null>(null);
-  const [localRevealCurrentAyah, setLocalRevealCurrentAyah] = useState<boolean>(false);
-  const [localFadeFirstWordOnly, setLocalFadeFirstWordOnly] = useState<boolean>(false);
   const [verseTextScale, setVerseTextScale] = useState<number>(1);
-  const [showEndEvalModal, setShowEndEvalModal] = useState<boolean>(false);
-  const [endingBusy, setEndingBusy] = useState<boolean>(false);
+  const [latestErrorBanner, setLatestErrorBanner] = useState<{
+    key: string;
+    ayahNumber: number;
+    wordText: string;
+  } | null>(null);
 
   // WebRTC & Resource Refs
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -320,6 +329,8 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   const iceRestartAttemptedRef = useRef<boolean>(false);
   const answeringCallIdRef = useRef<string | null>(null);
   const callStartTimestampRef = useRef<number | null>(null);
+  const lastErrorCountRef = useRef<number>(0);
+  const errorBannerTimeoutRef = useRef<number | null>(null);
   const cancelPreparingRef = useRef<boolean>(false);
   const friendsRef = useRef<FriendContactDoc[]>([]);
   const langRef = useRef<Language>(lang);
@@ -480,12 +491,16 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     processedCandidateIdsRef.current.clear();
     iceRestartAttemptedRef.current = false;
     callStartTimestampRef.current = null;
+    lastErrorCountRef.current = 0;
+    if (errorBannerTimeoutRef.current !== null) {
+      window.clearTimeout(errorBannerTimeoutRef.current);
+      errorBannerTimeoutRef.current = null;
+    }
     setIsMicMuted(false);
     setAudioUnlockNeeded(false);
     setCallSeconds(0);
     setPeerConnState('idle');
-    setShowEndEvalModal(false);
-    setLocalRevealCurrentAyah(false);
+    setLatestErrorBanner(null);
   }, []);
 
   // Cleanup on unmount
@@ -931,7 +946,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         callMode: 'friend_call',
         riwayah,
         curriculumMode,
-        hideVersesForReciter: false,
+        hideVersesForReciter: true,
         hideVersesForListener: false,
         activeAyah: finalAyahFrom,
         reciterSide: 'host',
@@ -1353,10 +1368,12 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       pageFrom: sessionMeta.pageFrom,
       pageTo: sessionMeta.pageTo,
       riwayah: sessionMeta.riwayah || 'hafs',
+      preferredSource,
     })
       .then((res) => {
         if (!cancelled) {
           setVerses(res.verses);
+          setUsedSource(res.usedSource);
         }
       })
       .catch(() => {
@@ -1385,8 +1402,56 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     sessionMeta?.pageFrom,
     sessionMeta?.pageTo,
     sessionMeta?.riwayah,
+    preferredSource,
     isAr,
   ]);
+
+  // Resolve flagged error keys against loaded verses for clear alerts
+  const resolvedMarkedErrors = useMemo(() => {
+    const raw = Array.isArray(sessionMeta?.markedErrors) ? sessionMeta.markedErrors : [];
+    return raw.map((key) => {
+      const parts = String(key).split(':');
+      const sNum = Number(parts[0] || 0);
+      const aNum = Number(parts[1] || 0);
+      const wIdx = Number(parts[2] ?? -1);
+      const verse = verses.find((v) => v.surahNumber === sNum && v.ayahNumber === aNum);
+      const words = verse ? verse.text.split(/\s+/).filter(Boolean) : [];
+      const wordText =
+        wIdx >= 0 && words[wIdx]
+          ? words[wIdx]
+          : isAr
+          ? `الآية ${aNum}`
+          : `Ayah ${aNum}`;
+      return {
+        key,
+        surahNumber: sNum,
+        ayahNumber: aNum,
+        wordIndex: wIdx,
+        wordText,
+      };
+    });
+  }, [sessionMeta?.markedErrors, verses, isAr]);
+
+  // Play respectful audio + haptic cue & show live alert banner whenever a new mistake is flagged
+  useEffect(() => {
+    const count = resolvedMarkedErrors.length;
+    if (count > lastErrorCountRef.current && count > 0) {
+      const newest = resolvedMarkedErrors[count - 1];
+      callRingtone.playErrorAlertCue();
+      setLatestErrorBanner({
+        key: newest.key,
+        ayahNumber: newest.ayahNumber,
+        wordText: newest.wordText,
+      });
+      if (errorBannerTimeoutRef.current !== null) {
+        window.clearTimeout(errorBannerTimeoutRef.current);
+      }
+      errorBannerTimeoutRef.current = window.setTimeout(() => {
+        setLatestErrorBanner(null);
+      }, 6500);
+    }
+    lastErrorCountRef.current = count;
+  }, [resolvedMarkedErrors]);
 
   // Auto-scroll active ayah into view
   useEffect(() => {
@@ -1411,12 +1476,11 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     }
   };
 
-  // End or Cancel Call
-  const finalizeEndCall = async (evaluation: SessionEvalKey | null) => {
+  // End or Cancel Call Immediately (for both parties as soon as either ends)
+  const finalizeEndCall = async (evaluation: SessionEvalKey | null = null) => {
     if (!sessionId || !user) return;
     const targetId = sessionId;
     const currentMeta = sessionMeta;
-    setEndingBusy(true);
 
     const duration = callStartTimestampRef.current
       ? Math.max(0, Math.round((Date.now() - callStartTimestampRef.current) / 1000))
@@ -1430,6 +1494,37 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       currentMeta?.status === 'active'
         ? Math.max(0, Math.min(100, Math.round(((totalWords - mistakes) / totalWords) * 100)))
         : null;
+    const peerName = currentMeta
+      ? currentMeta.hostUid === user.uid
+        ? friendsRef.current.find((f) => f.friendUid === currentMeta.calleeUid)?.friendName ||
+          currentMeta.guestName ||
+          (isAr ? 'صديق' : 'Friend')
+        : currentMeta.hostName
+      : isAr
+      ? 'صديق'
+      : 'Friend';
+    const summaryLabel = buildCurriculumSummary(currentMeta, lang);
+
+    // Tear down WebRTC & return caller/callee UI immediately without waiting on modal
+    teardownWebRtcResources();
+    setSessionId(null);
+    setSessionMeta(null);
+
+    if (currentMeta?.status === 'active') {
+      setPostCallSummary({
+        peerName,
+        surahLabel: summaryLabel,
+        durationSeconds: duration,
+        mistakesCount: mistakes,
+        accuracyPct: accuracyPct ?? 100,
+        evaluation,
+      });
+    } else {
+      setLobbyNotice({
+        type: 'info',
+        text: isAr ? 'تم إنهاء المكالمة.' : 'Call ended.',
+      });
+    }
 
     try {
       await updateDoc(doc(db, 'duoSessions', targetId), {
@@ -1441,12 +1536,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         updatedAt: serverTimestamp(),
       });
     } catch {
-      // If peer already ended call, proceed smoothly to teardown
-    } finally {
-      setEndingBusy(false);
-      teardownWebRtcResources();
-      setSessionId(null);
-      setSessionMeta(null);
+      // Peer may have already ended simultaneously — local teardown already done
     }
   };
 
@@ -1684,7 +1774,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     }
   };
 
-  // Word-tap mistake toggling inside active call
+  // Word-tap or quick-ayah mistake toggling inside active call (Listener controls corrections)
   const handleToggleWordError = async (wordKey: string) => {
     if (!sessionMeta || sessionMeta.status !== 'active') return;
     const currentErrors = Array.isArray(sessionMeta.markedErrors) ? sessionMeta.markedErrors : [];
@@ -1699,6 +1789,30 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     });
   };
 
+  const handleFlagCurrentAyahQuickError = async () => {
+    if (!sessionMeta || sessionMeta.status !== 'active' || verses.length === 0) return;
+    const targetVerse =
+      verses.find((v) => v.ayahNumber === sessionMeta.activeAyah) || verses[0];
+    if (!targetVerse) return;
+    const currentErrors = Array.isArray(sessionMeta.markedErrors) ? sessionMeta.markedErrors : [];
+    // Pick first unmarked word in the active ayah so the reciter gets an exact cue
+    const words = targetVerse.text.split(/\s+/).filter(Boolean);
+    let chosenKey = `${targetVerse.surahNumber}:${targetVerse.ayahNumber}:0`;
+    for (let i = 0; i < words.length; i++) {
+      const candidateKey = `${targetVerse.surahNumber}:${targetVerse.ayahNumber}:${i}`;
+      if (!currentErrors.includes(candidateKey)) {
+        chosenKey = candidateKey;
+        break;
+      }
+    }
+    if (currentErrors.includes(chosenKey)) return;
+    const nextErrors = [...currentErrors, chosenKey].slice(0, 80);
+    await updateActiveSessionFields({
+      markedErrors: nextErrors,
+      mistakesCount: nextErrors.length,
+    });
+  };
+
   // Helper: Am I the Reciter or the Listener?
   const isHost = Boolean(user && sessionMeta && sessionMeta.hostUid === user.uid);
   const amIReciter = Boolean(
@@ -1706,11 +1820,9 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       ((isHost && (sessionMeta.reciterSide || 'host') === 'host') ||
         (!isHost && sessionMeta.reciterSide === 'guest'))
   );
-  const versesHiddenForMe = Boolean(
-    sessionMeta &&
-      ((amIReciter && sessionMeta.hideVersesForReciter) ||
-        (!amIReciter && sessionMeta.hideVersesForListener))
-  );
+  // Verses are hidden for Reciter by default unless Listener explicitly reveals them
+  const isReciterHidden = sessionMeta?.hideVersesForReciter !== false;
+  const versesHiddenForMe = Boolean(sessionMeta && amIReciter && isReciterHidden);
 
   // Hidden reading overlay for auth gate
   if (authLoading) {
@@ -2025,13 +2137,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                 )}
                 <button
                   type="button"
-                  onClick={() => {
-                    if (sessionMeta.status === 'active') {
-                      setShowEndEvalModal(true);
-                    } else {
-                      void finalizeEndCall(null);
-                    }
-                  }}
+                  onClick={() => void finalizeEndCall(null)}
                   className="px-4 py-2 rounded-xl bg-[#A84A32] hover:bg-[#8E3B26] text-white text-xs sm:text-sm font-bold flex items-center gap-1.5 cursor-pointer shadow-xs"
                 >
                   <PhoneOff className="w-4 h-4" />
@@ -2132,6 +2238,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                     onClick={() =>
                       void updateActiveSessionFields({
                         reciterSide: (sessionMeta.reciterSide || 'host') === 'host' ? 'guest' : 'host',
+                        hideVersesForReciter: true,
                       })
                     }
                     className="px-3 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
@@ -2147,90 +2254,76 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
           {/* Active Recitation Workspace Controls & Script */}
           {sessionMeta.status === 'active' && (
             <div className="rounded-[24px] bg-[#FFFFFF] border border-[#C5CEBF] p-4 sm:p-5 shadow-sm space-y-4">
-              {/* Visibility, Errors & Ayah Navigation Bar */}
+              {/* Listener-Only Show Verses Control, Mistake Alerts & Text Controls */}
               <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#EAF0E7]">
                 <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void updateActiveSessionFields({
-                        hideVersesForReciter: !sessionMeta.hideVersesForReciter,
-                      })
-                    }
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border cursor-pointer ${
-                      sessionMeta.hideVersesForReciter
-                        ? 'bg-[#0E6340] text-white border-[#0E6340]'
-                        : 'bg-[#F4F5EE] text-[#161E19] border-[#C5CEBF]'
-                    }`}
-                  >
-                    {sessionMeta.hideVersesForReciter ? (
-                      <EyeOff className="w-3.5 h-3.5" />
-                    ) : (
-                      <Eye className="w-3.5 h-3.5" />
-                    )}
-                    <span>{isAr ? 'إخفاء عن القارئ' : 'Hide for Reciter'}</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void updateActiveSessionFields({
-                        hideVersesForListener: !sessionMeta.hideVersesForListener,
-                      })
-                    }
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border cursor-pointer ${
-                      sessionMeta.hideVersesForListener
-                        ? 'bg-[#0E6340] text-white border-[#0E6340]'
-                        : 'bg-[#F4F5EE] text-[#161E19] border-[#C5CEBF]'
-                    }`}
-                  >
-                    {sessionMeta.hideVersesForListener ? (
-                      <EyeOff className="w-3.5 h-3.5" />
-                    ) : (
-                      <Eye className="w-3.5 h-3.5" />
-                    )}
-                    <span>{isAr ? 'إخفاء عن المستمع' : 'Hide for Listener'}</span>
-                  </button>
-
-                  {versesHiddenForMe && (
+                  {!amIReciter ? (
                     <>
                       <button
                         type="button"
-                        onClick={() => setLocalRevealCurrentAyah((v) => !v)}
-                        className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#FEFCE8] border border-[#CA8A04] text-[#713F12] cursor-pointer"
+                        onClick={() =>
+                          void updateActiveSessionFields({
+                            hideVersesForReciter: !isReciterHidden,
+                          })
+                        }
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border cursor-pointer transition-colors ${
+                          !isReciterHidden
+                            ? 'bg-[#0E6340] text-white border-[#0E6340]'
+                            : 'bg-[#F4F5EE] text-[#161E19] border-[#C5CEBF]'
+                        }`}
                       >
-                        {localRevealCurrentAyah
-                          ? isAr
-                            ? 'إعادة الإخفاء'
-                            : 'Re-hide'
-                          : isAr
-                          ? 'كشف الآية الحالية'
-                          : 'Peek Current Ayah'}
+                        {!isReciterHidden ? (
+                          <Eye className="w-3.5 h-3.5" />
+                        ) : (
+                          <EyeOff className="w-3.5 h-3.5" />
+                        )}
+                        <span>
+                          {!isReciterHidden
+                            ? isAr
+                              ? 'إخفاء الآيات عن القارئ'
+                              : 'Hide Verses from Reciter'
+                            : isAr
+                            ? 'إظهار الآيات للقارئ'
+                            : 'Show Verses to Reciter'}
+                        </span>
                       </button>
+
                       <button
                         type="button"
-                        onClick={() => setLocalFadeFirstWordOnly((v) => !v)}
-                        className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#EAF0E7] text-[#0E5C3E] cursor-pointer"
+                        onClick={() => void handleFlagCurrentAyahQuickError()}
+                        className="px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 bg-[#FEF2F2] hover:bg-[#FEE2E2] border border-[#DC2626]/60 text-[#991B1B] cursor-pointer"
                       >
-                        {localFadeFirstWordOnly
-                          ? isAr
-                            ? 'إخفاء كامل'
-                            : 'Hide All'
-                          : isAr
-                          ? 'أول كلمة فقط'
-                          : 'First Word Cue'}
+                        <AlertCircle className="w-3.5 h-3.5" />
+                        <span>{isAr ? 'تنبيه خطأ في الآية الحالية' : 'Alert Mistake Here'}</span>
                       </button>
                     </>
+                  ) : (
+                    <span className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#EAF0E7] text-[#0E5C3E] flex items-center gap-1.5">
+                      {isReciterHidden ? (
+                        <EyeOff className="w-3.5 h-3.5" />
+                      ) : (
+                        <Eye className="w-3.5 h-3.5" />
+                      )}
+                      <span>
+                        {isReciterHidden
+                          ? isAr
+                            ? 'الآيات مخفية تلقائياً — يتحكم المستمع بإظهارها'
+                            : 'Verses hidden — controlled by Listener'
+                          : isAr
+                          ? 'أظهر المستمع الآيات لك مؤقتاً'
+                          : 'Listener revealed verses for you'}
+                      </span>
+                    </span>
                   )}
                 </div>
 
                 <div className="flex items-center gap-2">
                   <span className="px-2.5 py-1 rounded-lg bg-[#FEF2F2] border border-[#FECACA] text-[#991B1B] text-xs font-bold">
                     {isAr
-                      ? `التنبيهات: ${sessionMeta.mistakesCount || 0}`
+                      ? `الأخطاء والتنبيهات: ${sessionMeta.mistakesCount || 0}`
                       : `Alerts: ${sessionMeta.mistakesCount || 0}`}
                   </span>
-                  {(sessionMeta.mistakesCount || 0) > 0 && (
+                  {!amIReciter && (sessionMeta.mistakesCount || 0) > 0 && (
                     <button
                       type="button"
                       onClick={() =>
@@ -2262,6 +2355,62 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                 </div>
               </div>
 
+              {/* Prominent Live Mistake Alert Banner (Visible to both Reciter & Listener even when verses are hidden) */}
+              {latestErrorBanner && (
+                <div className="rounded-2xl bg-[#FEF2F2] border-2 border-[#DC2626] p-3.5 flex items-center justify-between gap-3 shadow-sm animate-pulse">
+                  <div className="flex items-center gap-2.5">
+                    <AlertCircle className="w-5 h-5 text-[#DC2626] shrink-0" />
+                    <div className="text-xs sm:text-sm font-extrabold text-[#991B1B]">
+                      {isAr
+                        ? `تنبيه تصحيح — الآية (${latestErrorBanner.ayahNumber}): الكلمة «${latestErrorBanner.wordText}»`
+                        : `Correction Alert — Ayah (${latestErrorBanner.ayahNumber}): "${latestErrorBanner.wordText}"`}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setLatestErrorBanner(null)}
+                    className="p-1 rounded-lg hover:bg-[#FEE2E2] text-[#991B1B] cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
+              {/* Compact Flagged Mistakes Log Strip */}
+              {resolvedMarkedErrors.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 p-2.5 rounded-xl bg-[#FAFBF8] border border-[#E2E8DF]">
+                  <span className="text-[11px] font-extrabold text-[#991B1B] me-1">
+                    {isAr ? 'سجل التنبيهات:' : 'Alerts:'}
+                  </span>
+                  {resolvedMarkedErrors.map((item) => (
+                    <span
+                      key={item.key}
+                      onClick={() => void updateActiveSessionFields({ activeAyah: item.ayahNumber })}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[#FEF2F2] border border-[#FECACA] text-[#991B1B] text-[11px] font-bold cursor-pointer hover:bg-[#FEE2E2]"
+                    >
+                      <span>
+                        {isAr
+                          ? `آية ${item.ayahNumber}: «${item.wordText}»`
+                          : `Ayah ${item.ayahNumber}: "${item.wordText}"`}
+                      </span>
+                      {!amIReciter && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handleToggleWordError(item.key);
+                          }}
+                          className="hover:text-[#7F1D1D] cursor-pointer"
+                          title={isAr ? 'إزالة التنبيه' : 'Remove alert'}
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              )}
+
               {/* Verses Container */}
               {versesLoading ? (
                 <p className="text-center py-8 text-sm text-[#4B5650]">
@@ -2275,9 +2424,12 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                 <div className="space-y-3 max-h-[54vh] overflow-y-auto px-1">
                   {verses.map((v) => {
                     const isCurrent = sessionMeta.activeAyah === v.ayahNumber;
-                    const hideThisAyah = versesHiddenForMe && !(isCurrent && localRevealCurrentAyah);
+                    const hideThisAyah = versesHiddenForMe;
                     const words = v.text.split(/\s+/).filter(Boolean);
                     const marked = Array.isArray(sessionMeta.markedErrors) ? sessionMeta.markedErrors : [];
+                    const ayahHasErrors = marked.some((k) =>
+                      String(k).startsWith(`${v.surahNumber}:${v.ayahNumber}:`)
+                    );
 
                     return (
                       <div
@@ -2289,7 +2441,9 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                           void updateActiveSessionFields({ activeAyah: v.ayahNumber })
                         }
                         className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${
-                          isCurrent
+                          ayahHasErrors
+                            ? 'bg-[#FEF2F2]/60 border-[#DC2626]/60'
+                            : isCurrent
                             ? 'bg-[#ECFDF3]/80 border-[#0E6340] shadow-xs'
                             : 'bg-[#FAFBF8] border-[#E2E8DF] hover:border-[#0E6340]/40'
                         }`}
@@ -2298,29 +2452,27 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                           <span className="text-[11px] font-bold text-[#96701E]">
                             {isAr ? `الآية ${v.ayahNumber}` : `Ayah ${v.ayahNumber}`}
                           </span>
-                          {isCurrent && (
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-[#0E6340] text-white">
-                              {isAr ? 'الآية الحالية' : 'Active'}
-                            </span>
-                          )}
+                          <div className="flex items-center gap-1.5">
+                            {ayahHasErrors && (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-[#DC2626] text-white">
+                                {isAr ? 'بها تنبيه' : 'Flagged'}
+                              </span>
+                            )}
+                            {isCurrent && (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-[#0E6340] text-white">
+                                {isAr ? 'الآية الحالية' : 'Active'}
+                              </span>
+                            )}
+                          </div>
                         </div>
 
                         {hideThisAyah ? (
-                          <div dir="rtl" className="py-2 text-right font-quran text-lg text-[#4B5650]">
-                            {localFadeFirstWordOnly && words.length > 0 ? (
-                              <>
-                                <span className="text-[#0E5C3E] font-bold">{words[0]} </span>
-                                <span className="blur-[5px] select-none opacity-40">
-                                  {words.slice(1).join(' ')}
-                                </span>
-                              </>
-                            ) : (
-                              <span className="text-xs font-sans text-[#6E7A73]">
-                                {isAr
-                                  ? 'مخفية للتسميع الغيبي — اقرأ من حفظك'
-                                  : 'Hidden for memorization — recite from memory'}
-                              </span>
-                            )}
+                          <div dir="rtl" className="py-2 text-right">
+                            <span className="text-xs font-semibold text-[#6E7A73]">
+                              {isAr
+                                ? 'الآية مخفية للتسميع الغيبي — اقرأ من حفظك'
+                                : 'Hidden for memorization — recite from memory'}
+                            </span>
                           </div>
                         ) : (
                           <p
@@ -2336,14 +2488,24 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                                   <span
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      void handleToggleWordError(wKey);
+                                      if (!amIReciter) {
+                                        void handleToggleWordError(wKey);
+                                      }
                                     }}
                                     className={`inline-block px-0.5 rounded transition-colors ${
                                       isMarked
-                                        ? 'bg-[#FECACA] text-[#991B1B] underline decoration-[#DC2626]'
-                                        : 'hover:bg-[#EAF0E7]'
+                                        ? 'bg-[#FECACA] text-[#991B1B] underline decoration-[#DC2626] font-bold'
+                                        : !amIReciter
+                                        ? 'hover:bg-[#EAF0E7]'
+                                        : ''
                                     }`}
-                                    title={isAr ? 'اضغط لتحديد أو إلغاء خطأ' : 'Tap to toggle error'}
+                                    title={
+                                      !amIReciter
+                                        ? isAr
+                                          ? 'اضغط لتحديد أو إلغاء خطأ'
+                                          : 'Tap to toggle error'
+                                        : undefined
+                                    }
                                   >
                                     {word}
                                   </span>{' '}
@@ -2358,6 +2520,39 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                   })}
                 </div>
               )}
+
+              {/* Verified Quran Source Attribution (King Fahd Complex & Ayat Madinah Mushaf) */}
+              <div className="pt-2 border-t border-[#EAF0E7] flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#4B5650]">
+                <span>
+                  {isAr
+                    ? `المصدر النشط: ${
+                        TRUSTED_QURAN_SOURCES.find((s) => s.id === usedSource)?.labelAr || ''
+                      }`
+                    : `Source: ${
+                        TRUSTED_QURAN_SOURCES.find((s) => s.id === usedSource)?.labelEn || ''
+                      }`}
+                </span>
+                <div className="flex items-center gap-3">
+                  <a
+                    href="https://qurancomplex.gov.sa"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 font-bold text-[#0E5C3E] hover:underline"
+                  >
+                    <span>{isAr ? 'مجمع الملك فهد' : 'King Fahd Complex'}</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                  <a
+                    href="https://quran.ksu.edu.sa/ayat/"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 font-bold text-[#96701E] hover:underline"
+                  >
+                    <span>{isAr ? 'موقع آية' : 'Ayat Mushaf'}</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
+              </div>
 
               {/* Synced Prev / Next Ayah Controls */}
               {verses.length > 1 && (
@@ -2375,9 +2570,13 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                     <span>{isAr ? 'الآية السابقة' : 'Prev Ayah'}</span>
                   </button>
                   <span className="text-xs font-bold text-[#4B5650]">
-                    {isAr
-                      ? 'اضغط على أي كلمة لتسجيل ملاحظة تسميع'
-                      : 'Tap any word to mark a recitation note'}
+                    {!amIReciter
+                      ? isAr
+                        ? 'اضغط على أي كلمة لتنبيه القارئ بالخطأ'
+                        : 'Tap any word to flag a mistake'
+                      : isAr
+                      ? 'تابع القراءة — تصلك تنبيهات المستمع لحظياً'
+                      : 'Recite — listener alerts appear live'}
                   </span>
                   <button
                     type="button"
@@ -2393,47 +2592,6 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                   </button>
                 </div>
               )}
-            </div>
-          )}
-
-          {/* End Call Evaluation Modal */}
-          {showEndEvalModal && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-              <div className="w-full max-w-sm rounded-[24px] bg-white border border-[#C5CEBF] p-5 shadow-2xl space-y-4">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-base font-extrabold font-display-islamic text-[#0E5C3E]">
-                    {isAr ? 'تقييم جلسة السرد الثنائي' : 'Rate Duo Session'}
-                  </h4>
-                  <button
-                    type="button"
-                    onClick={() => setShowEndEvalModal(false)}
-                    className="p-1 rounded-lg hover:bg-[#EAF0E7] text-[#4B5650] cursor-pointer"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  {EVALUATION_CHOICES.map((opt) => (
-                    <button
-                      key={opt.id}
-                      type="button"
-                      disabled={endingBusy}
-                      onClick={() => void finalizeEndCall(opt.id)}
-                      className={`py-2.5 px-3 rounded-xl border text-xs font-bold cursor-pointer hover:opacity-90 ${opt.colorClass}`}
-                    >
-                      {isAr ? opt.labelAr : opt.labelEn}
-                    </button>
-                  ))}
-                </div>
-                <button
-                  type="button"
-                  disabled={endingBusy}
-                  onClick={() => void finalizeEndCall(null)}
-                  className="w-full py-2.5 rounded-xl bg-[#A84A32] hover:bg-[#8E3B26] text-white text-xs font-bold cursor-pointer"
-                >
-                  {isAr ? 'إنهاء المكالمة الآن' : 'End Call Now'}
-                </button>
-              </div>
             </div>
           )}
         </div>
@@ -2597,7 +2755,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
               </button>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
               <div className="sm:col-span-1">
                 <label className="block text-[11px] font-bold text-[#4B5650] mb-1">
                   {isAr ? 'الرواية' : 'Riwayah'}
@@ -2612,6 +2770,24 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                       {isAr ? r.labelAr : r.labelEn}
                     </option>
                   ))}
+                </select>
+              </div>
+
+              <div className="sm:col-span-1">
+                <label className="block text-[11px] font-bold text-[#4B5650] mb-1">
+                  {isAr ? 'مصدر الآيات' : 'Quran Source'}
+                </label>
+                <select
+                  value={preferredSource}
+                  onChange={(e) => setPreferredSource(e.target.value as TrustedQuranSourceId)}
+                  className="w-full px-3 py-2 rounded-xl bg-[#F4F5EE] border border-[#C5CEBF] text-xs font-bold text-[#161E19]"
+                >
+                  <option value="kfgqpc_hafs">
+                    {isAr ? 'مجمع الملك فهد (العثماني)' : 'King Fahd Complex (KFGQPC)'}
+                  </option>
+                  <option value="madinah_uthmani">
+                    {isAr ? 'موقع آية — مصحف المدينة' : 'Ayat — Madinah Mushaf'}
+                  </option>
                 </select>
               </div>
 

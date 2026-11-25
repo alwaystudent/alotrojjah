@@ -178,8 +178,9 @@ export async function fetchTrustedSurahVerses(
 
 export async function fetchMushafPageByRiwayah(
   pageNumber: number,
-  riwayah: QuranRiwayah = 'hafs'
-): Promise<{ surahNumber: number; ayahNumber: number; textUthmani: string; juz?: number }[]> {
+  riwayah: QuranRiwayah = 'hafs',
+  preferredSource: TrustedQuranSourceId = 'kfgqpc_hafs'
+): Promise<{ surahNumber: number; ayahNumber: number; textUthmani: string; juz?: number; sourceId?: TrustedQuranSourceId }[]> {
   const safePage = Math.max(1, Math.min(604, pageNumber));
 
   if (riwayah === 'qalun' || riwayah === 'warsh') {
@@ -195,46 +196,67 @@ export async function fetchMushafPageByRiwayah(
         surahNumber: Number(item.chapter),
         ayahNumber: Number(item.verse),
         textUthmani: sanitizeQuranText(item.text),
+        sourceId: 'kfgqpc_hafs',
       }));
     }
   }
 
-  // Hafs primary: api.quran.com v4
-  try {
+  const fetchKfgqpcPage = async () => {
     const res = await fetch(
-      `https://api.quran.com/api/v4/verses/by_page/${safePage}?words=false&fields=text_uthmani,chapter_id,verse_number,juz_number&per_page=50`
+      `https://api.quran.com/api/v4/verses/by_page/${safePage}?words=false&fields=text_uthmani,text_qpc_hafs,chapter_id,verse_number,juz_number&per_page=50`
     );
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data.verses) && data.verses.length > 0) {
-        return data.verses.map((v: any) => ({
-          surahNumber: Number(v.chapter_id || String(v.verse_key).split(':')[0]),
-          ayahNumber: Number(v.verse_number || String(v.verse_key).split(':')[1]),
-          textUthmani: sanitizeQuranText(v.text_uthmani || ''),
-          juz: Number(v.juz_number || 1),
-        }));
-      }
+    if (!res.ok) throw new Error('KFGQPC page unavailable');
+    const data = await res.json();
+    if (!Array.isArray(data.verses) || data.verses.length === 0) {
+      throw new Error('KFGQPC page empty');
     }
-  } catch {
-    // Fallback below
-  }
+    return data.verses.map((v: any) => ({
+      surahNumber: Number(v.chapter_id || String(v.verse_key).split(':')[0]),
+      ayahNumber: Number(v.verse_number || String(v.verse_key).split(':')[1]),
+      textUthmani: sanitizeQuranText(v.text_qpc_hafs || v.text_uthmani || ''),
+      juz: Number(v.juz_number || 1),
+      sourceId: 'kfgqpc_hafs' as const,
+    }));
+  };
 
-  // Hafs secondary: alquran.cloud
-  try {
+  const fetchMadinahAyatPage = async () => {
     const res2 = await fetch(`https://api.alquran.cloud/v1/page/${safePage}/quran-uthmani`);
-    if (res2.ok) {
-      const data2 = await res2.json();
-      if (data2?.data?.ayahs?.length > 0) {
-        return data2.data.ayahs.map((a: any) => ({
-          surahNumber: Number(a.surah.number),
-          ayahNumber: Number(a.numberInSurah),
-          textUthmani: sanitizeQuranText(a.text || ''),
-          juz: Number(a.juz || 1),
-        }));
-      }
+    if (!res2.ok) throw new Error('Madinah Ayat page unavailable');
+    const data2 = await res2.json();
+    if (!data2?.data?.ayahs?.length) {
+      throw new Error('Madinah Ayat page empty');
     }
-  } catch {
-    // Fallback to jsDelivr Hafs
+    return data2.data.ayahs.map((a: any) => ({
+      surahNumber: Number(a.surah.number),
+      ayahNumber: Number(a.numberInSurah),
+      textUthmani: sanitizeQuranText(a.text || ''),
+      juz: Number(a.juz || 1),
+      sourceId: 'madinah_uthmani' as const,
+    }));
+  };
+
+  if (preferredSource === 'madinah_uthmani') {
+    try {
+      return await fetchMadinahAyatPage();
+    } catch {
+      // fallback to KFGQPC
+    }
+    try {
+      return await fetchKfgqpcPage();
+    } catch {
+      // fallback to CDN below
+    }
+  } else {
+    try {
+      return await fetchKfgqpcPage();
+    } catch {
+      // fallback to Madinah Ayat
+    }
+    try {
+      return await fetchMadinahAyatPage();
+    } catch {
+      // fallback to CDN below
+    }
   }
 
   const res3 = await fetch(
@@ -247,13 +269,15 @@ export async function fetchMushafPageByRiwayah(
     surahNumber: Number(item.chapter),
     ayahNumber: Number(item.verse),
     textUthmani: sanitizeQuranText(item.text),
+    sourceId: preferredSource,
   }));
 }
 
 export async function fetchTrustedPageRangeVerses(
   pageFrom: number,
   pageTo: number,
-  riwayah: QuranRiwayah = 'hafs'
+  riwayah: QuranRiwayah = 'hafs',
+  preferredSource: TrustedQuranSourceId = 'kfgqpc_hafs'
 ): Promise<TrustedVerseItem[]> {
   const start = Math.max(1, Math.min(pageFrom, pageTo));
   // Cap single fetch batch to max 10 pages so session loads quickly and stays responsive
@@ -263,7 +287,7 @@ export async function fetchTrustedPageRangeVerses(
 
   const results = await Promise.all(
     pages.map(async (p) => {
-      const raw = await fetchMushafPageByRiwayah(p, riwayah);
+      const raw = await fetchMushafPageByRiwayah(p, riwayah, preferredSource);
       return raw.map((item) => ({
         verseKey: `${item.surahNumber}:${item.ayahNumber}`,
         surahNumber: item.surahNumber,
@@ -272,7 +296,7 @@ export async function fetchTrustedPageRangeVerses(
         textCleanUthmani: item.textUthmani,
         pageNumber: p,
         juzNumber: item.juz,
-        sourceId: 'kfgqpc_hafs' as const,
+        sourceId: item.sourceId || preferredSource,
         riwayah,
       }));
     })
@@ -305,8 +329,8 @@ export async function fetchTrustedCurriculumVerses(params: {
   } = params;
 
   if (curriculumMode === 'page') {
-    const verses = await fetchTrustedPageRangeVerses(pageFrom, pageTo, riwayah);
-    return { verses, usedSource: 'kfgqpc_hafs' };
+    const verses = await fetchTrustedPageRangeVerses(pageFrom, pageTo, riwayah, preferredSource);
+    return { verses, usedSource: verses[0]?.sourceId || preferredSource };
   }
 
   if (curriculumMode === 'surah') {

@@ -107,6 +107,20 @@ class CallRingtoneManager {
     }, intervalMs);
   }
 
+  public playErrorAlertCue(): void {
+    try {
+      if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+        navigator.vibrate([90, 50, 90]);
+      }
+      const ctx = this.ensureContext();
+      if (!ctx || ctx.state === 'closed') return;
+      this.playTone(523.25, 0.0, 0.14, 0.11);
+      this.playTone(392.0, 0.13, 0.2, 0.11);
+    } catch {
+      // Ignore audio/vibration errors
+    }
+  }
+
   public stop(): void {
     this.activeMode = null;
     if (this.loopTimer !== null) {
