@@ -2211,6 +2211,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       }
       await auth.currentUser.reload().catch(() => {});
       await auth.currentUser.getIdToken(true).catch(() => {});
+      await new Promise((resolve) => window.setTimeout(resolve, 150));
       setUser(auth.currentUser);
       setAuthSyncVersion((v) => v + 1);
       window.dispatchEvent(new Event('alutrujjah:auth-refreshed'));
@@ -2542,7 +2543,11 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
         setAnsweringCallerName(callData.hostName || null);
       }
 
-      if (callData.status !== 'ringing' || callData.calleeUid !== currentUser.uid) {
+      if (
+        callData.status !== 'ringing' ||
+        callData.calleeUid !== currentUser.uid ||
+        callData.hostUid === currentUser.uid
+      ) {
         setLobbyError(
           isAr
             ? 'هذه المكالمة غير متاحة أو تم الرد عليها مسبقاً.'
@@ -2775,24 +2780,39 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
       if (isPermissionDeniedError(err)) {
         logDuoFirestoreError(err, OperationType.UPDATE, sessionPath);
         let sessionAlreadyClosed = false;
+        let accountMismatch = Boolean(currentUser.isAnonymous);
         try {
+          await currentUser.getIdToken(true).catch(() => {});
+          await new Promise((resolve) => window.setTimeout(resolve, 120));
           const latestSnap = await getDoc(doc(db, 'duoSessions', cleanId));
           if (!latestSnap.exists()) {
             sessionAlreadyClosed = true;
           } else {
-            const latestStatus = (latestSnap.data() as DuoSessionDoc).status;
-            if (latestStatus !== 'ringing') {
+            const latestData = latestSnap.data() as DuoSessionDoc;
+            if (
+              latestData.status !== 'ringing' ||
+              (latestData.guestUid && latestData.guestUid !== currentUser.uid)
+            ) {
               sessionAlreadyClosed = true;
+            } else if (
+              latestData.calleeUid !== currentUser.uid ||
+              latestData.hostUid === currentUser.uid
+            ) {
+              accountMismatch = true;
             }
           }
         } catch {
-          // ignore
+          // Keep default permission guidance if session doc is inaccessible
         }
         setLobbyError(
           sessionAlreadyClosed
             ? isAr
-              ? 'انتهت المكالمة الواردة أو ألغاها المتصل.'
-              : 'Incoming call has ended or been cancelled.'
+              ? 'انتهت المكالمة الواردة أو تم الرد عليها مسبقاً.'
+              : 'Incoming call has ended or was already answered.'
+            : accountMismatch
+            ? isAr
+              ? 'هذا الحساب لا يطابق الطرف المستقبِل للمكالمة. تأكد من تسجيل الدخول بحسابك الصحيح.'
+              : 'Your active account does not match the intended call recipient. Please sign in with the right account.'
             : isAr
             ? 'تعذر الرد على المكالمة بسبب صلاحيات الجلسة. حاول تحديث الصفحة أو إعادة تسجيل الدخول.'
             : 'Could not answer call due to session permissions. Please refresh or sign in again.'
