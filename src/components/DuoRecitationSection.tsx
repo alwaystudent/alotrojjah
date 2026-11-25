@@ -309,6 +309,19 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     wordText: string;
   } | null>(null);
 
+  // Listener-Only In-Session Curriculum Switcher State
+  const [showLiveCurriculumEditor, setShowLiveCurriculumEditor] = useState<boolean>(false);
+  const [draftRiwayah, setDraftRiwayah] = useState<QuranRiwayah>(defaultRiwayah);
+  const [draftMode, setDraftMode] = useState<'surah' | 'ayah' | 'page'>('ayah');
+  const [draftSurahNumber, setDraftSurahNumber] = useState<number>(1);
+  const [draftSurahEnd, setDraftSurahEnd] = useState<number>(1);
+  const [draftAyahFrom, setDraftAyahFrom] = useState<number>(1);
+  const [draftAyahTo, setDraftAyahTo] = useState<number>(7);
+  const [draftPageFrom, setDraftPageFrom] = useState<number>(1);
+  const [draftPageTo, setDraftPageTo] = useState<number>(1);
+  const [curriculumSaving, setCurriculumSaving] = useState<boolean>(false);
+  const [curriculumEditError, setCurriculumEditError] = useState<string | null>(null);
+
   // WebRTC & Resource Refs
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -501,6 +514,8 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
     setCallSeconds(0);
     setPeerConnState('idle');
     setLatestErrorBanner(null);
+    setShowLiveCurriculumEditor(false);
+    setCurriculumEditError(null);
   }, []);
 
   // Cleanup on unmount
@@ -1824,6 +1839,93 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
   const isReciterHidden = sessionMeta?.hideVersesForReciter !== false;
   const versesHiddenForMe = Boolean(sessionMeta && amIReciter && isReciterHidden);
 
+  const draftSurahInfo = useMemo(
+    () => SURAH_LIST.find((s) => s.number === draftSurahNumber) || SURAH_LIST[0],
+    [draftSurahNumber]
+  );
+
+  // Ensure live curriculum editor closes immediately if Listener swaps role to Reciter or session leaves active state
+  useEffect(() => {
+    if (amIReciter || sessionMeta?.status !== 'active') {
+      setShowLiveCurriculumEditor(false);
+    }
+  }, [amIReciter, sessionMeta?.status]);
+
+  const handleToggleLiveCurriculumEditor = () => {
+    if (amIReciter || !sessionMeta || sessionMeta.status !== 'active') return;
+    if (showLiveCurriculumEditor) {
+      setShowLiveCurriculumEditor(false);
+      setCurriculumEditError(null);
+      return;
+    }
+    const curSurah = sessionMeta.surahNumber || 1;
+    const curSurahEnd = Math.max(curSurah, Math.min(114, sessionMeta.surahEnd || curSurah));
+    const curPageFrom = Math.max(1, Math.min(604, sessionMeta.pageFrom || 1));
+    const curPageTo = Math.max(curPageFrom, Math.min(604, sessionMeta.pageTo || curPageFrom));
+    setDraftRiwayah(sessionMeta.riwayah || 'hafs');
+    setDraftMode(sessionMeta.curriculumMode || 'ayah');
+    setDraftSurahNumber(curSurah);
+    setDraftSurahEnd(curSurahEnd);
+    setDraftAyahFrom(sessionMeta.ayahFrom || 1);
+    setDraftAyahTo(sessionMeta.ayahTo || 7);
+    setDraftPageFrom(curPageFrom);
+    setDraftPageTo(curPageTo);
+    setCurriculumEditError(null);
+    setShowLiveCurriculumEditor(true);
+  };
+
+  const handleApplyLiveCurriculum = async () => {
+    if (!sessionId || !sessionMeta || sessionMeta.status !== 'active' || amIReciter) return;
+    setCurriculumSaving(true);
+    setCurriculumEditError(null);
+
+    try {
+      const selectedInfo = SURAH_LIST.find((s) => s.number === draftSurahNumber) || SURAH_LIST[0];
+      let finalSurahEnd = draftSurahNumber;
+      let finalAyahFrom = draftAyahFrom;
+      let finalAyahTo = draftAyahTo;
+
+      if (draftMode === 'surah') {
+        finalSurahEnd = Math.max(draftSurahNumber, Math.min(114, draftSurahEnd));
+        const endInfo = SURAH_LIST.find((s) => s.number === finalSurahEnd) || selectedInfo;
+        finalAyahFrom = 1;
+        finalAyahTo = endInfo.ayahCount;
+      } else if (draftMode === 'page') {
+        finalSurahEnd = draftSurahNumber;
+        finalAyahFrom = 1;
+        finalAyahTo = 7;
+      } else {
+        finalSurahEnd = draftSurahNumber;
+        finalAyahFrom = Math.max(1, Math.min(draftAyahFrom, selectedInfo.ayahCount));
+        finalAyahTo = Math.max(finalAyahFrom, Math.min(draftAyahTo, selectedInfo.ayahCount));
+      }
+
+      const safePageFrom = Math.max(1, Math.min(604, draftPageFrom));
+      const safePageTo = Math.max(safePageFrom, Math.min(604, safePageFrom + 9, draftPageTo));
+
+      await updateActiveSessionFields({
+        riwayah: draftRiwayah,
+        curriculumMode: draftMode,
+        surahNumber: draftSurahNumber,
+        surahEnd: finalSurahEnd,
+        ayahFrom: finalAyahFrom,
+        ayahTo: finalAyahTo,
+        pageFrom: safePageFrom,
+        pageTo: safePageTo,
+        activeAyah: finalAyahFrom,
+      });
+      setShowLiveCurriculumEditor(false);
+    } catch {
+      setCurriculumEditError(
+        isAr
+          ? 'تعذر تحديث المقرر حالياً، تستمر المكالمة بشكل طبيعي.'
+          : 'Could not update curriculum right now; the call continues normally.'
+      );
+    } finally {
+      setCurriculumSaving(false);
+    }
+  };
+
   // Hidden reading overlay for auth gate
   if (authLoading) {
     return (
@@ -2296,6 +2398,19 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                         <AlertCircle className="w-3.5 h-3.5" />
                         <span>{isAr ? 'تنبيه خطأ في الآية الحالية' : 'Alert Mistake Here'}</span>
                       </button>
+
+                      <button
+                        type="button"
+                        onClick={handleToggleLiveCurriculumEditor}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border cursor-pointer transition-colors ${
+                          showLiveCurriculumEditor
+                            ? 'bg-[#96701E] text-white border-[#96701E]'
+                            : 'bg-[#FEFCE8] hover:bg-[#FEF3C7] text-[#8A6518] border-[#DEC994]'
+                        }`}
+                      >
+                        <BookOpen className="w-3.5 h-3.5" />
+                        <span>{isAr ? 'تغيير المقرر' : 'Change Curriculum'}</span>
+                      </button>
                     </>
                   ) : (
                     <span className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#EAF0E7] text-[#0E5C3E] flex items-center gap-1.5">
@@ -2355,6 +2470,288 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
                 </div>
               </div>
 
+              {/* Listener-Only Inline Live Curriculum Switcher (Does not interrupt active call or session) */}
+              {!amIReciter && showLiveCurriculumEditor && (
+                <div className="rounded-2xl bg-[#FAFBF8] border border-[#DEC994] p-3.5 sm:p-4 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <BookOpen className="w-4 h-4 text-[#96701E]" />
+                      <span className="text-xs sm:text-sm font-extrabold text-[#0E5C3E]">
+                        {isAr
+                          ? 'تغيير المقرر أثناء الجلسة (للمسمع فقط — دون انقطاع للمكالمة)'
+                          : 'Switch Session Curriculum (Listener Only — No Call Interruption)'}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowLiveCurriculumEditor(false);
+                        setCurriculumEditError(null);
+                      }}
+                      className="p-1 rounded-lg hover:bg-[#EAF0E7] text-[#4B5650] cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                    <div>
+                      <label className="block text-[11px] font-bold text-[#4B5650] mb-1">
+                        {isAr ? 'الرواية' : 'Riwayah'}
+                      </label>
+                      <select
+                        value={draftRiwayah}
+                        onChange={(e) => setDraftRiwayah(e.target.value as QuranRiwayah)}
+                        className="w-full px-3 py-2 rounded-xl bg-white border border-[#C5CEBF] text-xs font-bold text-[#161E19]"
+                      >
+                        {RIWAYAH_OPTIONS.map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {isAr ? r.labelAr : r.labelEn}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-[#4B5650] mb-1">
+                        {isAr ? 'مصدر الآيات' : 'Quran Source'}
+                      </label>
+                      <select
+                        value={preferredSource}
+                        onChange={(e) => setPreferredSource(e.target.value as TrustedQuranSourceId)}
+                        className="w-full px-3 py-2 rounded-xl bg-white border border-[#C5CEBF] text-xs font-bold text-[#161E19]"
+                      >
+                        <option value="kfgqpc_hafs">
+                          {isAr ? 'مجمع الملك فهد (العثماني)' : 'King Fahd Complex (KFGQPC)'}
+                        </option>
+                        <option value="madinah_uthmani">
+                          {isAr ? 'موقع آية — مصحف المدينة' : 'Ayat — Madinah Mushaf'}
+                        </option>
+                      </select>
+                    </div>
+
+                    <div className="sm:col-span-2">
+                      <label className="block text-[11px] font-bold text-[#4B5650] mb-1">
+                        {isAr ? 'نطاق التسميع' : 'Curriculum Mode'}
+                      </label>
+                      <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-[#EAF0E7]">
+                        {(
+                          [
+                            { id: 'ayah', ar: 'آيات محددة', en: 'Ayahs' },
+                            { id: 'surah', ar: 'سور كاملة', en: 'Surahs' },
+                            { id: 'page', ar: 'صفحات المصحف', en: 'Pages' },
+                          ] as const
+                        ).map((mode) => (
+                          <button
+                            key={mode.id}
+                            type="button"
+                            onClick={() => setDraftMode(mode.id)}
+                            className={`py-1.5 rounded-lg text-xs font-bold cursor-pointer ${
+                              draftMode === mode.id
+                                ? 'bg-white text-[#0E5C3E] shadow-xs'
+                                : 'text-[#4B5650]'
+                            }`}
+                          >
+                            {isAr ? mode.ar : mode.en}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {draftMode === 'ayah' && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <div>
+                        <label className="block text-[11px] font-bold text-[#4B5650] mb-1">
+                          {isAr ? 'السورة' : 'Surah'}
+                        </label>
+                        <select
+                          value={draftSurahNumber}
+                          onChange={(e) => {
+                            const num = Number(e.target.value);
+                            const info = SURAH_LIST.find((s) => s.number === num) || SURAH_LIST[0];
+                            setDraftSurahNumber(num);
+                            setDraftSurahEnd(num);
+                            setDraftAyahFrom(1);
+                            setDraftAyahTo(info.ayahCount);
+                          }}
+                          className="w-full px-3 py-2 rounded-xl bg-white border border-[#C5CEBF] text-xs font-bold text-[#161E19]"
+                        >
+                          {SURAH_LIST.map((s) => (
+                            <option key={s.number} value={s.number}>
+                              {s.number}. {isAr ? s.nameAr : s.nameEn}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-[#4B5650] mb-1">
+                          {isAr ? 'من آية' : 'From Ayah'}
+                        </label>
+                        <select
+                          value={draftAyahFrom}
+                          onChange={(e) => {
+                            const val = Number(e.target.value);
+                            setDraftAyahFrom(val);
+                            if (val > draftAyahTo) setDraftAyahTo(val);
+                          }}
+                          className="w-full px-3 py-2 rounded-xl bg-white border border-[#C5CEBF] text-xs font-bold text-[#161E19] cursor-pointer"
+                        >
+                          {Array.from({ length: draftSurahInfo.ayahCount }, (_, i) => i + 1).map((num) => (
+                            <option key={num} value={num}>
+                              {isAr ? `الآية ${num}` : `Ayah ${num}`}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-[#4B5650] mb-1">
+                          {isAr ? 'إلى آية' : 'To Ayah'}
+                        </label>
+                        <select
+                          value={draftAyahTo}
+                          onChange={(e) => {
+                            const val = Number(e.target.value);
+                            setDraftAyahTo(val);
+                            if (val < draftAyahFrom) setDraftAyahFrom(val);
+                          }}
+                          className="w-full px-3 py-2 rounded-xl bg-white border border-[#C5CEBF] text-xs font-bold text-[#161E19] cursor-pointer"
+                        >
+                          {Array.from({ length: draftSurahInfo.ayahCount }, (_, i) => i + 1).map((num) => (
+                            <option key={num} value={num}>
+                              {isAr ? `الآية ${num}` : `Ayah ${num}`}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  )}
+
+                  {draftMode === 'surah' && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[11px] font-bold text-[#4B5650] mb-1">
+                          {isAr ? 'من سورة' : 'From Surah'}
+                        </label>
+                        <select
+                          value={draftSurahNumber}
+                          onChange={(e) => {
+                            const num = Number(e.target.value);
+                            setDraftSurahNumber(num);
+                            if (draftSurahEnd < num) setDraftSurahEnd(num);
+                            else if (draftSurahEnd > num + 4) setDraftSurahEnd(Math.min(114, num + 4));
+                          }}
+                          className="w-full px-3 py-2 rounded-xl bg-white border border-[#C5CEBF] text-xs font-bold text-[#161E19]"
+                        >
+                          {SURAH_LIST.map((s) => (
+                            <option key={s.number} value={s.number}>
+                              {s.number}. {isAr ? s.nameAr : s.nameEn}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-[#4B5650] mb-1">
+                          {isAr ? 'إلى سورة' : 'To Surah'}
+                        </label>
+                        <select
+                          value={Math.max(draftSurahNumber, Math.min(114, draftSurahNumber + 4, draftSurahEnd))}
+                          onChange={(e) => setDraftSurahEnd(Number(e.target.value))}
+                          className="w-full px-3 py-2 rounded-xl bg-white border border-[#C5CEBF] text-xs font-bold text-[#161E19]"
+                        >
+                          {SURAH_LIST.filter(
+                            (s) => s.number >= draftSurahNumber && s.number <= draftSurahNumber + 4
+                          ).map((s) => (
+                            <option key={s.number} value={s.number}>
+                              {s.number}. {isAr ? s.nameAr : s.nameEn}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  )}
+
+                  {draftMode === 'page' && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[11px] font-bold text-[#4B5650] mb-1">
+                          {isAr ? 'من صفحة' : 'From Page'}
+                        </label>
+                        <select
+                          value={draftPageFrom}
+                          onChange={(e) => {
+                            const p = Math.max(1, Math.min(604, Number(e.target.value) || 1));
+                            setDraftPageFrom(p);
+                            if (draftPageTo < p) setDraftPageTo(p);
+                            else if (draftPageTo > p + 9) setDraftPageTo(Math.min(604, p + 9));
+                          }}
+                          className="w-full px-3 py-2 rounded-xl bg-white border border-[#C5CEBF] text-xs font-bold text-[#161E19] cursor-pointer"
+                        >
+                          {Array.from({ length: 604 }, (_, i) => i + 1).map((p) => (
+                            <option key={p} value={p}>
+                              {isAr ? `صفحة ${p}` : `Page ${p}`}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-[#4B5650] mb-1">
+                          {isAr ? 'إلى صفحة' : 'To Page'}
+                        </label>
+                        <select
+                          value={Math.max(draftPageFrom, Math.min(604, draftPageFrom + 9, draftPageTo))}
+                          onChange={(e) => setDraftPageTo(Number(e.target.value))}
+                          className="w-full px-3 py-2 rounded-xl bg-white border border-[#C5CEBF] text-xs font-bold text-[#161E19] cursor-pointer"
+                        >
+                          {Array.from(
+                            { length: Math.min(604, draftPageFrom + 9) - draftPageFrom + 1 },
+                            (_, i) => draftPageFrom + i
+                          ).map((p) => (
+                            <option key={p} value={p}>
+                              {isAr ? `صفحة ${p}` : `Page ${p}`}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  )}
+
+                  {curriculumEditError && (
+                    <p className="text-xs font-bold text-[#991B1B]">{curriculumEditError}</p>
+                  )}
+
+                  <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowLiveCurriculumEditor(false);
+                        setCurriculumEditError(null);
+                      }}
+                      className="px-3.5 py-1.5 rounded-xl bg-[#EAF0E7] text-[#4B5650] text-xs font-bold cursor-pointer"
+                    >
+                      {isAr ? 'إلغاء' : 'Cancel'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={curriculumSaving}
+                      onClick={() => void handleApplyLiveCurriculum()}
+                      className="px-4 py-1.5 rounded-xl bg-[#0E6340] hover:bg-[#0A4D31] text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      <span>
+                        {curriculumSaving
+                          ? isAr
+                            ? 'جاري التطبيق...'
+                            : 'Applying...'
+                          : isAr
+                          ? 'تطبيق المقرر الجديد'
+                          : 'Apply Curriculum'}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Prominent Live Mistake Alert Banner (Visible to both Reciter & Listener even when verses are hidden) */}
               {latestErrorBanner && (
                 <div className="rounded-2xl bg-[#FEF2F2] border-2 border-[#DC2626] p-3.5 flex items-center justify-between gap-3 shadow-sm animate-pulse">
@@ -2412,7 +2809,7 @@ export const DuoRecitationSection: React.FC<DuoRecitationSectionProps> = ({
               )}
 
               {/* Verses Container */}
-              {versesLoading ? (
+              {versesLoading && (!versesHiddenForMe || verses.length === 0) ? (
                 <p className="text-center py-8 text-sm text-[#4B5650]">
                   {isAr ? 'جاري تحميل الآيات بالرسم العثماني...' : 'Loading Uthmani verses...'}
                 </p>
